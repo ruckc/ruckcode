@@ -79,7 +79,7 @@ impl Tool for Glob {
                     (t, p)
                 })
                 .collect();
-            v.sort_by(|a, b| b.0.cmp(&a.0));
+            v.sort_by_key(|e| std::cmp::Reverse(e.0));
             v.into_iter().map(|(_, p)| p).collect::<Vec<_>>()
         })
         .await?;
