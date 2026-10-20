@@ -20,6 +20,15 @@ pub enum Role {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
+    /// Model reasoning. `signature` must be round-tripped for Anthropic extended thinking.
+    Thinking {
+        thinking: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    RedactedThinking {
+        data: String,
+    },
     Text {
         text: String,
     },
@@ -91,6 +100,9 @@ pub struct Request {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,
     pub max_tokens: u32,
+    /// Provider-specific reasoning configuration, passed through as-is
+    /// (Anthropic: the `thinking` object; OpenAI-compatible: `reasoning_effort` string).
+    pub thinking: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +131,7 @@ pub struct Response {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
     TextDelta(String),
+    ThinkingDelta(String),
     ToolUseStart { id: String, name: String },
 }
 

@@ -39,6 +39,9 @@ pub(crate) fn build_body(req: &Request) -> Value {
         "stream_options": {"include_usage": true},
         "messages": messages,
     });
+    if let Some(effort) = &req.thinking {
+        body["reasoning_effort"] = effort.clone();
+    }
     if !req.tools.is_empty() {
         body["tools"] = req
             .tools
@@ -94,7 +97,7 @@ fn message_json(m: &Message) -> Vec<Value> {
                         }
                         text.push_str(t);
                     }
-                    ContentBlock::ToolUse { .. } => {}
+                    _ => {}
                 }
             }
             if !text.is_empty() {
@@ -137,6 +140,7 @@ impl Provider for OpenAi {
         }
 
         let mut text = String::new();
+        let mut reasoning = String::new();
         let mut tools: BTreeMap<u64, PartialToolUse> = BTreeMap::new();
         let mut stop_reason = StopReason::Other;
         let mut usage = Usage::default();
@@ -163,6 +167,16 @@ impl Provider for OpenAi {
                 if !s.is_empty() {
                     text.push_str(s);
                     let _ = events.send(StreamEvent::TextDelta(s.to_string()));
+                }
+            }
+            // Reasoning text from providers that expose it (DeepSeek, vLLM, OpenRouter, ...).
+            if let Some(s) = delta["reasoning_content"]
+                .as_str()
+                .or_else(|| delta["reasoning"].as_str())
+            {
+                if !s.is_empty() {
+                    reasoning.push_str(s);
+                    let _ = events.send(StreamEvent::ThinkingDelta(s.to_string()));
                 }
             }
             if let Some(calls) = delta["tool_calls"].as_array() {
@@ -195,6 +209,12 @@ impl Provider for OpenAi {
         }
 
         let mut content = Vec::new();
+        if !reasoning.is_empty() {
+            content.push(ContentBlock::Thinking {
+                thinking: reasoning,
+                signature: None,
+            });
+        }
         if !text.is_empty() {
             content.push(ContentBlock::Text { text });
         }
@@ -252,6 +272,7 @@ mod tests {
             ],
             tools: vec![],
             max_tokens: 10,
+            thinking: None,
         };
         let b = build_body(&req);
         let msgs = b["messages"].as_array().unwrap();

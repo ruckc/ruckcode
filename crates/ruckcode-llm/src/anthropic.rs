@@ -54,6 +54,9 @@ pub(crate) fn build_body(req: &Request) -> Value {
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools);
     }
+    if let Some(t) = &req.thinking {
+        body["thinking"] = t.clone();
+    }
     body
 }
 
@@ -66,6 +69,13 @@ fn message_json(m: &Message) -> Value {
         .content
         .iter()
         .map(|b| match b {
+            ContentBlock::Thinking {
+                thinking,
+                signature,
+            } => json!({"type": "thinking", "thinking": thinking, "signature": signature}),
+            ContentBlock::RedactedThinking { data } => {
+                json!({"type": "redacted_thinking", "data": data})
+            }
             ContentBlock::Text { text } => json!({"type": "text", "text": text}),
             ContentBlock::ToolUse { id, name, input } => {
                 json!({"type": "tool_use", "id": id, "name": name, "input": input})
@@ -86,6 +96,8 @@ fn message_json(m: &Message) -> Value {
 }
 
 enum Block {
+    Thinking(String, Option<String>),
+    Redacted(String),
     Text(String),
     Tool(PartialToolUse),
 }
@@ -157,6 +169,10 @@ impl Provider for Anthropic {
                                 json: String::new(),
                             }));
                         }
+                        Some("thinking") => blocks.push(Block::Thinking(String::new(), None)),
+                        Some("redacted_thinking") => blocks.push(Block::Redacted(
+                            cb["data"].as_str().unwrap_or_default().to_string(),
+                        )),
                         _ => blocks.push(Block::Text(String::new())),
                     }
                 }
@@ -167,6 +183,15 @@ impl Provider for Anthropic {
                             let s = d["text"].as_str().unwrap_or_default();
                             t.push_str(s);
                             let _ = events.send(StreamEvent::TextDelta(s.to_string()));
+                        }
+                        (Some("thinking_delta"), Some(Block::Thinking(t, _))) => {
+                            let s = d["thinking"].as_str().unwrap_or_default();
+                            t.push_str(s);
+                            let _ = events.send(StreamEvent::ThinkingDelta(s.to_string()));
+                        }
+                        (Some("signature_delta"), Some(Block::Thinking(_, sig))) => {
+                            sig.get_or_insert_with(String::new)
+                                .push_str(d["signature"].as_str().unwrap_or_default());
                         }
                         (Some("input_json_delta"), Some(Block::Tool(p))) => {
                             p.json
@@ -192,6 +217,11 @@ impl Provider for Anthropic {
         let content = blocks
             .into_iter()
             .filter_map(|b| match b {
+                Block::Thinking(thinking, signature) => Some(ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                }),
+                Block::Redacted(data) => Some(ContentBlock::RedactedThinking { data }),
                 Block::Text(t) if t.is_empty() => None,
                 Block::Text(text) => Some(ContentBlock::Text { text }),
                 Block::Tool(p) => Some(p.finish()),
@@ -225,6 +255,7 @@ mod tests {
                 input_schema: json!({"type": "object"}),
             }],
             max_tokens: 10,
+            thinking: None,
         };
         let b = build_body(&req);
         assert_eq!(

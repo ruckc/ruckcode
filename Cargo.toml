@@ -11,6 +11,7 @@ repository = "https://github.com/ruckc/ruckcode"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 dirs = "5"
@@ -27,7 +28,7 @@ tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-toml = "0.8"
+toml = { version = "0.8", features = ["preserve_order"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
