@@ -91,9 +91,18 @@ client as the `_ruckcode/ask_user_question` ACP extension request when the clien
 
 ## Session history
 
-Sessions and transcripts are stored **in the project** at `.ruckcode/sessions/<session-id>.jsonl`
-(one JSON record per line: metadata, messages, mode changes, tool calls, hook results) so they are
-committed alongside the code they produced, for traceability. `session/load` replays from there.
+Sessions and transcripts are stored **in the project** at `.ruckcode/sessions/<YYYYMMDD-HHMMSS-xxxxxx>.jsonl`
+so they are committed alongside the code they produced, for traceability. The transcript is
+append-only JSONL (each record has `ts` and `type`) and is complete enough to audit and to resume:
+
+- full user prompts, fix-turn prompts and tool-result messages;
+- full assistant messages including thinking/reasoning blocks (with signatures);
+- every tool call: input, output, error flag, permission decision, edits as unified diffs, duration;
+- hook runs (command, exit code, output, duration), mode changes (who initiated, why), compactions;
+- per-request metrics: model, usage, duration, time-to-first-token, tokens/sec; per-turn totals.
+
+`rc --resume <id>` / ACP `session/load` rebuild history from the transcript and replay it to the client;
+tool calls left dangling by a crash get synthetic "interrupted" results.
 
 ## Milestones
 
