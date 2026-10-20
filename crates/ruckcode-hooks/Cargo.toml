@@ -1,0 +1,4 @@
+[package]
+name = "ruckcode-hooks"
+version.workspace = true
+edition.workspace = true

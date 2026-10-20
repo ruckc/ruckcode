@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ruckc/ruckcode"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+dirs = "5"
+futures = "0.3"
+globset = "0.4"
+ignore = "0.4"
+ratatui = "0.29"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "2"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+ruckcode-acp = { path = "crates/ruckcode-acp" }
+ruckcode-core = { path = "crates/ruckcode-core" }
+ruckcode-hooks = { path = "crates/ruckcode-hooks" }
+ruckcode-llm = { path = "crates/ruckcode-llm" }
+ruckcode-mise = { path = "crates/ruckcode-mise" }
+ruckcode-tools = { path = "crates/ruckcode-tools" }

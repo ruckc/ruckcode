@@ -1,0 +1,4 @@
+[package]
+name = "ruckcode-acp"
+version.workspace = true
+edition.workspace = true

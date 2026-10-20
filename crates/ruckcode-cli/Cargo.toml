@@ -1,0 +1,4 @@
+[package]
+name = "ruckcode-cli"
+version.workspace = true
+edition.workspace = true

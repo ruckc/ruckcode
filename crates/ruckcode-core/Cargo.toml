@@ -1,0 +1,4 @@
+[package]
+name = "ruckcode-core"
+version.workspace = true
+edition.workspace = true

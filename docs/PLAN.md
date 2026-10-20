@@ -89,6 +89,12 @@ client as the `_ruckcode/ask_user_question` ACP extension request when the clien
 `_meta.ruckcode.askUserQuestion`; otherwise falls back to `session/request_permission` per question
 (single-select), and finally to returning an error telling the model to ask in plain text.
 
+## Session history
+
+Sessions and transcripts are stored **in the project** at `.ruckcode/sessions/<session-id>.jsonl`
+(one JSON record per line: metadata, messages, mode changes, tool calls, hook results) so they are
+committed alongside the code they produced, for traceability. `session/load` replays from there.
+
 ## Milestones
 
 1. Workspace skeleton, both providers, core loop with Read/Write/Edit/Bash/Glob/Grep, headless CLI.
