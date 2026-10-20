@@ -1,0 +1,100 @@
+# ruckcode (`rc`) — plan
+
+A Rust agentic coding agent in the spirit of Claude Code, with:
+
+- **Lifecycle modes** instead of permission modes (explore → design → implement → test → review → release).
+- **mise tasks as tools**, injected into context per mode (lazily when there are many).
+- **Hooks** (e.g. post-edit format/lint with automatic fix turns).
+- **ACP-native**: the agent only speaks the Agent Client Protocol; the `rc` CLI/TUI is an ACP client.
+- **AskUserQuestion** tool, surfaced through ACP.
+
+## Workspace layout
+
+```
+crates/
+  ruckcode-core     agent loop, sessions, context assembly, modes, permissions, config
+  ruckcode-llm      Provider trait + Anthropic + OpenAI-compatible clients (streaming, tool use)
+  ruckcode-tools    built-in tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
+  ruckcode-mise     mise task discovery, schema mapping, execution
+  ruckcode-hooks    hook config, matching, runner, fix-turn feedback
+  ruckcode-acp      ACP JSON-RPC (stdio) agent server + client plumbing
+  ruckcode-cli      `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
+```
+
+ACP-first: the agent core is exposed only through ACP. `rc` launches the agent in-process over
+a duplex pipe (or as an `rc acp` subprocess for editors such as Zed) and acts as an ACP client.
+
+## Providers
+
+`Provider` trait with a single internal message/tool representation:
+
+- Anthropic Messages API (streaming, tool use, prompt caching).
+- OpenAI-compatible Chat Completions (OpenAI, Ollama, OpenRouter, vLLM, …).
+
+Configured as profiles in `~/.config/ruckcode/config.toml`; modes may override the model.
+
+## Modes
+
+No hidden built-ins at runtime. Modes are defined in `.ruckcode/modes.toml` (project) and
+`~/.config/ruckcode/modes.toml` (user). With no configuration a single implicit `default` mode
+exposes all tools and the UI hints to run `rc init`.
+
+`rc init` writes `.ruckcode/modes.toml` from templates embedded in the binary
+(explore, design, implement, test, review, release; `--minimal` gives plan/build/verify;
+`--modes a,b` selects a subset). It fills `mise_tasks` from the repo's real `mise tasks ls`
+by name heuristics, leaving unmatched tasks in a commented list. `rc init --diff` compares the
+file with current templates.
+
+```toml
+[modes.implement]
+description = "Write code for the approved plan"
+prompt = "You are implementing the approved plan in plans/. Keep changes minimal."
+tools = ["Read","Write","Edit","Glob","Grep","Bash","AskUserQuestion","SwitchMode","TodoWrite"]
+mise_tasks = ["build", "gen:*"]
+next = ["test", "review"]
+auto_advance_to = []
+permissions = { Bash = "ask", Edit = "allow", Write = "allow" }
+
+[[modes.implement.hooks.post_edit]]
+glob = "**/*.rs"
+run = "mise run fmt"
+on_failure = "fix_turn"   # ignore | block | fix_turn
+max_fix_turns = 2
+```
+
+Mode transitions: the agent calls `SwitchMode`, which is surfaced as an ACP permission request
+unless the target is in `auto_advance_to`. Users can switch via ACP `session/set_mode` (TUI hotkey).
+
+## mise tasks as tools
+
+1. Discover with `mise tasks ls --json`.
+2. Map each task to a tool (`mise__<task>`), with an `args: string[]` parameter.
+3. Only tasks matching the current mode's selectors are exposed.
+4. When more than a threshold match, expose `MiseListTasks` / `MiseRun` meta-tools instead,
+   so schemas are pulled on demand.
+5. Run via `mise run <task> -- <args>`, streaming output as tool-call updates; output truncated.
+
+## Hooks
+
+Events: `session_start`, `user_prompt_submit`, `pre_tool_use`, `post_tool_use`, `post_edit`,
+`mode_change`, `stop`. Hooks receive JSON on stdin. `post_edit` hooks run once per turn over
+the de-duplicated set of edited files (`{files}` placeholder). On failure: `ignore`, `block`
+(report to user) or `fix_turn` (feed the output back to the model as a new turn, up to
+`max_fix_turns`). Hooks can be global (`[[hooks.post_edit]]`) or mode-scoped.
+
+## AskUserQuestion
+
+Claude Code-compatible schema (questions, options, multiSelect, implicit "Other"). Sent to the
+client as the `_ruckcode/ask_user_question` ACP extension request when the client advertises
+`_meta.ruckcode.askUserQuestion`; otherwise falls back to `session/request_permission` per question
+(single-select), and finally to returning an error telling the model to ask in plain text.
+
+## Milestones
+
+1. Workspace skeleton, both providers, core loop with Read/Write/Edit/Bash/Glob/Grep, headless CLI.
+2. ACP server; CLI rewired as an ACP client; ratatui TUI.
+3. Modes, permission system, `rc init` templates.
+4. mise task discovery, injection, lazy loading.
+5. Hooks including post-edit fix turns.
+6. AskUserQuestion end-to-end, session persistence/load, compaction.
+7. Tests (mock provider, ACP round trips) and CI.
