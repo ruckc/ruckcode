@@ -1,4 +1,29 @@
 [package]
 name = "ruckcode-core"
+description = "Agent loop, sessions, modes, permissions and config for ruckcode"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+globset.workspace = true
+ruckcode-hooks.workspace = true
+ruckcode-llm.workspace = true
+ruckcode-mise.workspace = true
+ruckcode-tools.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
