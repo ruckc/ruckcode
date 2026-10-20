@@ -51,7 +51,8 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub cwd: Option<PathBuf>,
 
-    /// Resume a session by id; without an id, pick one interactively.
+    /// Resume a session by id (`YYYYMMDD-HHMMSS-xxxxxx`); without an id, pick one
+    /// interactively. A value that is not a session id is treated as the prompt.
     #[arg(short = 'r', long, num_args = 0..=1, default_missing_value = "", value_name = "ID")]
     pub resume: Option<String>,
 
@@ -92,7 +93,35 @@ pub enum Command {
     Sessions,
 }
 
+/// True for ids produced by `new_session_id`: `YYYYMMDD-HHMMSS-<6 hex>`.
+pub fn looks_like_session_id(s: &str) -> bool {
+    let p: Vec<&str> = s.split('-').collect();
+    p.len() == 3
+        && p[0].len() == 8
+        && p[1].len() == 6
+        && p[2].len() == 6
+        && p[0].bytes().chain(p[1].bytes()).all(|b| b.is_ascii_digit())
+        && p[2].bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 impl Cli {
+    /// `rc -r "some prompt"`: clap binds the prompt to `--resume`; if the value
+    /// is not a session id, move it to the prompt and fall back to the picker.
+    pub fn normalize(mut self) -> Self {
+        if let Some(v) = self.resume.take() {
+            if v.is_empty() || looks_like_session_id(&v) {
+                self.resume = Some(v);
+            } else {
+                self.prompt = Some(match self.prompt.take() {
+                    Some(rest) => format!("{v} {rest}"),
+                    None => v,
+                });
+                self.resume = Some(String::new());
+            }
+        }
+        self
+    }
+
     pub fn project_dir(&self) -> Result<PathBuf> {
         let dir = match &self.cwd {
             Some(d) => d.clone(),
@@ -147,7 +176,7 @@ fn init_logging(to_file: bool) {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::parse().normalize();
     let interactive = cli.command.is_none() && !cli.print;
     init_logging(interactive);
     let result: Result<u8> = match &cli.command {
@@ -228,5 +257,57 @@ pub fn one_line(s: &str, max: usize) -> String {
         format!("{t}…")
     } else {
         flat
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(std::iter::once("rc").chain(args.iter().copied()))
+            .unwrap()
+            .normalize()
+    }
+
+    #[test]
+    fn session_id_shape() {
+        assert!(looks_like_session_id("20250102-030405-a1b2c3"));
+        assert!(!looks_like_session_id("fix the bug"));
+        assert!(!looks_like_session_id("20250102-030405-zzzzzz"));
+        assert!(!looks_like_session_id("2025-0102-030405"));
+    }
+
+    #[test]
+    fn resume_with_id() {
+        let c = parse(&["-r", "20250102-030405-a1b2c3"]);
+        assert_eq!(c.resume.as_deref(), Some("20250102-030405-a1b2c3"));
+        assert_eq!(c.prompt, None);
+        let c = parse(&["--resume=20250102-030405-a1b2c3"]);
+        assert_eq!(c.resume.as_deref(), Some("20250102-030405-a1b2c3"));
+    }
+
+    #[test]
+    fn resume_bare_opens_picker() {
+        let c = parse(&["-r"]);
+        assert_eq!(c.resume.as_deref(), Some(""));
+        assert_eq!(c.prompt, None);
+    }
+
+    #[test]
+    fn resume_value_that_is_a_prompt() {
+        let c = parse(&["-r", "some prompt"]);
+        assert_eq!(c.resume.as_deref(), Some(""));
+        assert_eq!(c.prompt.as_deref(), Some("some prompt"));
+        let c = parse(&["-r", "fix", "the bug"]);
+        assert_eq!(c.resume.as_deref(), Some(""));
+        assert_eq!(c.prompt.as_deref(), Some("fix the bug"));
+    }
+
+    #[test]
+    fn no_resume() {
+        let c = parse(&["hello"]);
+        assert_eq!(c.resume, None);
+        assert_eq!(c.prompt.as_deref(), Some("hello"));
     }
 }

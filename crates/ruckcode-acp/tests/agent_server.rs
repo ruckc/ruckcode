@@ -140,14 +140,10 @@ async fn prompt(c: &Connection, sid: &str, text: &str) -> Value {
     .unwrap()
 }
 
+/// Notifications sent before a response are always handled before the request
+/// future resolves, so no polling is needed.
 async fn wait_for(mut f: impl FnMut() -> bool) {
-    for _ in 0..200 {
-        if f() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("condition not met in time");
+    assert!(f(), "condition not met");
 }
 
 fn agent_text(u: &[SessionUpdate]) -> String {

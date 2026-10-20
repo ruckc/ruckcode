@@ -48,7 +48,22 @@ impl From<anyhow::Error> for RpcError {
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
     async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError>;
+    /// Handle a notification. Notifications for one connection are handled
+    /// strictly in arrival order, and responses to our own requests are
+    /// delivered through the same queue (after all earlier notifications).
+    ///
+    /// Therefore a notification handler MUST NOT await a request on the same
+    /// connection: the response could never be delivered and it would deadlock.
+    /// Spawn a task instead if a request is needed.
     async fn notification(&self, method: &str, params: Value);
+}
+
+/// Items on the ordered dispatch queue.
+enum Event {
+    Notification(String, Value),
+    Response(i64, Reply),
+    /// Reader hit EOF: fail whatever is still pending, after the queue drains.
+    Closed,
 }
 
 type Reply = Result<Value, RpcError>;
@@ -103,13 +118,25 @@ impl Connection {
             let _ = writer.shutdown().await;
         });
 
-        // Ordered notification dispatcher.
-        let (ntx, mut nrx) = mpsc::unbounded_channel::<(String, Value)>();
+        // Ordered dispatcher: notifications and responses share one queue so a
+        // response resolves only after earlier notifications were handled.
+        let (ntx, mut nrx) = mpsc::unbounded_channel::<Event>();
         let nh = handler.clone();
+        let dc = conn.clone();
         tokio::spawn(async move {
-            while let Some((method, params)) = nrx.recv().await {
-                nh.notification(&method, params).await;
+            while let Some(ev) = nrx.recv().await {
+                match ev {
+                    Event::Notification(method, params) => nh.notification(&method, params).await,
+                    Event::Response(id, reply) => {
+                        let tx = dc.inner.pending.lock().unwrap().map.remove(&id);
+                        if let Some(tx) = tx {
+                            let _ = tx.send(reply);
+                        }
+                    }
+                    Event::Closed => dc.close_pending(),
+                }
             }
+            dc.close_pending();
         });
 
         // Reader task.
@@ -137,17 +164,12 @@ impl Connection {
                 };
                 c.dispatch(msg, &handler, &ntx);
             }
-            c.close_pending();
+            let _ = ntx.send(Event::Closed);
         });
         (conn, join)
     }
 
-    fn dispatch(
-        &self,
-        msg: Value,
-        handler: &Arc<dyn Handler>,
-        ntx: &mpsc::UnboundedSender<(String, Value)>,
-    ) {
+    fn dispatch(&self, msg: Value, handler: &Arc<dyn Handler>, ntx: &mpsc::UnboundedSender<Event>) {
         let id = msg.get("id").filter(|v| !v.is_null()).cloned();
         if let Some(method) = msg.get("method").and_then(Value::as_str) {
             let method = method.to_string();
@@ -165,7 +187,7 @@ impl Connection {
                     });
                 }
                 None => {
-                    let _ = ntx.send((method, params));
+                    let _ = ntx.send(Event::Notification(method, params));
                 }
             }
         } else if let Some(id) = id.as_ref().and_then(Value::as_i64) {
@@ -175,10 +197,7 @@ impl Connection {
             } else {
                 Ok(msg.get("result").cloned().unwrap_or(Value::Null))
             };
-            let tx = self.inner.pending.lock().unwrap().map.remove(&id);
-            if let Some(tx) = tx {
-                let _ = tx.send(reply);
-            }
+            let _ = ntx.send(Event::Response(id, reply));
         } else if let Some(id) = id {
             // Request-shaped without a method we could parse.
             let err = RpcError::new(-32600, "invalid request");
@@ -315,9 +334,53 @@ mod tests {
             a.notify("n", json!(i)).unwrap();
         }
         a.request("echo", Value::Null).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let seen = hb.seen.lock().unwrap().clone();
         assert_eq!(seen, (0..50).collect::<Vec<_>>());
+    }
+
+    struct Slow {
+        seen: Mutex<Vec<i64>>,
+    }
+    #[async_trait]
+    impl Handler for Slow {
+        async fn request(&self, _m: &str, _p: Value) -> Result<Value, RpcError> {
+            Ok(Value::Null)
+        }
+        async fn notification(&self, _m: &str, params: Value) {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            self.seen.lock().unwrap().push(params.as_i64().unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn response_after_all_prior_notifications_handled() {
+        // Server side emits N notifications then a response; client handler is slow.
+        let client = Arc::new(Slow {
+            seen: Mutex::new(vec![]),
+        });
+        let (x, y) = tokio::io::duplex(64 * 1024);
+        let (xr, xw) = tokio::io::split(x);
+        let (mut yr, mut yw) = tokio::io::split(y);
+        let (c, _) = Connection::new(xr, xw, client.clone());
+        let fut = tokio::spawn({
+            let c = c.clone();
+            async move { c.request("go", Value::Null).await }
+        });
+        // Read the request id, then reply with notifications + response in one burst.
+        let mut line = String::new();
+        let mut br = BufReader::new(&mut yr);
+        br.read_line(&mut line).await.unwrap();
+        let id = serde_json::from_str::<Value>(&line).unwrap()["id"].clone();
+        let mut out = String::new();
+        for i in 0..40 {
+            out += &format!("{{\"jsonrpc\":\"2.0\",\"method\":\"n\",\"params\":{i}}}\n");
+        }
+        out += &json!({"jsonrpc":"2.0","id":id,"result":1}).to_string();
+        out.push('\n');
+        yw.write_all(out.as_bytes()).await.unwrap();
+        fut.await.unwrap().unwrap();
+        assert_eq!(client.seen.lock().unwrap().len(), 40);
     }
 
     #[tokio::test]

@@ -157,7 +157,6 @@ pub async fn run(cli: &Cli) -> Result<u8> {
         client::set_mode(&conn, &started.session_id, mode).await?;
     }
     // Replayed history (resume) is not part of this run's output.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     handler.quiet.store(false, Ordering::Relaxed);
 
     let sid = started.session_id.clone();
@@ -173,8 +172,6 @@ pub async fn run(cli: &Cli) -> Result<u8> {
             (&mut turn).await
         }
     };
-    // Let trailing notifications drain.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     if cli.output_format == OutputFormat::Text
         && handler.wrote_text.load(Ordering::Relaxed)
         && !handler.ends_newline.load(Ordering::Relaxed)
