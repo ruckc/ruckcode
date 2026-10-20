@@ -30,7 +30,13 @@ pub struct ModeDef {
     /// Transitions that skip user confirmation.
     #[serde(default)]
     pub auto_advance_to: Vec<String>,
-    /// Profile name overriding the session profile.
+    /// Profile name (from `config.toml`) used while this mode is active; defaults to the
+    /// session profile.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Model id used while this mode is active, overriding the profile's model and the CLI
+    /// `--model`. For backward compatibility a value equal to a configured profile name (with
+    /// `profile` unset) selects that profile instead.
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]

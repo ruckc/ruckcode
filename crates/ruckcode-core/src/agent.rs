@@ -27,6 +27,7 @@ use crate::transcript::{
 };
 
 const SWITCH_MODE: &str = "SwitchMode";
+const INTERRUPTED: &str = "[Request interrupted by user]";
 const SUMMARY_PROMPT: &str = "Summarize the conversation so far so that work can continue from \
 the summary alone. Cover: the user's goals, decisions made, files read or changed, the current \
 state of the work, and concrete next steps. Be thorough but compact. Do not call any tools.";
@@ -185,6 +186,26 @@ impl SessionState {
         self.messages.push(m);
     }
 
+    /// Close a user message that never got a reply so roles keep alternating.
+    fn push_interruption(&mut self) {
+        let message = Message::assistant_text(INTERRUPTED);
+        self.request_counter += 1;
+        let request_id = self.request_counter;
+        self.rec(Record::AssistantMessage {
+            message: message.clone(),
+            request_id,
+            model: String::new(),
+            stop_reason: LlmStop::EndTurn,
+            usage: Default::default(),
+            metrics: Metrics {
+                duration_ms: 0,
+                time_to_first_token_ms: None,
+                output_tokens_per_sec: None,
+            },
+        });
+        self.messages.push(message);
+    }
+
     fn mode_def(&self) -> &ModeDef {
         self.modes.get(&self.mode).expect("current mode exists")
     }
@@ -210,7 +231,7 @@ impl SessionState {
         }
     }
 
-    fn record_hooks(&mut self, event: HookEvent, outcomes: &[HookOutcome], took: Duration) {
+    fn record_hooks(&mut self, event: HookEvent, outcomes: &[HookOutcome]) {
         for o in outcomes {
             self.rec(Record::HookRun {
                 event: event.as_str().into(),
@@ -218,7 +239,7 @@ impl SessionState {
                 success: o.success,
                 exit_code: o.exit_code,
                 output: o.output.clone(),
-                duration_ms: took.as_millis() as u64,
+                duration_ms: o.duration_ms,
             });
         }
     }
@@ -295,6 +316,14 @@ pub struct Agent {
     options: AgentOptions,
     sessions: Mutex<HashMap<String, Arc<tokio::sync::Mutex<SessionState>>>>,
     cancels: Mutex<HashMap<String, CancellationToken>>,
+    shared: Mutex<HashMap<String, Arc<Shared>>>,
+}
+
+/// Per-session data reachable without the session lock.
+struct Shared {
+    mode_ids: Vec<String>,
+    /// Mode requested by the user while a prompt was running; applied before the next request.
+    pending_mode: Mutex<Option<String>>,
 }
 
 impl Agent {
@@ -303,6 +332,7 @@ impl Agent {
             options,
             sessions: Mutex::default(),
             cancels: Mutex::default(),
+            shared: Mutex::default(),
         }
     }
 
@@ -344,16 +374,33 @@ impl Agent {
         })
     }
 
+    /// Resolve (model id, profile) for the session's current mode. The returned profile's
+    /// `model` is the effective model, so provider caching keys on it.
     fn model_for(&self, s: &SessionState) -> Result<(String, Profile)> {
-        let (name, overridden) = match &s.mode_def().model {
-            Some(m) if *m != s.profile => (m.clone(), false),
-            _ => (s.profile.clone(), true),
-        };
-        let profile = s.config.profile(&name)?.clone();
-        let model = match (&self.options.model_override, overridden) {
-            (Some(m), true) => m.clone(),
+        let mode = s.mode_def();
+        let mut profile_name = mode.profile.clone();
+        let mut mode_model = mode.model.clone();
+        if profile_name.is_none() {
+            if let Some(m) = &mode_model {
+                // Legacy: `model` used to name a profile.
+                if s.config.profiles.contains_key(m) {
+                    profile_name = mode_model.take();
+                }
+            }
+        }
+        let other_profile = profile_name.as_ref().is_some_and(|p| *p != s.profile);
+        let mut profile = s
+            .config
+            .profile(profile_name.as_deref().unwrap_or(&s.profile))?
+            .clone();
+        // `--model` is an id for the session profile, so it never applies to a mode that
+        // picks a different profile or its own model.
+        let model = match (mode_model, &self.options.model_override) {
+            (Some(m), _) => m,
+            (None, Some(m)) if !other_profile => m.clone(),
             _ => profile.model.clone(),
         };
+        profile.model = model.clone();
         Ok((model, profile))
     }
 
@@ -362,8 +409,8 @@ impl Agent {
             return Ok(p.clone());
         }
         let key = format!(
-            "{:?}/{}/{:?}",
-            profile.provider, profile.model, profile.base_url
+            "{:?}/{}/{:?}/{:?}",
+            profile.provider, profile.model, profile.base_url, profile.api_key_env
         );
         if let Some(p) = s.providers.get(&key) {
             return Ok(p.clone());
@@ -375,6 +422,13 @@ impl Agent {
 
     fn register(&self, s: SessionState) -> SessionInfo {
         let info = s.info();
+        self.shared.lock().unwrap().insert(
+            s.id.clone(),
+            Arc::new(Shared {
+                mode_ids: s.modes.modes.iter().map(|(i, _)| i.clone()).collect(),
+                pending_mode: Mutex::new(None),
+            }),
+        );
         self.sessions
             .lock()
             .unwrap()
@@ -444,6 +498,9 @@ impl Agent {
         if !dangling.is_empty() {
             s.push(interrupted_results(&dangling), UserSource::ToolResults);
         }
+        if s.messages.last().is_some_and(|m| m.role == Role::User) {
+            s.push_interruption();
+        }
         s.rec(Record::SessionResumed {});
         replay(&cwd, id, &loaded.records, client.as_ref());
         Ok(self.register(s))
@@ -466,7 +523,9 @@ impl Agent {
         }
     }
 
-    /// User-initiated mode switch.
+    /// User-initiated mode switch. If a prompt is running the switch does not wait for it:
+    /// `ModeChanged` is emitted now and the change is applied (and recorded) before the
+    /// prompt's next model request.
     pub async fn set_mode(
         &self,
         session_id: &str,
@@ -474,13 +533,47 @@ impl Agent {
         client: Arc<dyn Client>,
     ) -> Result<()> {
         let session = self.session(session_id)?;
-        let mut s = session.lock().await;
-        if s.modes.get(mode_id).is_none() {
+        let shared = self.shared_for(session_id)?;
+        if !shared.mode_ids.iter().any(|m| m == mode_id) {
             bail!("unknown mode `{mode_id}`");
         }
-        self.switch_mode(&mut s, mode_id, "user request", Initiator::User, &client)
+        if let Ok(mut s) = session.try_lock() {
+            *shared.pending_mode.lock().unwrap() = None;
+            self.switch_mode(
+                &mut s,
+                mode_id,
+                "user request",
+                Initiator::User,
+                &client,
+                true,
+            )
             .await;
+            return Ok(());
+        }
+        *shared.pending_mode.lock().unwrap() = Some(mode_id.to_string());
+        client.send_event(session_id, SessionEvent::ModeChanged(mode_id.to_string()));
         Ok(())
+    }
+
+    fn shared_for(&self, id: &str) -> Result<Arc<Shared>> {
+        self.shared
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{id}`"))
+    }
+
+    /// Apply a user mode switch requested during a prompt.
+    async fn apply_pending_mode(&self, s: &mut SessionState, client: &Arc<dyn Client>) {
+        let Ok(shared) = self.shared_for(&s.id) else {
+            return;
+        };
+        let pending = shared.pending_mode.lock().unwrap().take();
+        if let Some(to) = pending.filter(|m| *m != s.mode) {
+            self.switch_mode(s, &to, "user request", Initiator::User, client, false)
+                .await;
+        }
     }
 
     async fn switch_mode(
@@ -490,16 +583,28 @@ impl Agent {
         reason: &str,
         by: Initiator,
         client: &Arc<dyn Client>,
+        emit: bool,
     ) {
+        let old_model = self.model_for(s).ok().map(|(m, _)| m);
         let from = std::mem::replace(&mut s.mode, to.to_string());
         s.mise_tasks = ruckcode_mise::discover(&s.cwd).await;
-        client.send_event(&s.id, SessionEvent::ModeChanged(to.to_string()));
+        if emit {
+            client.send_event(&s.id, SessionEvent::ModeChanged(to.to_string()));
+        }
         s.rec(Record::ModeChange {
             from: from.clone(),
             to: to.to_string(),
             reason: reason.to_string(),
             initiated_by: by,
         });
+        if let (Some(old), Ok((new, _))) = (old_model, self.model_for(s)) {
+            if old != new {
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Notice(format!("model changed: {old} -> {new}")),
+                );
+            }
+        }
         let payload = json!({"event": "mode_change", "session_id": s.id, "from": from, "to": to});
         let out = self
             .run_hooks(s, HookEvent::ModeChange, None, &payload)
@@ -527,13 +632,23 @@ impl Agent {
             input_tokens: 0,
             output_tokens: 0,
         };
+        self.apply_pending_mode(&mut s, &client).await;
         let result = self
             .run_prompt(&mut s, text, &client, &cancel, &mut stats)
             .await;
-        s.edited.clear();
-        if let Ok(reason) = &result {
+        if matches!(result, Ok(StopReason::Cancelled))
+            && s.messages.last().is_some_and(|m| m.role == Role::User)
+        {
+            s.push_interruption();
+        }
+        self.apply_pending_mode(&mut s, &client).await;
+        {
+            let stop = match &result {
+                Ok(reason) => reason.as_str().to_string(),
+                Err(_) => "error".to_string(),
+            };
             s.rec(Record::TurnEnd {
-                stop_reason: reason.as_str().into(),
+                stop_reason: stop,
                 duration_ms: stats.started.elapsed().as_millis() as u64,
                 model_requests: stats.model_requests,
                 tool_calls: stats.tool_calls,
@@ -556,11 +671,10 @@ impl Agent {
         if hooks.get(event).is_empty() {
             return vec![];
         }
-        let t = Instant::now();
         let out = HookRunner::new(&s.cwd)
             .run(&hooks, event, tool, payload)
             .await;
-        s.record_hooks(event, &out, t.elapsed());
+        s.record_hooks(event, &out);
         out
     }
 
@@ -603,6 +717,7 @@ impl Agent {
 
         let mut fix_turns = 0u32;
         for iteration in 0..s.config.max_turn_requests {
+            self.apply_pending_mode(s, client).await;
             let system = system_prompt(&s.cwd, &s.modes, &s.mode).await;
             if iteration > 0 {
                 self.compact_if_needed(s, client, cancel, &system).await;
@@ -616,7 +731,7 @@ impl Agent {
             let request = Request {
                 model: model.clone(),
                 system,
-                messages: s.messages.clone(),
+                messages: normalize_messages(&s.messages),
                 tools: tools.iter().map(|t| t.spec()).collect(),
                 max_tokens: profile.max_tokens,
                 thinking: profile.thinking.clone(),
@@ -690,6 +805,9 @@ impl Agent {
                 return Ok(StopReason::Cancelled);
             }
         }
+        // Never leave this turn's edits unformatted; a failing hook cannot start a fix turn here.
+        let mut no_more_fix_turns = u32::MAX;
+        let _ = self.finish_edits(s, client, &mut no_more_fix_turns).await;
         Ok(StopReason::MaxTurnRequests)
     }
 
@@ -708,11 +826,10 @@ impl Agent {
         if hooks.post_edit.is_empty() {
             return None;
         }
-        let t = Instant::now();
         let out = HookRunner::new(&s.cwd)
             .run_post_edit(&hooks, &s.id, &files)
             .await;
-        s.record_hooks(HookEvent::PostEdit, &out, t.elapsed());
+        s.record_hooks(HookEvent::PostEdit, &out);
         notify_blocked(s, client, &out);
         let prompt = fix_turn_prompt(&out)?;
         let failing = out
@@ -877,7 +994,7 @@ impl Agent {
             );
             ran = true;
             if let Some((to, reason)) = switch_to.take() {
-                self.switch_mode(s, &to, &reason, Initiator::Agent, client)
+                self.switch_mode(s, &to, &reason, Initiator::Agent, client, true)
                     .await;
                 let name = s.modes.display_name(&to);
                 break 'run (
@@ -1093,7 +1210,7 @@ impl Agent {
         let Ok(provider) = self.provider_for(s, &profile) else {
             return;
         };
-        let mut messages = s.messages.clone();
+        let mut messages = normalize_messages(&s.messages);
         match messages.last_mut() {
             Some(m) if m.role == Role::User => m.content.push(ContentBlock::Text {
                 text: SUMMARY_PROMPT.into(),
@@ -1150,6 +1267,25 @@ enum Gate {
         outcome: PermissionOutcome,
         cancelled: bool,
     },
+}
+
+/// Merge adjacent same-role messages so providers always see strictly alternating roles.
+/// Tool results stay ahead of any text merged into the same user message.
+fn normalize_messages(messages: &[Message]) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::with_capacity(messages.len());
+    for m in messages {
+        match out.last_mut() {
+            Some(last) if last.role == m.role => {
+                last.content.extend(m.content.iter().cloned());
+                if last.role == Role::User {
+                    last.content
+                        .sort_by_key(|b| !matches!(b, ContentBlock::ToolResult { .. }));
+                }
+            }
+            _ => out.push(m.clone()),
+        }
+    }
+    out
 }
 
 fn notify_blocked(s: &SessionState, client: &Arc<dyn Client>, outcomes: &[HookOutcome]) {

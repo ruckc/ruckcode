@@ -131,6 +131,8 @@ pub struct HookOutcome {
     /// Combined stdout+stderr, truncated keeping head and tail.
     pub output: String,
     pub exit_code: Option<i32>,
+    /// Wall-clock time the hook took, in milliseconds.
+    pub duration_ms: u64,
 }
 
 impl HookOutcome {
@@ -254,11 +256,29 @@ impl HookRunner {
         stdin: &str,
         files_env: Option<String>,
     ) -> HookOutcome {
+        let t = std::time::Instant::now();
+        let mut o = self
+            .exec_inner(spec, cmd, event, session_id, stdin, files_env)
+            .await;
+        o.duration_ms = t.elapsed().as_millis() as u64;
+        o
+    }
+
+    async fn exec_inner(
+        &self,
+        spec: &HookSpec,
+        cmd: String,
+        event: HookEvent,
+        session_id: Option<&str>,
+        stdin: &str,
+        files_env: Option<String>,
+    ) -> HookOutcome {
         let fail = |output: String| HookOutcome {
             spec: spec.clone(),
             success: false,
             output,
             exit_code: None,
+            duration_ms: 0,
         };
         let mut c = Command::new("sh");
         c.arg("-c")
@@ -317,6 +337,7 @@ impl HookRunner {
                         success: st.success(),
                         output: truncate_middle(&text, MAX_OUTPUT),
                         exit_code: st.code(),
+                        duration_ms: 0,
                     },
                     Err(e) => fail(format!("failed to wait for hook: {e}")),
                 }
@@ -511,12 +532,14 @@ mod tests {
             success: false,
             output: "error: boom".into(),
             exit_code: Some(1),
+            duration_ms: 0,
         };
         let ignored = HookOutcome {
             spec: spec("other"),
             success: false,
             output: "x".into(),
             exit_code: Some(1),
+            duration_ms: 0,
         };
         assert!(fix_turn_prompt(std::slice::from_ref(&ignored)).is_none());
         let p = fix_turn_prompt(&[bad, ignored]).unwrap();

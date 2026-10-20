@@ -648,8 +648,9 @@ async fn permission_cancel_aborts_with_valid_history() {
         &info.id,
     ))
     .unwrap();
-    let last = loaded.messages.last().unwrap();
+    let last = loaded.messages.iter().rev().nth(1).unwrap();
     assert_eq!(last.content.len(), 2);
+    assert_eq!(loaded.messages.last().unwrap().role, Role::Assistant);
     assert!(loaded.dangling_tool_uses().is_empty());
 }
 
@@ -672,8 +673,9 @@ async fn compaction_replaces_history() {
     assert_eq!(reqs.len(), 4);
     assert!(reqs[2].tools.is_empty());
     let m = &reqs[3].messages;
-    assert_eq!(m.len(), 2);
-    assert!(m[0].text().contains("THE SUMMARY"));
+    // Summary and the new prompt are merged into one user message.
+    assert_eq!(m.len(), 1);
+    assert!(m[0].text().contains("THE SUMMARY") && m[0].text().contains("p3"));
     drop(reqs);
     let loaded = TranscriptReader::load(&ruckcode_core::transcript::session_path(
         &env.cwd(),
@@ -688,4 +690,275 @@ async fn compaction_replaces_history() {
             ..
         }
     )));
+}
+
+/// First call sleeps (so tests can interleave), the rest are served by a mock.
+struct DelayedFirst {
+    delay_ms: u64,
+    first: std::sync::atomic::AtomicBool,
+    inner: Arc<MockProvider>,
+}
+
+#[async_trait]
+impl Provider for DelayedFirst {
+    fn name(&self) -> &str {
+        "delayed"
+    }
+    async fn complete(
+        &self,
+        r: Request,
+        tx: UnboundedSender<StreamEvent>,
+    ) -> anyhow::Result<Response> {
+        if !self.first.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+        }
+        self.inner.complete(r, tx).await
+    }
+}
+
+fn delayed(env: &Env, delay_ms: u64, hang: bool) -> Arc<dyn Provider> {
+    if hang {
+        return Arc::new(Slow);
+    }
+    Arc::new(DelayedFirst {
+        delay_ms,
+        first: Default::default(),
+        inner: env.mock.clone(),
+    })
+}
+
+fn assert_alternating(r: &Request) {
+    assert_eq!(r.messages.first().unwrap().role, Role::User);
+    for w in r.messages.windows(2) {
+        assert_ne!(w[0].role, w[1].role, "{:?}", r.messages);
+    }
+}
+
+#[tokio::test]
+async fn cancel_then_next_prompt_keeps_alternation() {
+    let env = Env::new(None, None);
+    let agent = Arc::new(env.agent_with(delayed(&env, 0, true)));
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let (a, id) = (agent.clone(), info.id.clone());
+    let task = tokio::spawn(async move { a.prompt(&id, "one".into(), TestClient::with([])).await });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    agent.cancel(&info.id);
+    assert_eq!(task.await.unwrap().unwrap(), StopReason::Cancelled);
+    let recs = env.records(&info.id);
+    assert!(recs.iter().any(|r| matches!(r,
+        Record::AssistantMessage { message, .. } if message.text() == "[Request interrupted by user]")));
+
+    // Same session state, but a working provider: a fresh agent resumes from the transcript.
+    env.mock.push(Message::assistant_text("ok"));
+    let agent2 = env.agent();
+    agent2
+        .load_session(&info.id, env.cwd(), TestClient::with([]))
+        .await
+        .unwrap();
+    agent2
+        .prompt(&info.id, "two".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    assert_alternating(&env.mock.requests.lock().unwrap()[0]);
+}
+
+#[test]
+fn trailing_user_message_is_normalized_on_resume() {
+    // A transcript that ends in a user message (e.g. crash) resumes with alternation.
+    let env = Env::new(None, None);
+    env.mock.push(Message::assistant_text("ok"));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let agent = env.agent();
+        let info = agent.new_session(env.cwd(), None).await.unwrap();
+        agent
+            .prompt(&info.id, "one".into(), TestClient::with([]))
+            .await
+            .unwrap();
+        let path = ruckcode_core::transcript::session_path(&env.cwd(), &info.id);
+        let line = serde_json::to_string(&json!({
+            "ts": "t", "type": "user_message", "source": "user",
+            "message": Message::user_text("orphan"),
+        }))
+        .unwrap();
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(f, "{line}").unwrap();
+        env.mock.push(Message::assistant_text("ok2"));
+        let agent2 = env.agent();
+        agent2
+            .load_session(&info.id, env.cwd(), TestClient::with([]))
+            .await
+            .unwrap();
+        agent2
+            .prompt(&info.id, "two".into(), TestClient::with([]))
+            .await
+            .unwrap();
+    });
+    let reqs = env.mock.requests.lock().unwrap();
+    assert_alternating(reqs.last().unwrap());
+}
+
+#[tokio::test]
+async fn set_mode_during_prompt_does_not_block() {
+    let env = Env::new(Some(MODES), None);
+    env.mock
+        .push(tool_use("t1", "Read", json!({"file_path": "nope"})));
+    env.mock.push(Message::assistant_text("done"));
+    let agent = Arc::new(env.agent_with(delayed(&env, 400, false)));
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let client = TestClient::with([]);
+    let (a, id, c) = (agent.clone(), info.id.clone(), client.clone());
+    let task = tokio::spawn(async move { a.prompt(&id, "go".into(), c).await });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let t = std::time::Instant::now();
+    agent.set_mode(&info.id, "b", client.clone()).await.unwrap();
+    assert!(t.elapsed() < std::time::Duration::from_millis(200));
+    assert!(agent
+        .set_mode(&info.id, "zzz", client.clone())
+        .await
+        .is_err());
+    task.await.unwrap().unwrap();
+    let reqs = env.mock.requests.lock().unwrap();
+    assert!(tool_names(&reqs[0]).contains(&"Write".to_string()));
+    assert!(!tool_names(&reqs[1]).contains(&"Write".to_string()));
+    drop(reqs);
+    assert!(client
+        .events()
+        .iter()
+        .any(|e| matches!(e, SessionEvent::ModeChanged(m) if m == "b")));
+    let changes = env
+        .records(&info.id)
+        .into_iter()
+        .filter(|r| matches!(r, Record::ModeChange { to, .. } if to == "b"))
+        .count();
+    assert_eq!(changes, 1);
+}
+
+const EDIT_MODE: &str = r#"
+[modes.a]
+tools = ["Write"]
+[modes.a.permissions]
+Write = "allow"
+[[modes.a.hooks.post_edit]]
+run = "sleep 0.2; touch hook-ran"
+"#;
+
+fn write_use(id: &str, f: &str) -> Message {
+    tool_use(id, "Write", json!({"file_path": f, "content": "x"}))
+}
+
+#[tokio::test]
+async fn post_edit_runs_on_max_turn_requests_with_duration() {
+    let env = Env::new(Some(EDIT_MODE), Some("max_turn_requests = 1"));
+    env.mock.push(write_use("t1", "a.txt"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let r = agent
+        .prompt(&info.id, "go".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    assert_eq!(r, StopReason::MaxTurnRequests);
+    assert!(env.cwd().join("hook-ran").exists());
+    let d = env
+        .records(&info.id)
+        .iter()
+        .find_map(|r| match r {
+            Record::HookRun {
+                event, duration_ms, ..
+            } if event == "post_edit" => Some(*duration_ms),
+            _ => None,
+        })
+        .unwrap();
+    assert!((150..5000).contains(&d), "{d}");
+}
+
+#[tokio::test]
+async fn cancelled_turn_edits_are_formatted_next_turn() {
+    let env = Env::new(
+        Some(&EDIT_MODE.replace("[\"Write\"]", "[\"Write\", \"Bash\"]")),
+        None,
+    );
+    let two = Message {
+        role: Role::Assistant,
+        content: vec![
+            ContentBlock::ToolUse {
+                id: "a".into(),
+                name: "Write".into(),
+                input: json!({"file_path": "a.txt", "content": "1"}),
+            },
+            ContentBlock::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({"command": "true"}),
+            },
+        ],
+    };
+    env.mock.push(two);
+    env.mock.push(Message::assistant_text("fine"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let r = agent
+        .prompt(
+            &info.id,
+            "go".into(),
+            TestClient::with([PermissionDecision::Cancelled]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r, StopReason::Cancelled);
+    assert!(!env.cwd().join("hook-ran").exists());
+    agent
+        .prompt(&info.id, "again".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    assert!(env.cwd().join("hook-ran").exists());
+}
+
+const MODEL_CFG: &str = r#"
+default_profile = "p1"
+[profiles.p1]
+provider = "mock"
+model = "m1"
+[profiles.p2]
+provider = "mock"
+model = "m2"
+max_tokens = 77
+"#;
+
+async fn model_used(modes: &str, cli_model: Option<&str>) -> (String, u32) {
+    let env = Env::new(Some(modes), Some(MODEL_CFG));
+    env.mock.push(Message::assistant_text("hi"));
+    let agent = Agent::new(AgentOptions {
+        provider_override: Some(env.mock.clone()),
+        user_config_dir: Some(env.user_path.clone()),
+        model_override: cli_model.map(String::from),
+        ..Default::default()
+    });
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    agent
+        .prompt(&info.id, "x".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    let r = &env.mock.requests.lock().unwrap()[0];
+    (r.model.clone(), r.max_tokens)
+}
+
+#[tokio::test]
+async fn mode_model_and_profile_resolution() {
+    let (m, _) = model_used("[modes.a]\nmodel = \"custom\"", None).await;
+    assert_eq!(m, "custom");
+    let (m, mt) = model_used("[modes.a]\nprofile = \"p2\"", None).await;
+    assert_eq!((m.as_str(), mt), ("m2", 77));
+    // legacy: model naming a profile
+    let (m, _) = model_used("[modes.a]\nmodel = \"p2\"", None).await;
+    assert_eq!(m, "m2");
+    // CLI --model applies only when the mode sets no model
+    let (m, _) = model_used("[modes.a]\ndescription = \"x\"", Some("cli")).await;
+    assert_eq!(m, "cli");
+    let (m, _) = model_used("[modes.a]\nmodel = \"custom\"", Some("cli")).await;
+    assert_eq!(m, "custom");
 }

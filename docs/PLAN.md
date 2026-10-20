@@ -31,7 +31,7 @@ a duplex pipe (or as an `rc acp` subprocess for editors such as Zed) and acts as
 - Anthropic Messages API (streaming, tool use, prompt caching).
 - OpenAI-compatible Chat Completions (OpenAI, Ollama, OpenRouter, vLLM, …).
 
-Configured as profiles in `~/.config/ruckcode/config.toml`; modes may override the model.
+Configured as profiles in `~/.config/ruckcode/config.toml`; each mode may set `profile` (which profile to use) and/or `model` (a model id) to override the session's.
 
 ## Modes
 
@@ -48,6 +48,8 @@ file with current templates.
 ```toml
 [modes.implement]
 description = "Write code for the approved plan"
+profile = "anthropic"          # optional: profile for this mode (default: session profile)
+model = "claude-sonnet-5-5"    # optional: model id for this mode (beats --model and the profile)
 prompt = "You are implementing the approved plan in plans/. Keep changes minimal."
 tools = ["Read","Write","Edit","Glob","Grep","Bash","AskUserQuestion","SwitchMode","TodoWrite"]
 mise_tasks = ["build", "gen:*"]
