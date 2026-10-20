@@ -39,24 +39,51 @@ impl SseDecoder {
         }
         out
     }
+
+    /// Flush at end of stream: a trailing line without newline, then any pending event.
+    pub fn finish(&mut self) -> Vec<SseEvent> {
+        let mut out = if self.buf.is_empty() {
+            Vec::new()
+        } else {
+            self.push(b"\n")
+        };
+        out.extend(self.push(b"\n"));
+        out
+    }
 }
 
 pub fn events(
     resp: reqwest::Response,
 ) -> impl Stream<Item = anyhow::Result<SseEvent>> + Send + Unpin {
-    let mut decoder = SseDecoder::default();
+    decode(resp.bytes_stream())
+}
+
+/// Decode a byte stream into events, flushing a final unterminated event at EOF.
+pub fn decode<S, B, E>(bytes: S) -> impl Stream<Item = anyhow::Result<SseEvent>> + Send + Unpin
+where
+    S: Stream<Item = Result<B, E>> + Send + Unpin + 'static,
+    B: AsRef<[u8]>,
+    E: Into<anyhow::Error>,
+{
+    let state = (bytes, SseDecoder::default(), false);
     Box::pin(
-        resp.bytes_stream()
-            .map(move |chunk| -> anyhow::Result<Vec<SseEvent>> {
-                let chunk = chunk?;
-                Ok(decoder.push(&chunk))
+        futures::stream::unfold(state, |(mut bytes, mut decoder, done)| async move {
+            if done {
+                return None;
+            }
+            let (batch, done) = match bytes.next().await {
+                Some(Ok(chunk)) => (Ok(decoder.push(chunk.as_ref())), false),
+                Some(Err(e)) => (Err(e.into()), true),
+                None => (Ok(decoder.finish()), true),
+            };
+            Some((batch, (bytes, decoder, done)))
+        })
+        .flat_map(|r| {
+            futures::stream::iter(match r {
+                Ok(v) => v.into_iter().map(Ok).collect::<Vec<_>>(),
+                Err(e) => vec![Err(e)],
             })
-            .flat_map(|r| {
-                futures::stream::iter(match r {
-                    Ok(v) => v.into_iter().map(Ok).collect::<Vec<_>>(),
-                    Err(e) => vec![Err(e)],
-                })
-            }),
+        }),
     )
 }
 
@@ -73,5 +100,26 @@ mod tests {
         assert_eq!(ev[0].event.as_deref(), Some("ping"));
         assert_eq!(ev[0].data, "{\"a\":1}");
         assert_eq!(ev[1].data, "x");
+    }
+
+    #[test]
+    fn finish_flushes_unterminated_event() {
+        let mut d = SseDecoder::default();
+        assert!(d.push(b"data: [DONE]").is_empty());
+        let ev = d.finish();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].data, "[DONE]");
+        assert!(d.finish().is_empty());
+    }
+
+    #[tokio::test]
+    async fn decode_stream_flushes_at_eof() {
+        let chunks: Vec<Result<&[u8], std::io::Error>> =
+            vec![Ok(b"data: a\n\nda"), Ok(b"ta: b\r\n")];
+        let got: Vec<String> = decode(futures::stream::iter(chunks))
+            .map(|e| e.unwrap().data)
+            .collect()
+            .await;
+        assert_eq!(got, ["a", "b"]);
     }
 }

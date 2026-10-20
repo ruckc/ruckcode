@@ -193,4 +193,4 @@ against a local fake SSE server and need no API keys.
 
 ## License
 
-MIT OR Apache-2.0.
+MIT — see [LICENSE](LICENSE).
