@@ -1,0 +1,23 @@
+[tasks.build]
+description = "Build the workspace"
+run = "cargo build --workspace"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test --workspace"
+
+[tasks.fmt]
+description = "Format all code"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "Run clippy with warnings denied"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks."lint:fix"]
+description = "Apply clippy fixes"
+run = "cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged"
+
+[tasks.install]
+description = "Install the rc binary"
+run = "cargo install --path crates/ruckcode-cli"
