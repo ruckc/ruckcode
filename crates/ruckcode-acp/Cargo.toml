@@ -8,6 +8,8 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+ruckcode-core.workspace = true
+ruckcode-tools.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -15,3 +17,5 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+ruckcode-llm.workspace = true
+tempfile.workspace = true
