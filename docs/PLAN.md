@@ -4,6 +4,7 @@ A Rust agentic coding agent in the spirit of Claude Code, with:
 
 - **Lifecycle modes** instead of permission modes (explore → design → implement → test → review → release).
 - **mise tasks as tools**, injected into context per mode (lazily when there are many).
+- **MCP client**: servers from config / `.mcp.json` / ACP, exposed per mode as `mcp__<server>__<tool>`.
 - **Hooks** (e.g. post-edit format/lint with automatic fix turns).
 - **ACP-native**: the agent only speaks the Agent Client Protocol; the `rc` CLI/TUI is an ACP client.
 - **AskUserQuestion** tool, surfaced through ACP.
@@ -16,6 +17,7 @@ crates/
   ruckcode-llm      Provider trait + Anthropic + OpenAI-compatible clients (streaming, tool use)
   ruckcode-tools    built-in tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
   ruckcode-mise     mise task discovery, schema mapping, execution
+  ruckcode-mcp      MCP client (rmcp): connections, tool wrapping, lazy meta-tools
   ruckcode-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp      ACP JSON-RPC (stdio) agent server + client plumbing
   ruckcode-cli      `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
@@ -76,6 +78,18 @@ unless the target is in `auto_advance_to`. Users can switch via ACP `session/set
    so schemas are pulled on demand.
 5. Run via `mise run <task> -- <args>`, streaming output as tool-call updates; output truncated.
 
+## MCP servers
+
+1. Config: `[mcp_servers.<name>]` in user/project `config.toml` plus project `.mcp.json`
+   (Claude Code format); merged by name, project `config.toml` wins. `[mcp] lazy_threshold = 20`.
+2. Connect on the first prompt (rmcp, stdio + streamable HTTP, 30s timeout each); failures become
+   notices and a `mcp_servers` transcript record, never errors.
+3. Tools are named `mcp__<server>__<tool>`; modes select them with `mcp_tools` globs (none by
+   default; the implicit default mode gets `mcp__*`). `readOnlyHint` maps to kind `read` (allowed
+   by default); everything else asks.
+4. Above the threshold, `McpListTools` / `McpCall` replace the individual tools.
+5. ACP `mcpServers` on `session/new` / `session/load` are added per session. `rc mcp list` inspects.
+
 ## Hooks
 
 Events: `session_start`, `user_prompt_submit`, `pre_tool_use`, `post_tool_use`, `post_edit`,
@@ -115,3 +129,4 @@ tool calls left dangling by a crash get synthetic "interrupted" results.
 5. Hooks including post-edit fix turns.
 6. AskUserQuestion end-to-end, session persistence/load, compaction.
 7. Tests (mock provider, ACP round trips) and CI.
+8. MCP client (`ruckcode-mcp`), per-mode selection, ACP passthrough, `rc mcp list`.

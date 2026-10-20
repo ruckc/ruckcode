@@ -94,6 +94,64 @@ permissions = { Bash = "ask", Edit = "allow", Write = "allow" }
 `[mise] lazy_threshold` tasks match (default 12), the model gets two meta-tools, `MiseListTasks` and
 `MiseRun`, instead, so task schemas are loaded only on demand.
 
+## MCP servers
+
+`rc` is an MCP client (built on the official [`rmcp`](https://crates.io/crates/rmcp) SDK; stdio and
+streamable-HTTP transports, no OpenSSL). Servers come from, in increasing priority: user
+`~/.config/ruckcode/config.toml`, the project's `.mcp.json` (Claude Code format), and the project's
+`.ruckcode/config.toml`. Entries merge by server name; a later definition replaces the whole entry.
+
+```toml
+# config.toml
+[mcp]
+lazy_threshold = 20            # default
+
+[mcp_servers.github]           # stdio server
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "..." }
+# cwd = "tools"                # optional, relative to the project
+
+[mcp_servers.docs]             # streamable HTTP server
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ..." }
+```
+
+```json
+// .mcp.json
+{"mcpServers": {
+  "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_TOKEN": "..."}},
+  "docs": {"type": "http", "url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ..."}}
+}}
+```
+
+Servers are started on the first prompt of a session, concurrently with a 30s timeout each. A server
+that fails to start is reported as a notice and recorded in the transcript (`mcp_servers` record), and
+never blocks the others or the session.
+
+Each tool is exposed as `mcp__<server>__<tool>` (sanitized to `[A-Za-z0-9_-]`, at most 64 chars).
+**Modes opt in** with glob selectors over those full names; a mode without `mcp_tools` gets no MCP
+tools (the implicit `default` mode gets `["mcp__*"]`):
+
+```toml
+[modes.implement]
+mcp_tools = ["mcp__github__*", "mcp__docs__search"]
+```
+
+If a mode selects more than `[mcp] lazy_threshold` tools, the model gets `McpListTools` (optional
+`server`) and `McpCall` (`tool`, `arguments`) instead of one tool per MCP tool.
+
+**Permissions**: MCP tools ask by default, except tools whose `readOnlyHint` annotation is true, which
+are allowed. Override with the usual globs in `[permissions]` (config or mode), e.g.
+`"mcp__github__*" = "allow"` or `"mcp__github__delete*" = "deny"`. Results are text (non-text items
+are described, e.g. `[image: image/png]`) and truncated to 30,000 bytes.
+
+`rc mcp list` connects to the configured servers and prints each server's status and tool names.
+
+Over ACP, `session/new` and `session/load` `mcpServers` (stdio and `http`) are added to that session
+and override same-named configured servers; see [docs/ACP.md](docs/ACP.md). Child processes are killed
+when the session ends.
+
 ## Hooks
 
 Events: `session_start`, `user_prompt_submit`, `pre_tool_use`, `post_tool_use`, `post_edit`,
@@ -118,6 +176,35 @@ The model can ask structured questions (options, multi-select, an implicit "Othe
 `AskUserQuestion` tool. ACP clients that advertise `_meta.ruckcode.askUserQuestion` get the
 `_ruckcode/ask_user_question` extension request; other clients get one `session/request_permission`
 per question. See [docs/ACP.md](docs/ACP.md).
+
+## Trying rc without an API key
+
+A profile with `provider = "mock"` uses a deterministic demo model that reacts to the last
+message, so you can exercise the TUI's question, permission, todo and streaming UI offline:
+
+```toml
+# .ruckcode/config.toml
+default_profile = "demo"
+[profiles.demo]
+provider = "mock"
+model = "mock"
+```
+
+| Prompt | What the model does |
+|---|---|
+| `mock:ask` (or "ask me") | `AskUserQuestion`: one single-select, one multi-select |
+| `mock:write <path> <text>` | `Write` (asks permission) |
+| `mock:edit <path> <old> => <new>` | `Edit` |
+| `mock:bash <cmd>` | `Bash` |
+| `mock:todo` | `TodoWrite` with 3 items |
+| `mock:mode <id>` | `SwitchMode` |
+| `mock:think` | a thinking block plus text |
+| `mock:tool <Name> <json>` | any tool call |
+| anything else | lists these commands and echoes your prompt |
+
+Tools are only called when the current mode offers them. Tool results are echoed back as text
+("You chose: ...", "Tool `X` returned: ...", "Tool failed: ..."). Set `RUCKCODE_MOCK_DELAY_MS`
+to slow the streamed chunks down. The `mock:` prefix avoids clashing with TUI `/` commands.
 
 ## Sessions and transcripts
 
@@ -175,6 +262,7 @@ crates/
   ruckcode-llm      Provider trait + Anthropic and OpenAI-compatible clients
   ruckcode-tools    Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
   ruckcode-mise     mise task discovery, schema mapping, execution
+  ruckcode-mcp      MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
   ruckcode-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp      ACP JSON-RPC server and client plumbing
   ruckcode-cli      `rc` binary: TUI, headless `-p`, `rc acp`, `rc init`

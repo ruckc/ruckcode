@@ -3,6 +3,7 @@ default_mode = "explore"
 [modes.explore]
 name = "Explore"
 # model = "claude-haiku-5-5"   # model id for this mode (overrides the profile's model)
+# mcp_tools = ["mcp__*"]   # expose MCP server tools to this mode (globs over mcp__<server>__<tool>)
 description = "Understand the codebase and the problem; read-only"
 prompt = """
 You are in the explore phase. Your job is to understand: read code, search, trace how things work, \
@@ -34,6 +35,7 @@ next = ["implement"]
 
 [modes.implement]
 name = "Implement"
+# mcp_tools = ["mcp__github__*"]   # expose only some MCP tools to this mode
 description = "Write the code for the approved plan"
 prompt = """
 You are in the implement phase. Follow the approved plan in plans/ and keep changes minimal and \

@@ -20,6 +20,7 @@
 //!
 //! `{"cwd": "/path"}` -> `{"sessions": [{"id", "createdAt", "updatedAt", "firstPrompt", "mode"}]}`.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -28,6 +29,7 @@ use ruckcode_core::{
     Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, SessionEvent, SessionInfo,
     StopReason as CoreStop, ToolStatus,
 };
+use ruckcode_mcp::McpServerConfig;
 use ruckcode_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -324,6 +326,20 @@ fn mode_state(info: &SessionInfo) -> SessionModeState {
     }
 }
 
+/// ACP `mcpServers` entries as session MCP servers; unsupported ones (SSE) are skipped.
+fn acp_mcp_servers(servers: &[Value]) -> BTreeMap<String, McpServerConfig> {
+    servers
+        .iter()
+        .filter_map(|v| {
+            let r = ruckcode_mcp::from_acp(v);
+            if r.is_none() {
+                tracing::warn!("ignoring unsupported ACP MCP server entry: {v}");
+            }
+            r
+        })
+        .collect()
+}
+
 fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, RpcError> {
     serde_json::to_value(v).map_err(|e| RpcError::internal(e.to_string()))
 }
@@ -376,6 +392,10 @@ impl Handler for AcpAgent {
                             audio: false,
                             embedded_context: true,
                         },
+                        mcp_capabilities: McpCapabilities {
+                            http: true,
+                            sse: false,
+                        },
                     },
                     auth_methods: vec![],
                     agent_info: Some(Implementation {
@@ -387,7 +407,10 @@ impl Handler for AcpAgent {
             AUTHENTICATE => Ok(json!({})),
             SESSION_NEW => {
                 let req: NewSessionRequest = parse(params)?;
-                let info = self.agent().new_session(req.cwd, None).await?;
+                let info = self
+                    .agent()
+                    .new_session_with(req.cwd, None, acp_mcp_servers(&req.mcp_servers))
+                    .await?;
                 to_value(&NewSessionResponse {
                     modes: Some(mode_state(&info)),
                     session_id: info.id,
@@ -397,7 +420,12 @@ impl Handler for AcpAgent {
                 let req: LoadSessionRequest = parse(params)?;
                 let info = self
                     .agent()
-                    .load_session(&req.session_id, req.cwd, self.client())
+                    .load_session_with(
+                        &req.session_id,
+                        req.cwd,
+                        self.client(),
+                        acp_mcp_servers(&req.mcp_servers),
+                    )
                     .await?;
                 to_value(&LoadSessionResponse {
                     modes: Some(mode_state(&info)),

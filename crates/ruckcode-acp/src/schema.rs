@@ -65,6 +65,14 @@ pub struct PromptCapabilities {
 pub struct AgentCapabilities {
     pub load_session: bool,
     pub prompt_capabilities: PromptCapabilities,
+    pub mcp_capabilities: McpCapabilities,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct McpCapabilities {
+    pub http: bool,
+    pub sse: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

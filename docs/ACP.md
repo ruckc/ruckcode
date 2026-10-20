@@ -7,10 +7,10 @@
 
 | Method | Notes |
 | --- | --- |
-| `initialize` | Negotiates `protocolVersion` 1. `loadSession: true`, `embeddedContext: true`, no image/audio, no auth methods. |
+| `initialize` | Negotiates `protocolVersion` 1. `loadSession: true`, `embeddedContext: true`, `mcpCapabilities: {http: true, sse: false}`, no image/audio, no auth methods. |
 | `authenticate` | No-op, returns `{}`. |
-| `session/new` | `{cwd}` -> `{sessionId, modes}`. |
-| `session/load` | Replays history as `session/update` notifications, then returns `{modes}`. |
+| `session/new` | `{cwd, mcpServers}` -> `{sessionId, modes}`. See [MCP servers](#mcp-servers). |
+| `session/load` | `{sessionId, cwd, mcpServers}`. Replays history as `session/update` notifications, then returns `{modes}`. |
 | `session/prompt` | Returns `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). |
 | `session/cancel` | Notification. |
 | `session/set_mode` | Emits `current_mode_update`. |
@@ -45,6 +45,22 @@ Without the capability, each question is asked via `session/request_permission`,
 
 `{"cwd": "/project"}` -> `{"sessions": [{"id", "createdAt", "updatedAt", "firstPrompt", "mode"}]}`,
 newest first. Used by `rc --resume`.
+
+## MCP servers
+
+`mcpServers` on `session/new` and `session/load` are added to that session (overriding same-named
+servers from config) and connect on the first prompt:
+
+```json
+[{"name": "fs", "command": "/usr/bin/mcp-fs", "args": ["--root", "."], "env": [{"name": "K", "value": "v"}]},
+ {"type": "http", "name": "docs", "url": "https://example.com/mcp", "headers": [{"name": "Authorization", "value": "Bearer t"}]}]
+```
+
+SSE entries are ignored (`mcpCapabilities.sse` is false). Which tools a mode sees is still governed by
+its `mcp_tools` selectors (the implicit default mode selects all). Start-up failures arrive as a
+notice (`agent_message_chunk`). MCP tool calls appear as ordinary `tool_call`s titled
+`<server>: <tool>` with kind `read` (read-only annotated) or `other`, and ask via
+`session/request_permission` unless allowed by `[permissions]`.
 
 ## Modes
 

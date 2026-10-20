@@ -3,6 +3,7 @@
 mod client;
 mod headless;
 mod init_cmd;
+mod mcp_cmd;
 mod tui;
 
 use std::path::PathBuf;
@@ -91,6 +92,17 @@ pub enum Command {
     },
     /// List sessions of this project.
     Sessions,
+    /// Inspect configured MCP servers.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum McpAction {
+    /// Connect to every configured MCP server and print its status and tools.
+    List,
 }
 
 /// True for ids produced by `new_session_id`: `YYYYMMDD-HHMMSS-<6 hex>`.
@@ -190,6 +202,9 @@ async fn main() -> ExitCode {
             .await
             .map(|_| 0),
         Some(Command::Sessions) => run_sessions(&cli).await.map(|_| 0),
+        Some(Command::Mcp {
+            action: McpAction::List,
+        }) => mcp_cmd::list(&cli).await.map(|_| 0),
         None if cli.print => headless::run(&cli).await,
         None => tui::run(&cli).await.map(|_| 0),
     };

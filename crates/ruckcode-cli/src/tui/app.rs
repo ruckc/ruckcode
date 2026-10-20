@@ -1300,6 +1300,69 @@ mod tests {
         assert!(rx.try_recv().unwrap().cancelled);
     }
 
+    /// The demo mock model's `mock:ask` request, as the UI receives it over the wire.
+    #[test]
+    fn demo_ask_request_roundtrip() {
+        let req: AskRequest = serde_json::from_value(serde_json::json!({
+            "sessionId": "s",
+            "questions": [
+                {"question": "Which approach should I take?", "header": "Approach",
+                 "multiSelect": false,
+                 "options": [{"label": "Incremental (Recommended)", "description": "d"},
+                             {"label": "Rewrite", "description": "d"},
+                             {"label": "Leave as is", "description": "d"}]},
+                {"question": "Which checks should I run?", "header": "Checks",
+                 "multiSelect": true,
+                 "options": [{"label": "Unit tests"}, {"label": "Lints"}, {"label": "Formatting"}]}
+            ]
+        }))
+        .unwrap();
+        let mut a = App::new("m");
+        let (tx, mut rx) = oneshot::channel();
+        a.ask_questions(req, tx);
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Enter)); // Q1: Rewrite
+        a.handle_key(key(KeyCode::Char(' '))); // Q2: Unit tests
+        a.handle_key(key(KeyCode::Char('4'))); // Other: edit
+        for c in "note".chars() {
+            a.handle_key(key(KeyCode::Char(c)));
+        }
+        a.handle_key(key(KeyCode::Enter)); // finish text
+        a.handle_key(key(KeyCode::Enter)); // confirm
+        assert!(a.modal.is_none());
+        let v = serde_json::to_value(rx.try_recv().unwrap()).unwrap();
+        assert_eq!(v["cancelled"], false);
+        assert_eq!(v["answers"][0]["selected"], serde_json::json!(["Rewrite"]));
+        assert_eq!(
+            v["answers"][1]["selected"],
+            serde_json::json!(["Unit tests"])
+        );
+        assert_eq!(v["answers"][1]["other"], "note");
+    }
+
+    #[test]
+    fn demo_write_permission_request() {
+        let req: RequestPermissionRequest = serde_json::from_value(serde_json::json!({
+            "sessionId": "s",
+            "toolCall": {"toolCallId": "c", "title": "Write a.txt",
+                         "rawInput": {"file_path": "a.txt", "content": "hello"}},
+            "options": [
+                {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                {"optionId": "reject", "name": "Reject", "kind": "reject_once"}]
+        }))
+        .unwrap();
+        let mut a = App::new("m");
+        let (tx, mut rx) = oneshot::channel();
+        a.request_permission(req, tx);
+        a.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            RequestPermissionOutcome::Selected {
+                option_id: "allow".into()
+            }
+        );
+    }
+
     #[test]
     fn modals_queue_in_order() {
         let mut a = App::new("m");

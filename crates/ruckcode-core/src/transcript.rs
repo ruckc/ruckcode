@@ -59,6 +59,16 @@ pub struct EditRecord {
     pub diff: String,
 }
 
+/// Outcome of connecting to one MCP server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpServerRecord {
+    pub name: String,
+    pub ok: bool,
+    pub tools: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Record {
@@ -118,6 +128,9 @@ pub enum Record {
         output_tokens: u64,
     },
     SessionResumed {},
+    McpServers {
+        servers: Vec<McpServerRecord>,
+    },
 }
 
 /// A record with its timestamp, as stored on one line.

@@ -88,4 +88,19 @@ mod tests {
             Permission::Allow
         );
     }
+
+    #[test]
+    fn mcp_globs() {
+        let cfg = Config::from_toml_str("[permissions]\n\"mcp__github__*\" = \"allow\"").unwrap();
+        let m = mode("\"mcp__github__delete*\" = \"deny\"");
+        let r = |t, k| resolve(t, k, &m, &cfg);
+        assert_eq!(r("mcp__github__search", ToolKind::Other), Permission::Allow);
+        assert_eq!(
+            r("mcp__github__delete_repo", ToolKind::Other),
+            Permission::Deny
+        );
+        // Unlisted MCP tools ask unless annotated read-only.
+        assert_eq!(r("mcp__other__x", ToolKind::Other), Permission::Ask);
+        assert_eq!(r("mcp__other__x", ToolKind::Read), Permission::Allow);
+    }
 }

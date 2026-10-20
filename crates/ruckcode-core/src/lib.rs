@@ -16,3 +16,4 @@ pub use agent::{
 pub use config::{Config, Profile, ProviderKind};
 pub use modes::{ModeDef, ModeSet};
 pub use permissions::Permission;
+pub use ruckcode_mcp::McpServerConfig;

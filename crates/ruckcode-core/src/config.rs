@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use ruckcode_hooks::HooksConfig;
 use ruckcode_llm::Provider;
+use ruckcode_mcp::McpServerConfig;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -78,6 +79,25 @@ impl Default for MiseConfig {
     }
 }
 
+fn default_mcp_lazy_threshold() -> usize {
+    ruckcode_mcp::DEFAULT_LAZY_THRESHOLD
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct McpConfig {
+    /// Above this many selected MCP tools in a mode, expose `McpListTools`/`McpCall` instead.
+    #[serde(default = "default_mcp_lazy_threshold")]
+    pub lazy_threshold: usize,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            lazy_threshold: default_mcp_lazy_threshold(),
+        }
+    }
+}
+
 fn default_compaction_threshold() -> f64 {
     0.8
 }
@@ -97,6 +117,12 @@ pub struct Config {
     pub profiles: BTreeMap<String, Profile>,
     #[serde(default)]
     pub mise: MiseConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
+    /// MCP servers by name (`[mcp_servers.<name>]`), merged from user config, project
+    /// `.mcp.json` and project config.
+    #[serde(default)]
+    pub mcp_servers: BTreeMap<String, McpServerConfig>,
     /// Tool name or glob (`mise__*`) to permission.
     #[serde(default)]
     pub permissions: BTreeMap<String, Permission>,
@@ -135,9 +161,41 @@ fn parse_table(text: &str, what: &str) -> Result<toml::Table> {
         .with_context(|| format!("parsing {what}"))
 }
 
+/// Merge `[mcp_servers]` entries by server name: a later definition replaces the whole entry.
+fn merge_mcp_servers(base: &mut toml::Table, over: &mut toml::Table) {
+    let Some(toml::Value::Table(servers)) = over.remove("mcp_servers") else {
+        return;
+    };
+    let entry = base
+        .entry("mcp_servers")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let toml::Value::Table(t) = entry {
+        for (name, v) in servers {
+            t.insert(name, v);
+        }
+    }
+}
+
+/// Servers declared in `<project>/.mcp.json` (Claude Code format), as a config layer.
+fn mcp_json_layer(project_dir: &Path) -> Result<Option<toml::Table>> {
+    let path = project_dir.join(".mcp.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let servers = ruckcode_mcp::parse_mcp_json(&text)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    let mut t = toml::Table::new();
+    t.insert(
+        "mcp_servers".into(),
+        toml::Value::try_from(servers).context("converting .mcp.json servers")?,
+    );
+    Ok(Some(t))
+}
+
 fn from_tables(layers: Vec<toml::Table>) -> Result<Config> {
     let mut merged = parse_table(DEFAULTS, "built-in defaults")?;
-    for l in layers {
+    for mut l in layers {
+        merge_mcp_servers(&mut merged, &mut l);
         merge(&mut merged, l);
     }
     let cfg: Config = toml::Value::Table(merged)
@@ -158,15 +216,18 @@ impl Config {
     /// Load user then project config; `RUCKCODE_PROFILE` overrides `default_profile`.
     pub fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
         let mut layers = Vec::new();
-        let files = [
-            user_config_dir(user_dir).map(|d| d.join("config.toml")),
-            Some(project_dir.join(".ruckcode/config.toml")),
-        ];
-        for path in files.into_iter().flatten() {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                layers.push(parse_table(&text, &path.display().to_string())?);
+        let read = |path: PathBuf| -> Result<Option<toml::Table>> {
+            match std::fs::read_to_string(&path) {
+                Ok(text) => Ok(Some(parse_table(&text, &path.display().to_string())?)),
+                Err(_) => Ok(None),
             }
+        };
+        if let Some(p) = user_config_dir(user_dir).map(|d| d.join("config.toml")) {
+            layers.extend(read(p)?);
         }
+        // `.mcp.json` sits between user config and project config.toml.
+        layers.extend(mcp_json_layer(project_dir)?);
+        layers.extend(read(project_dir.join(".ruckcode/config.toml"))?);
         if let Ok(p) = std::env::var("RUCKCODE_PROFILE") {
             if !p.is_empty() {
                 let mut t = toml::Table::new();
@@ -193,7 +254,7 @@ pub fn make_provider(profile: &Profile) -> Result<Arc<dyn Provider>> {
             .map(|var| std::env::var(var).with_context(|| format!("{var} is not set")))
     };
     Ok(match profile.provider {
-        ProviderKind::Mock => Arc::new(ruckcode_llm::mock::MockProvider::default()),
+        ProviderKind::Mock => Arc::new(ruckcode_llm::mock::MockProvider::demo()),
         ProviderKind::Anthropic => {
             let key = key().context("anthropic profile needs api_key_env")??;
             Arc::new(ruckcode_llm::anthropic::Anthropic::new(
@@ -220,6 +281,8 @@ mod tests {
         assert_eq!(c.profiles["openai"].provider, ProviderKind::Openai);
         assert_eq!(c.max_turn_requests, 100);
         assert_eq!(c.mise.lazy_threshold, 12);
+        assert_eq!(c.mcp.lazy_threshold, 20);
+        assert!(c.mcp_servers.is_empty());
     }
 
     #[test]
@@ -275,5 +338,71 @@ mod tests {
     fn mock_provider() {
         let c = Config::from_toml_str("[profiles.m]\nprovider='mock'\nmodel='x'").unwrap();
         assert_eq!(make_provider(&c.profiles["m"]).unwrap().name(), "mock");
+    }
+
+    #[test]
+    fn mcp_servers_merge_by_name() {
+        let user = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::write(
+            user.path().join("config.toml"),
+            r#"
+            [mcp]
+            lazy_threshold = 5
+            [mcp_servers.u]
+            command = "user-cmd"
+            [mcp_servers.both]
+            command = "user-both"
+            args = ["x"]
+            [mcp_servers.clash]
+            command = "user-clash"
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            proj.path().join(".mcp.json"),
+            r#"{"mcpServers": {
+                "both": {"type": "http", "url": "http://json/mcp", "headers": {"A": "b"}},
+                "clash": {"command": "json-clash", "env": {"K": "v"}},
+                "j": {"command": "json-cmd", "args": ["1"]}}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(proj.path().join(".ruckcode")).unwrap();
+        std::fs::write(
+            proj.path().join(".ruckcode/config.toml"),
+            r#"
+            [mcp_servers.clash]
+            command = "proj-clash"
+            [mcp_servers.p]
+            url = "http://p/mcp"
+            "#,
+        )
+        .unwrap();
+        let c = Config::load(proj.path(), Some(user.path())).unwrap();
+        assert_eq!(c.mcp.lazy_threshold, 5);
+        let names: Vec<_> = c.mcp_servers.keys().cloned().collect();
+        assert_eq!(names, ["both", "clash", "j", "p", "u"]);
+        // .mcp.json overrides user config wholesale (no field mixing).
+        assert_eq!(
+            c.mcp_servers["both"].url.as_deref(),
+            Some("http://json/mcp")
+        );
+        assert_eq!(c.mcp_servers["both"].command, None);
+        assert_eq!(c.mcp_servers["both"].headers["A"], "b");
+        // Project config.toml wins over .mcp.json and user config.
+        assert_eq!(
+            c.mcp_servers["clash"].command.as_deref(),
+            Some("proj-clash")
+        );
+        assert!(c.mcp_servers["clash"].env.is_empty());
+        assert_eq!(c.mcp_servers["j"].args, ["1"]);
+        assert_eq!(c.mcp_servers["u"].command.as_deref(), Some("user-cmd"));
+    }
+
+    #[test]
+    fn bad_mcp_json_is_error() {
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::write(proj.path().join(".mcp.json"), "{nope").unwrap();
+        assert!(Config::load(proj.path(), None).is_err());
     }
 }

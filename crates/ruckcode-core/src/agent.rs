@@ -6,10 +6,11 @@ use ruckcode_hooks::{fix_turn_prompt, HookEvent, HookOutcome, HookRunner, HooksC
 use ruckcode_llm::{
     ContentBlock, Message, Provider, Request, Response, Role, StopReason as LlmStop, StreamEvent,
 };
+use ruckcode_mcp::{McpManager, McpServerConfig};
 use ruckcode_mise::{MiseTask, TaskSelector};
 use ruckcode_tools::{FileEdit, TodoItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
 use serde_json::{json, Value};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,7 +22,7 @@ use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::system_prompt;
 use crate::transcript::{
-    self, compaction_message, interrupted_results, EditRecord, Initiator, Metrics,
+    self, compaction_message, interrupted_results, EditRecord, Initiator, McpServerRecord, Metrics,
     PermissionOutcome, Record, SessionMeta, SessionSummary, TranscriptReader, TranscriptWriter,
     UserSource,
 };
@@ -158,6 +159,10 @@ struct SessionState {
     config: Config,
     modes: ModeSet,
     mise_tasks: Vec<MiseTask>,
+    /// MCP servers passed by the client (ACP `mcpServers`); override same-named config entries.
+    extra_mcp: BTreeMap<String, McpServerConfig>,
+    /// Connected lazily on the first prompt.
+    mcp: Option<McpManager>,
     mode: String,
     profile: String,
     messages: Vec<Message>,
@@ -341,6 +346,7 @@ impl Agent {
         id: String,
         cwd: PathBuf,
         mode: Option<String>,
+        extra_mcp: BTreeMap<String, McpServerConfig>,
     ) -> Result<SessionState> {
         let user_dir = self.options.user_config_dir.as_deref();
         let config = Config::load(&cwd, user_dir)?;
@@ -362,6 +368,8 @@ impl Agent {
             config,
             modes,
             mise_tasks,
+            extra_mcp,
+            mcp: None,
             mode,
             profile,
             messages: vec![],
@@ -450,8 +458,21 @@ impl Agent {
         cwd: PathBuf,
         initial_mode: Option<String>,
     ) -> Result<SessionInfo> {
+        self.new_session_with(cwd, initial_mode, BTreeMap::new())
+            .await
+    }
+
+    /// Like [`new_session`](Self::new_session), plus extra MCP servers for this session only.
+    pub async fn new_session_with(
+        &self,
+        cwd: PathBuf,
+        initial_mode: Option<String>,
+        extra_mcp: BTreeMap<String, McpServerConfig>,
+    ) -> Result<SessionInfo> {
         let id = transcript::new_session_id();
-        let mut s = self.build_state(id.clone(), cwd, initial_mode).await?;
+        let mut s = self
+            .build_state(id.clone(), cwd, initial_mode, extra_mcp)
+            .await?;
         if self.options.persist {
             let (model, _) = self.model_for(&s)?;
             s.transcript = Some(TranscriptWriter::create(
@@ -477,6 +498,18 @@ impl Agent {
         cwd: PathBuf,
         client: Arc<dyn Client>,
     ) -> Result<SessionInfo> {
+        self.load_session_with(id, cwd, client, BTreeMap::new())
+            .await
+    }
+
+    /// Like [`load_session`](Self::load_session), plus extra MCP servers for this session only.
+    pub async fn load_session_with(
+        &self,
+        id: &str,
+        cwd: PathBuf,
+        client: Arc<dyn Client>,
+        extra_mcp: BTreeMap<String, McpServerConfig>,
+    ) -> Result<SessionInfo> {
         let path = transcript::session_path(&cwd, id);
         let loaded = TranscriptReader::load(&path)?;
         let mode = Some(loaded.mode.clone()).filter(|m| {
@@ -484,7 +517,9 @@ impl Agent {
                 .map(|ms| ms.get(m).is_some())
                 .unwrap_or(false)
         });
-        let mut s = self.build_state(id.to_string(), cwd.clone(), mode).await?;
+        let mut s = self
+            .build_state(id.to_string(), cwd.clone(), mode, extra_mcp)
+            .await?;
         s.started = true;
         s.messages = loaded.messages.clone();
         if self.options.persist {
@@ -678,6 +713,44 @@ impl Agent {
         out
     }
 
+    /// Connect to the session's MCP servers once (first prompt), reporting failures.
+    async fn start_mcp(&self, s: &mut SessionState, client: &Arc<dyn Client>) {
+        if s.mcp.is_some() {
+            return;
+        }
+        let mut configs = s.config.mcp_servers.clone();
+        configs.extend(s.extra_mcp.clone());
+        if configs.is_empty() {
+            return;
+        }
+        let manager = McpManager::start(configs, &s.cwd).await;
+        let mut records = vec![];
+        for (name, result) in manager.statuses() {
+            match result {
+                Ok(tools) => records.push(McpServerRecord {
+                    name,
+                    ok: true,
+                    tools,
+                    error: None,
+                }),
+                Err(e) => {
+                    client.send_event(
+                        &s.id,
+                        SessionEvent::Notice(format!("MCP server `{name}` failed to start: {e}")),
+                    );
+                    records.push(McpServerRecord {
+                        name,
+                        ok: false,
+                        tools: 0,
+                        error: Some(e),
+                    });
+                }
+            }
+        }
+        s.rec(Record::McpServers { servers: records });
+        s.mcp = Some(manager);
+    }
+
     async fn run_prompt(
         &self,
         s: &mut SessionState,
@@ -711,6 +784,7 @@ impl Agent {
             );
             return Ok(StopReason::EndTurn);
         }
+        self.start_mcp(s, client).await;
         let system = system_prompt(&s.cwd, &s.modes, &s.mode).await;
         self.compact_if_needed(s, client, cancel, &system).await;
         s.push(Message::user_text(text), UserSource::User);
@@ -1326,6 +1400,9 @@ fn build_tools(s: &SessionState) -> Vec<Arc<dyn Tool>> {
         .collect();
     if !targets.is_empty() {
         tools.push(Arc::new(SwitchModeTool { targets }));
+    }
+    if let Some(mcp) = &s.mcp {
+        tools.extend(mcp.tools_for(&mode.mcp_tools, s.config.mcp.lazy_threshold));
     }
     match TaskSelector::new(&mode.mise_tasks) {
         Ok(sel) => {

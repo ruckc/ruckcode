@@ -9,6 +9,7 @@ repository.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 ruckcode-core.workspace = true
+ruckcode-mcp.workspace = true
 ruckcode-tools.workspace = true
 serde.workspace = true
 serde_json.workspace = true

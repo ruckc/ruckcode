@@ -24,6 +24,10 @@ pub struct ModeDef {
     /// Task selectors (globs over mise task names).
     #[serde(default)]
     pub mise_tasks: Vec<String>,
+    /// Glob selectors over full MCP tool names (e.g. `mcp__github__*`). Empty means no MCP
+    /// tools in this mode (the implicit default mode selects `mcp__*`).
+    #[serde(default)]
+    pub mcp_tools: Vec<String>,
     /// Modes `SwitchMode` may target; empty means any other mode.
     #[serde(default)]
     pub next: Vec<String>,
@@ -65,6 +69,7 @@ impl ModeSet {
         let def = ModeDef {
             description: "General-purpose mode with all tools".into(),
             mise_tasks: vec!["*".into()],
+            mcp_tools: vec!["mcp__*".into()],
             ..Default::default()
         };
         Self {
@@ -164,6 +169,7 @@ impl ModeSet {
 fn is_known_tool(name: &str) -> bool {
     name == "SwitchMode"
         || name.starts_with("mise__")
+        || name.starts_with("mcp__")
         || ruckcode_tools::builtin_tools()
             .iter()
             .any(|t| t.name() == name)
@@ -179,6 +185,7 @@ default_mode = "explore"
 description = "look"
 tools = ["Read", "Nope"]
 mise_tasks = ["docs*"]
+mcp_tools = ["mcp__github__*"]
 next = ["design"]
 [modes.explore.permissions]
 Bash = "deny"
@@ -199,6 +206,12 @@ auto_advance_to = ["explore"]
         let e = s.get("explore").unwrap();
         assert_eq!(e.permissions["Bash"], Permission::Deny);
         assert_eq!(e.hooks.post_edit.len(), 1);
+        assert_eq!(e.mcp_tools, ["mcp__github__*"]);
+        assert!(s.get("design").unwrap().mcp_tools.is_empty());
+        assert_eq!(
+            ModeSet::implicit().get("default").unwrap().mcp_tools,
+            ["mcp__*"]
+        );
         assert_eq!(s.switch_targets("explore"), ["design"]);
         assert_eq!(s.switch_targets("design"), ["explore"]);
     }
