@@ -801,6 +801,22 @@ Function un.onInit
 
   !if "${INSTALLMODE}" == "both"
     !insertmacro MULTIUSER_UNINIT
+    ; ruckcode: the uninstaller would otherwise default to the current user (see .onInit) and,
+    ; when run silently for a per-machine install, remove nothing from HKLM. Without an explicit
+    ; /ALLUSERS or /CURRENTUSER, pick the scope whose registered InstallLocation is this $INSTDIR.
+    ClearErrors
+    ${GetOptions} $CMDLINE "/ALLUSERS" $R9
+    IfErrors 0 ruckcode_unscope_done
+    ClearErrors
+    ${GetOptions} $CMDLINE "/CURRENTUSER" $R9
+    IfErrors 0 ruckcode_unscope_done
+    ReadRegStr $R9 HKLM "${UNINSTKEY}" "InstallLocation"
+    StrCmp $R9 "$\"$INSTDIR$\"" 0 ruckcode_unscope_done
+    ReadRegStr $R8 HKCU "${UNINSTKEY}" "InstallLocation"
+    StrCmp $R8 "$\"$INSTDIR$\"" ruckcode_unscope_done 0
+    Call un.MultiUser.InstallMode.AllUsers
+    ruckcode_unscope_done:
+    ClearErrors
   !endif
 
   !insertmacro MUI_UNGETLANGUAGE
