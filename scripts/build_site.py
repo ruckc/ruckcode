@@ -43,12 +43,21 @@ RC_TARGETS = [
     ("x86_64-pc-windows-msvc", "Windows x86_64", "zip"),
 ]
 
-# Tauri platform key -> (app target triple, updater bundle suffix)
+# Tauri platform key -> (app target triple, updater bundle suffix). The plugin looks up
+# `{os}-{arch}-{bundle}` first (bundle = the installer type the running copy was installed from:
+# msi, nsis, appimage, app, deb, rpm) and then the generic `{os}-{arch}`. So an MSI install is
+# updated with the MSI, an NSIS install with the NSIS setup, and the generic keys are the
+# fallback (NSIS on Windows). .deb/.rpm are never listed: they update by hand.
 UPDATER_PLATFORMS = {
     "darwin-aarch64": ("aarch64-apple-darwin", ".app.tar.gz"),
+    "darwin-aarch64-app": ("aarch64-apple-darwin", ".app.tar.gz"),
     "darwin-x86_64": ("x86_64-apple-darwin", ".app.tar.gz"),
+    "darwin-x86_64-app": ("x86_64-apple-darwin", ".app.tar.gz"),
     "windows-x86_64": ("x86_64-pc-windows-msvc", "-setup.exe"),
+    "windows-x86_64-nsis": ("x86_64-pc-windows-msvc", "-setup.exe"),
+    "windows-x86_64-msi": ("x86_64-pc-windows-msvc", ".msi"),
     "linux-x86_64": ("x86_64-unknown-linux-gnu", ".AppImage"),
+    "linux-x86_64-appimage": ("x86_64-unknown-linux-gnu", ".AppImage"),
 }
 
 APP_ROWS = [
@@ -57,7 +66,10 @@ APP_ROWS = [
     (
         "Windows, x64",
         "x86_64-pc-windows-msvc",
-        [("-setup.exe", "Installer (.exe)"), (".msi", "MSI package (.msi)")],
+        [
+            ("-setup.exe", "Installer (.exe, per-user or all users)"),
+            (".msi", "MSI package (.msi, per-user by default)"),
+        ],
     ),
     (
         "Linux, x86_64",

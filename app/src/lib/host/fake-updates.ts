@@ -3,7 +3,7 @@ import type { UpdateCheck, UpdatesApi } from './updates';
 export type UpdateScenario =
   /** A newer version that installs itself. */
   | 'available'
-  /** A newer version that must be downloaded by hand (deb/msi install). */
+  /** A newer version that must be downloaded by hand (deb install). */
   | 'manual'
   | 'unconfigured'
   | 'uptodate'

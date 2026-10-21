@@ -8,8 +8,8 @@
 //! cases are decided here, and the downloaded bytes never leave Rust.
 //!
 //! Flow driven by the UI: `update_check` stages the update, `update_download` fetches it with
-//! progress events, `update_install` applies it (on Windows this runs the NSIS installer and the
-//! process exits), `update_restart` relaunches.
+//! progress events, `update_install` applies it (on Windows this runs the NSIS or MSI installer and
+//! the process exits), `update_restart` relaunches.
 
 use std::time::Duration;
 
@@ -65,18 +65,21 @@ pub fn pubkey(app: &AppHandle) -> Option<String> {
 }
 
 /// Why this installation cannot update itself, or `None` when it can. The updater swaps the app
-/// in place, which works for AppImage, NSIS and macOS app bundles; a `.deb`/`.rpm`/`.msi` install
+/// in place, which works for AppImage, NSIS, MSI and macOS app bundles (the manifest has a
+/// per-bundle key for each, so an MSI install is updated with the MSI); a `.deb`/`.rpm` install
 /// (or an unbundled dev build) must be updated by hand from the download page.
 pub fn manual_reason(bundle: Option<&BundleType>) -> Option<&'static str> {
     match bundle {
-        Some(BundleType::AppImage | BundleType::Nsis | BundleType::App | BundleType::Dmg) => None,
+        Some(
+            BundleType::AppImage
+            | BundleType::Nsis
+            | BundleType::Msi
+            | BundleType::App
+            | BundleType::Dmg,
+        ) => None,
         Some(BundleType::Deb | BundleType::Rpm) => Some(
             "This copy was installed from a Linux package, which cannot update itself. \
              Download the new version from the download page (the AppImage updates itself).",
-        ),
-        Some(BundleType::Msi) => Some(
-            "This copy was installed from the MSI package, which cannot update itself. \
-             Download the new installer from the download page.",
         ),
         _ => Some("This is not an installed build, so it cannot update itself."),
     }
@@ -280,6 +283,7 @@ mod tests {
         for ok in [
             BundleType::AppImage,
             BundleType::Nsis,
+            BundleType::Msi,
             BundleType::App,
             BundleType::Dmg,
         ] {
@@ -289,9 +293,6 @@ mod tests {
             .unwrap()
             .contains("AppImage"));
         assert!(manual_reason(Some(&BundleType::Rpm)).is_some());
-        assert!(manual_reason(Some(&BundleType::Msi))
-            .unwrap()
-            .contains("MSI"));
         assert!(manual_reason(None)
             .unwrap()
             .contains("not an installed build"));

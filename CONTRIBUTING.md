@@ -114,9 +114,24 @@ desktop app) overrides `https://ruckc.github.io/ruckcode` for `rc self-update`, 
 the desktop app. The default is a constant in `crates/ruckcode-cli/src/update.rs` and
 `crates/ruckcode-app/src/update.rs` (a test keeps them, the workflow and `tauri.conf.json` in sync).
 
-Platform notes: the desktop app updates itself on macOS, from the Windows NSIS installer and from
-the Linux AppImage. `.deb` and `.msi` installs only get an "update available, download from the
-download page" notice. `rc self-update` refuses for package-manager installs. Tests never touch a
+Platform notes: the desktop app updates itself on macOS, from the Windows NSIS and MSI installers
+and from the Linux AppImage. `.deb` installs only get an "update available, download from the
+download page" notice. `latest.json` has the generic keys (`windows-x86_64` = NSIS, `linux-x86_64`,
+`darwin-*`) plus the per-installer keys the updater plugin looks up first
+(`windows-x86_64-msi`, `windows-x86_64-nsis`, `linux-x86_64-appimage`, `darwin-*-app`), so each
+install is updated with its own kind of package; `scripts/build_site.py` writes them.
+
+**Windows installers are per-user by default.** Tauri's stock templates are per-machine (MSI) or
+need a choice (NSIS `both` defaults to per-machine for admins), so the repo vendors two templates,
+`crates/ruckcode-app/wix/main.wxs` (MSI: `ALLUSERS=2`, `MSIINSTALLPERUSER=1`,
+`InstallPrivileges="limited"`, `InstallerVersion=500`, `HKMU` for the optional protocol keys) and
+`crates/ruckcode-app/nsis/installer.nsi` (`installMode: both`, default current user, unelevated
+start with on-demand elevation). Every edit is marked `ruckcode:`. **When upgrading the Tauri CLI,
+diff both against the new `tauri-bundler` templates** (`src/bundle/windows/msi/main.wxs`,
+`src/bundle/windows/nsis/installer.nsi` in the `tauri-bundler` crate) and re-apply the marked edits.
+The WiX `upgradeCode` in `tauri.conf.json` must never change. The release job's "Verify installers
+are per-user by default" step installs both packages per-user and per-machine and checks scope,
+location and update-in-place; it is the only automated check of this. `rc self-update` refuses for package-manager installs. Tests never touch a
 real key: unit and integration tests generate a throwaway minisign key pair in memory.
 
 ## CI notes

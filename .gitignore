@@ -1,3 +1,4 @@
 /target
 /crates/ruckcode-app/target
 /crates/ruckcode-app/gen
+__pycache__/

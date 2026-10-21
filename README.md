@@ -459,7 +459,7 @@ the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sha256`, al
 |----|------|-------|
 | macOS (Apple Silicon) | `...-aarch64-apple-darwin.dmg` (or `.app.tar.gz`) | open the dmg, drag to Applications |
 | macOS (Intel) | `...-x86_64-apple-darwin.dmg` | same |
-| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc-setup.exe` (per-user) or `.msi` | |
+| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc-setup.exe` or `.msi` | per-user by default, no administrator needed (see below) |
 | Linux x86_64 | `...-x86_64-unknown-linux-gnu.AppImage` or `.deb` | built on Ubuntu 22.04 (glibc 2.35, webkit2gtk 4.1) |
 
 Release builds are **unsigned** until signing secrets are configured. macOS Gatekeeper says the app
@@ -468,6 +468,13 @@ Release builds are **unsigned** until signing secrets are configured. macOS Gate
 Run anyway. On Linux, `chmod +x ruckcode-app-*.AppImage && ./ruckcode-app-*.AppImage` (needs `libfuse2`,
 or run with `--appimage-extract-and-run`), or `sudo apt install ./ruckcode-app-*.deb`. Verify downloads
 with `sha256sum -c SHA256SUMS --ignore-missing`.
+
+**Windows scope.** Both Windows installers install **for the current user by default** (into
+`%LocalAppData%\Programs\ruckcode`, no administrator prompt), which is also what lets the app update
+itself without elevation. To install for all users (`C:\Program Files\ruckcode`, needs an administrator):
+for the `.msi` run `msiexec /i ruckcode-app-<version>-x86_64-pc-windows-msvc.msi ALLUSERS=1`; for the
+`-setup.exe` run it with `/ALLUSERS` (silent: `/S /ALLUSERS`), or pick "Install for anyone using this
+computer" on its install-mode page. Updates keep the scope and location of the existing install.
 
 On Windows, install the app on Windows itself (not inside WSL2) and choose the WSL2 host to run the
 agent in a distribution; the app installs a matching `rc` there. Linux GUI apps inside WSL2 (WSLg)
@@ -584,9 +591,10 @@ are not downloadable). Everything is verified with the project's minisign key (t
   agent turn: while one runs, Restart is held back (an explicit "Restart anyway" exists). Open
   sessions end on restart and can be resumed. **Settings, Updates** has the "Automatically download
   updates" switch (when off, you are asked before anything is downloaded) and **Check for
-  updates**. Self-updating works for the macOS app, the Windows `-setup.exe` (NSIS) installer and
-  the Linux **AppImage**. A copy installed from the `.deb` or `.msi` cannot update itself: the app
-  tells you a new version exists and links to the download page. On Windows the app can also update
+  updates**. Self-updating works for the macOS app, both Windows installers (an `.msi` install is updated
+  with the MSI, a `-setup.exe` install with the setup program) and the Linux **AppImage**. A copy
+  installed from the `.deb` cannot update itself: the app tells you a new version exists and
+  links to the download page. On Windows the app can also update
   `rc` inside WSL distros (see WSL2 above).
 - **`rc`.** `rc self-update` downloads the archive for your platform from
   `<site>/rc/latest.json`, verifies SHA-256 **and** the minisign signature, and replaces the running

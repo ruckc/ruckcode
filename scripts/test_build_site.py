@@ -36,7 +36,7 @@ APP_FILES = [
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.AppImage",
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.deb",
 ]
-UPDATER_FILES = [f for f in APP_FILES if f.endswith((".app.tar.gz", "-setup.exe", ".AppImage"))]
+UPDATER_FILES = [f for f in APP_FILES if f.endswith((".app.tar.gz", "-setup.exe", ".msi", ".AppImage"))]
 
 
 def rc_name(triple):
@@ -98,12 +98,27 @@ class BuildSite(unittest.TestCase):
         self.assertEqual(tauri["version"], VERSION)
         self.assertEqual(tauri["pub_date"], "2026-01-02T03:04:05Z")
         self.assertIn("updates", tauri["notes"])
-        self.assertEqual(set(tauri["platforms"]), {"darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64"})
+        self.assertEqual(set(tauri["platforms"]), {
+                "darwin-aarch64", "darwin-aarch64-app", "darwin-x86_64", "darwin-x86_64-app",
+                "windows-x86_64", "windows-x86_64-nsis", "windows-x86_64-msi",
+                "linux-x86_64", "linux-x86_64-appimage",
+            },
+        )
         for key, p in tauri["platforms"].items():
             self.assertEqual(p["signature"], SIG, key)
             self.assertTrue(p["url"].startswith(f"{BASE}/download/v{VERSION}/"), key)
             self.assertTrue((out / "download" / f"v{VERSION}" / p["url"].rsplit("/", 1)[1]).is_file(), key)
         self.assertTrue(tauri["platforms"]["windows-x86_64"]["url"].endswith("-setup.exe"))
+        p = tauri["platforms"]
+        # An MSI install updates with the MSI, an NSIS install with the setup.exe; the generic
+        # key (fallback for anything else) stays NSIS.
+        self.assertTrue(p["windows-x86_64-msi"]["url"].endswith(".msi"))
+        self.assertTrue(p["windows-x86_64-nsis"]["url"].endswith("-setup.exe"))
+        self.assertEqual(p["windows-x86_64"], p["windows-x86_64-nsis"])
+        self.assertNotEqual(p["windows-x86_64-msi"]["url"], p["windows-x86_64"]["url"])
+        self.assertTrue(p["linux-x86_64-appimage"]["url"].endswith(".AppImage"))
+        self.assertEqual(p["darwin-aarch64-app"], p["darwin-aarch64"])
+        self.assertTrue((out / "download" / f"v{VERSION}" / f"{Path(p['windows-x86_64-msi']['url']).name}.sig").is_file())
         self.assertTrue(tauri["platforms"]["linux-x86_64"]["url"].endswith(".AppImage"))
         self.assertTrue(tauri["platforms"]["darwin-aarch64"]["url"].endswith(".app.tar.gz"))
         rc = json.loads((out / "rc" / "latest.json").read_text())

@@ -10,7 +10,7 @@ export type UpdateCheck =
       current: string;
       notes: string | null;
       date: string | null;
-      /** Why this install cannot update itself (deb/msi/unbundled); null when it can. */
+      /** Why this install cannot update itself (deb/rpm/unbundled); null when it can. */
       manualReason: string | null;
       downloadPage: string;
     };

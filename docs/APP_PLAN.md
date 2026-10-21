@@ -403,7 +403,7 @@ Built as planned, with these deviations and details:
   config. Unsigned otherwise; `.app.tar.gz` is made with `tar` since Tauri only emits it with updater artifacts.
 - **Checks.** The deb version, macOS Info.plist version and architecture are verified; GUI binaries are
   never launched, and the cross-built x86_64 macOS app is not run.
-- **Metadata.** category DeveloperTool, descriptions, copyright, MIT, homepage, NSIS per-user install,
+- **Metadata.** category DeveloperTool, descriptions, copyright, MIT, homepage, Windows installers per-user by default (MSI dual-purpose via a vendored WiX template, NSIS `both` with a vendored template defaulting to current user; per-machine via `ALLUSERS=1` / `/ALLUSERS`),
   macOS minimum 11.0. Icons remain placeholders.
 - **Local check.** `tauri build --bundles deb` produced `ruckcode_0.0.0-test_amd64.deb` with the right
   metadata. The macOS and Windows jobs have not run yet; expect first-run fixes (paths under
@@ -431,8 +431,8 @@ publicly downloadable) while GitHub Pages is public.
 - **Desktop app.** `tauri-plugin-updater` is registered but not exposed to the webview; the app
   has four narrow commands (`update_check`, `update_download` with a progress `Channel`,
   `update_install`, `update_restart`; capability grants only these). Restart uses `AppHandle::restart`,
-  so `tauri-plugin-process` is not needed. `manual_reason` turns off self-update for deb, rpm, msi
-  and unbundled builds. `UpdateController` (`state/updates.svelte.ts`) checks at startup and every
+  so `tauri-plugin-process` is not needed. `manual_reason` turns off self-update for deb, rpm
+  and unbundled builds (MSI and NSIS update themselves, each with its own package). `UpdateController` (`state/updates.svelte.ts`) checks at startup and every
   6 hours, downloads automatically (setting `ruckcode.autoUpdate` in localStorage), shows a subtle
   progress line and then the "Update vX ready" banner; restart is held back while any session runs.
   Skipped in dev and plain mock mode; `?mock=1&update=1|manual|unconfigured|uptodate|error|
@@ -448,8 +448,8 @@ publicly downloadable) while GitHub Pages is public.
 - **WSL.** `wsl.rs` now fills the shared `site/install.sh` (also served as `install.sh`) with the
   site URL and public key and runs it in the distro; it reads the latest version from
   `rc/latest.json` (falling back to the app's own version when no manifest exists).
-- **Limits.** The Windows updater runs the NSIS installer (the process exits); `.msi` installs
-  are manual. macOS and Windows builds are still not code-signed, so first launch warnings stay.
+- **Limits.** The Windows updater runs the NSIS or MSI installer matching the install (the process exits;
+  passive mode, no UAC for per-user installs; an update of a per-machine install needs elevation). macOS and Windows builds are still not code-signed, so first launch warnings stay.
   The release steps for macOS and Windows updater artifacts have not run on CI yet; expect
   first-run path fixes like in milestone 7.
 
@@ -462,7 +462,7 @@ browser, mode/hook editor, and installable bundles.
 
 - Mobile and remote access (`rc serve`, ACP over WebSocket with token auth).
 - Auto-update is done (milestone 8); remaining: a one-time key setup by the maintainer, deb/rpm
-  and MSI self-update (Tauri supports them, we only point to the download page), delta updates.
+  self-update (Tauri supports them, we only point to the download page), delta updates.
 - Configure code-signing secrets (Apple, Windows) so releases stop being flagged; replace placeholder icons.
 - Linux aarch64 and ARM Windows bundles.
 - Branch protection ruleset still needs applying (see CONTRIBUTING.md).

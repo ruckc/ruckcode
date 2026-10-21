@@ -394,7 +394,7 @@ jobs:
           prefix="ruckcode-app-${VERSION}-${TARGET}"
           signed="${UPDATER_SIGNED:-false}"
           # Updater bundles (+ .sig) exist only when signing is configured. Per platform: the
-          # macOS .app.tar.gz, the Windows NSIS installer, the Linux AppImage.
+          # macOS .app.tar.gz, the Windows MSI and NSIS installers, the Linux AppImage.
           with_sig() { cp "$1" "$2"; if [ "$signed" = true ]; then cp "$1.sig" "$2.sig"; fi; }
           case "$TARGET" in
             *apple-darwin)
@@ -405,7 +405,9 @@ jobs:
                 tar -C "$bundle/macos" -czf "dist/${prefix}.app.tar.gz" ruckcode.app
               fi ;;
             *windows*)
-              cp "$bundle"/msi/*.msi "dist/${prefix}.msi"
+              # Both Windows installers are updater bundles: the updater picks the one matching
+              # how the running copy was installed (windows-x86_64-msi / -nsis in latest.json).
+              with_sig "$(ls "$bundle"/msi/*.msi)" "dist/${prefix}.msi"
               with_sig "$(ls "$bundle"/nsis/*-setup.exe)" "dist/${prefix}-setup.exe" ;;
             *linux*)
               with_sig "$(ls "$bundle"/appimage/*.AppImage)" "dist/${prefix}.AppImage"
@@ -437,6 +439,108 @@ jobs:
             *windows*)
               test -s "${prefix}.msi"; test -s "${prefix}-setup.exe" ;;
           esac
+      # Both installers default to a per-user install (no UAC) and offer a per-machine one. The
+      # runner is an administrator, so "no elevation needed" cannot be observed directly; check
+      # the package metadata (MSI), the resulting scope (location + uninstall key hive) and that
+      # an in-place update (`/UPDATE`, what the updater runs) keeps the scope and never creates a
+      # second copy. Windows Installer / NSIS scope behavior cannot be checked on other systems.
+      - name: Verify installers are per-user by default (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = "dist/ruckcode-app-$env:VERSION-$env:TARGET"
+          $msi = (Resolve-Path "$prefix.msi").Path
+          $nsis = (Resolve-Path "$prefix-setup.exe").Path
+          $userPrograms = Join-Path $env:LOCALAPPDATA 'Programs'
+          $uninst = 'Software\Microsoft\Windows\CurrentVersion\Uninstall'
+
+          function Get-Install([string]$hive) {
+            Get-ChildItem "${hive}:\$uninst" -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ItemProperty $_.PSPath } |
+              Where-Object { $_.DisplayName -eq 'ruckcode' }
+          }
+          function Assert-Scope([string]$what, [string]$scope) {
+            $u = Get-Install 'HKCU'; $m = Get-Install 'HKLM'
+            if ($scope -eq 'user') {
+              if (-not $u) { throw "$what : no HKCU uninstall entry" }
+              if ($m) { throw "$what : unexpected HKLM uninstall entry" }
+              $loc = ($u.InstallLocation -replace '"','').TrimEnd('\')
+              if (-not $loc.StartsWith($userPrograms, [StringComparison]::OrdinalIgnoreCase)) { throw "$what : installed to '$loc', expected under $userPrograms" }
+            } else {
+              if (-not $m) { throw "$what : no HKLM uninstall entry" }
+              if ($u) { throw "$what : unexpected HKCU uninstall entry" }
+              $loc = ($m.InstallLocation -replace '"','').TrimEnd('\')
+              if (-not $loc.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)) { throw "$what : installed to '$loc', expected under $env:ProgramFiles" }
+            }
+            if (-not (Test-Path (Join-Path $loc 'ruckcode.exe'))) { throw "$what : ruckcode.exe missing in $loc" }
+            Write-Host "ok $what -> $scope scope at $loc"
+            return $loc
+          }
+          function Run([string]$exe, [string[]]$arguments) {
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "$exe $arguments exited with $($p.ExitCode)" }
+          }
+          function Msi-Prop([string]$path, [string]$name) {
+            $inst = New-Object -ComObject WindowsInstaller.Installer
+            $db = $inst.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $inst, @($path, 0))
+            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='$name'"))
+            $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+            $rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            if ($null -eq $rec) { return $null }
+            return $rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, @(1))
+          }
+          function Msi-WordCount([string]$path) {
+            $inst = New-Object -ComObject WindowsInstaller.Installer
+            $si = $inst.GetType().InvokeMember('SummaryInformation', 'GetProperty', $null, $inst, @($path, 0))
+            return [int]$si.GetType().InvokeMember('Property', 'GetProperty', $null, $si, @(15))
+          }
+
+          # --- MSI: package metadata, then a plain install (per-user) and an ALLUSERS=1 install ---
+          if ((Msi-Prop $msi 'ALLUSERS') -ne '2') { throw 'MSI: ALLUSERS must be 2 (per-user or per-machine)' }
+          if ((Msi-Prop $msi 'MSIINSTALLPERUSER') -ne '1') { throw 'MSI: MSIINSTALLPERUSER must be 1 (default to per-user)' }
+          $wc = Msi-WordCount $msi
+          if (($wc -band 8) -ne 8) { throw "MSI: Word Count summary is $wc; bit 8 (no elevation required) is not set" }
+          Write-Host "ok MSI properties: ALLUSERS=2 MSIINSTALLPERUSER=1 WordCount=$wc"
+
+          Run msiexec.exe @('/i', "`"$msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-user.log`"")
+          Assert-Scope 'msi default' 'user' | Out-Null
+          # What the updater runs for an MSI update: same package again, passive/quiet.
+          Run msiexec.exe @('/i', "`"$msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-user-update.log`"")
+          Assert-Scope 'msi update' 'user' | Out-Null
+          Run msiexec.exe @('/x', "`"$msi`"", '/qn')
+          if (Get-Install 'HKCU') { throw 'msi: per-user uninstall left the entry behind' }
+
+          Run msiexec.exe @('/i', "`"$msi`"", '/qn', 'ALLUSERS=1', '/l*v', "`"$env:RUNNER_TEMP\msi-machine.log`"")
+          Assert-Scope 'msi ALLUSERS=1' 'machine' | Out-Null
+          Run msiexec.exe @('/x', "`"$msi`"", '/qn')
+          if (Get-Install 'HKLM') { throw 'msi: per-machine uninstall left the entry behind' }
+
+          # --- NSIS: /S is per-user; /ALLUSERS is per-machine; /UPDATE keeps whichever scope ---
+          Run $nsis @('/S')
+          $loc = Assert-Scope 'nsis /S' 'user'
+          Run $nsis @('/S', '/UPDATE')
+          $loc2 = Assert-Scope 'nsis /S /UPDATE' 'user'
+          if ($loc -ne $loc2) { throw "nsis update moved the install: $loc -> $loc2" }
+          Run (Join-Path $loc 'uninstall.exe') @('/S', "_?=$loc")
+          Remove-Item -Recurse -Force $loc -ErrorAction SilentlyContinue
+          if (Get-Install 'HKCU') { throw 'nsis: per-user uninstall left the entry behind' }
+
+          Run $nsis @('/S', '/ALLUSERS')
+          $loc = Assert-Scope 'nsis /S /ALLUSERS' 'machine'
+          Run $nsis @('/S', '/UPDATE')
+          $loc2 = Assert-Scope 'nsis /S /UPDATE (per-machine)' 'machine'
+          if ($loc -ne $loc2) { throw "nsis update moved the install: $loc -> $loc2" }
+          Run (Join-Path $loc 'uninstall.exe') @('/S', "_?=$loc")
+          Remove-Item -Recurse -Force $loc -ErrorAction SilentlyContinue
+          if (Get-Install 'HKLM') { throw 'nsis: per-machine uninstall left the entry behind' }
+      - name: Upload installer logs (Windows, on failure)
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-logs-${{ matrix.target }}
+          path: ${{ runner.temp }}/msi-*.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-app-${{ matrix.target }}
