@@ -1,0 +1,52 @@
+# git-cliff configuration (pinned version: see .github/workflows/release.yml).
+# Used for (a) computing the next version (`git cliff --bumped-version`) and
+# (b) rendering release notes / CHANGELOG. Docs: https://git-cliff.org/docs/configuration
+
+[changelog]
+header = "# Changelog\n"
+body = """
+{% if version %}\
+## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}\
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+{% if commit.breaking %}**BREAKING** {% endif %}\
+{{ commit.message | upper_first }} ({{ commit.id | truncate(length=7, end="") }})
+{% endfor %}\
+{% endfor %}
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "oldest"
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^Merge ", skip = true },
+  { field = "breaking", pattern = "true", group = "Breaking changes" },
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactoring" },
+  # Release-worthy types are above; the rest never trigger a release (see
+  # the "release-worthy" check in .github/workflows/release.yml).
+  { message = "^(docs|style|test|build|ci|chore|revert)", skip = true },
+]
+
+[bump]
+# Before 1.0.0: feat -> minor, fix/perf/refactor -> patch, breaking -> minor.
+# From 1.0.0: breaking -> major.
+features_always_bump_minor = true
+breaking_always_bump_major = false
+initial_tag = "v0.1.0"
