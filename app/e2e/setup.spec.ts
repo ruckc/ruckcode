@@ -1,3 +1,4 @@
+import { connected, menu } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const fresh = (page: Page, extra = '') =>
@@ -10,14 +11,14 @@ const next = (page: Page) => dialog(page).getByRole('button', { name: 'Next', ex
 
 /** Settings > Providers > Add provider opens the wizard in its own dialog. */
 async function openWizard(page: Page) {
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await menu(page, 'Settings');
   await settings(page).getByRole('button', { name: 'Add provider…' }).click();
   await expect(settings(page)).toHaveCount(0);
   await expect(dialog(page)).toBeVisible();
 }
 
 async function openSettings(page: Page, tab?: string) {
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await menu(page, 'Settings');
   await expect(settings(page)).toBeVisible();
   if (tab) await settings(page).getByRole('tab', { name: tab }).click();
 }
@@ -88,13 +89,13 @@ test('first run: paste a key, pick the URL, check compatibility, then save a pro
   expect(await page.content()).not.toContain('very-secret');
   await dialog(page).getByRole('button', { name: 'Reconnect the agent now' }).click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
 });
 
 test('a local server needs no key: type the Ollama URL', async ({ page }) => {
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   await openWizard(page);
   await dialog(page).getByLabel('No key').check();
   await next(page).click();
@@ -124,7 +125,7 @@ test('check errors: invalid key (401), wrong path (404), override, manual model 
 }) => {
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   await openWizard(page);
   await dialog(page).getByRole('textbox', { name: 'API key' }).fill('bad');
   await next(page).click();
@@ -171,7 +172,7 @@ test('check errors: invalid key (401), wrong path (404), override, manual model 
 test('add and remove a named key; the secret never appears on the page', async ({ page }) => {
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   await openSettings(page, 'API keys');
   const add = settings(page).getByRole('form', { name: 'Add key' });
   await add.getByLabel('Name').fill('work');
@@ -197,7 +198,7 @@ test('add and remove a named key; the secret never appears on the page', async (
 test('use a key for a profile in this project only', async ({ page }) => {
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   await openSettings(page, 'API keys');
   const add = settings(page).getByRole('form', { name: 'Add key' });
   await add.getByLabel('Name').fill('client-acme');
@@ -219,7 +220,7 @@ test('creates modes.toml from the Project tab', async ({ page }) => {
   await expect(dialog(page)).toBeVisible();
   await page.keyboard.press('Escape'); // skip the wizard: the agent connects anyway
   await expect(dialog(page)).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
 
   await openSettings(page, 'Project');
   await expect(settings(page)).toContainText('No modes.toml');
@@ -234,7 +235,7 @@ test('the whole flow works against a WSL host in mock mode', async ({ page }) =>
   await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/proj');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   await openSettings(page, 'API keys');
   await expect(settings(page)).toContainText('/home/dev/proj (WSL: Ubuntu-24.04)');
   const add = settings(page).getByRole('form', { name: 'Add key' });

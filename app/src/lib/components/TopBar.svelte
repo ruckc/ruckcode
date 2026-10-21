@@ -1,30 +1,37 @@
 <script lang="ts">
   import type { ChatModel } from '../state/reducer';
+  import Icon from './Icon.svelte';
+  import Menu, { type MenuItem } from './Menu.svelte';
 
   let {
     model,
     title,
+    project = '',
     disabled,
-    planOpen = $bindable(),
-    sidebarOpen = $bindable(),
+    connected = false,
     view = 'chat',
-    onview,
+    onback,
+    onsessions,
     onmode,
     onconfig,
-    onsettings
+    menu
   }: {
     model: ChatModel | null;
     title: string;
+    /** The connected project, shown next to the session title. */
+    project?: string;
     disabled: boolean;
-    planOpen: boolean;
-    sidebarOpen: boolean;
-    view?: 'chat' | 'transcripts' | 'modes';
-    onview?: (v: 'chat' | 'transcripts' | 'modes') => void;
+    connected?: boolean;
+    view?: 'chat' | 'transcripts';
+    /** Leave a secondary view (Transcripts) for the chat. */
+    onback?: () => void;
+    /** Open the project & session picker. */
+    onsessions: () => void;
     onmode: (id: string) => void;
     onconfig: (id: string, value: string) => void;
-    onsettings: () => void;
+    /** The overflow menu: rarely used actions. */
+    menu: (MenuItem | 'sep')[];
   } = $props();
-
   const modelOpt = $derived(
     model?.configOptions.find((o) => o.id === 'model' || o.category === 'model')
   );
@@ -36,71 +43,55 @@
 </script>
 
 <header class="top">
-  <button
-    type="button"
-    class="small toggle"
-    aria-pressed={sidebarOpen}
-    aria-label="Toggle sidebar"
-    onclick={() => (sidebarOpen = !sidebarOpen)}>&#9776;</button
-  >
-  <strong class="title" {title}
-    >{view === 'transcripts' ? 'Transcripts' : view === 'modes' ? 'Modes' : title}</strong
-  >
-  {#if onview}
-    <div class="views" role="group" aria-label="View">
-      <button
-        type="button"
-        class="small toggle"
-        aria-pressed={view === 'chat'}
-        onclick={() => onview('chat')}>Chat</button
-      >
-      <button
-        type="button"
-        class="small toggle"
-        aria-pressed={view === 'transcripts'}
-        onclick={() => onview('transcripts')}>Transcripts</button
-      >
-      <button
-        type="button"
-        class="small toggle"
-        aria-pressed={view === 'modes'}
-        onclick={() => onview('modes')}>Modes</button
-      >
-    </div>
+  {#if view !== 'chat'}
+    <button
+      type="button"
+      class="icon ghost"
+      aria-label="Back to chat"
+      title="Back to chat"
+      onclick={onback}><Icon name="back" /></button
+    >
+    <strong class="title">Transcripts</strong>
+  {:else}
+    <button
+      type="button"
+      class="sessions ghost"
+      aria-label="Projects and sessions"
+      title="Open a project or session"
+      onclick={onsessions}
+    >
+      <Icon name="folder" />
+      <strong class="title" {title}>{title}</strong>
+      {#if project}<span class="muted proj">{project}</span>{/if}
+    </button>
   {/if}
   <span class="spacer"></span>
-  {#if model && view === 'chat'}
-    <label class="field">
-      <span class="muted">Mode</span>
-      {#if model.modes.length}
-        <select
-          aria-label="Mode"
-          value={model.currentModeId ?? ''}
-          {disabled}
-          onchange={(e) => onmode(e.currentTarget.value)}
-        >
-          {#each model.modes as m (m.id)}
-            <option value={m.id} title={m.description}>{m.name}</option>
-          {/each}
-        </select>
-      {:else}
-        <code data-testid="mode">{model.currentModeId ?? '-'}</code>
-      {/if}
-    </label>
+  {#if model && connected && view === 'chat'}
+    {#if model.modes.length}
+      <select
+        aria-label="Mode"
+        title="Mode"
+        value={model.currentModeId ?? ''}
+        {disabled}
+        onchange={(e) => onmode(e.currentTarget.value)}
+      >
+        {#each model.modes as m (m.id)}
+          <option value={m.id} title={m.description}>{m.name}</option>
+        {/each}
+      </select>
+    {/if}
     {#if modelOpt}
-      <label class="field">
-        <span class="muted">{modelOpt.name}</span>
-        <select
-          aria-label="Model"
-          value={modelOpt.currentValue}
-          {disabled}
-          onchange={(e) => onconfig(modelOpt.id, e.currentTarget.value)}
-        >
-          {#each modelOpt.options as o (o.value)}
-            <option value={o.value}>{o.name}</option>
-          {/each}
-        </select>
-      </label>
+      <select
+        aria-label="Model"
+        title={modelOpt.name}
+        value={modelOpt.currentValue}
+        {disabled}
+        onchange={(e) => onconfig(modelOpt.id, e.currentTarget.value)}
+      >
+        {#each modelOpt.options as o (o.value)}
+          <option value={o.value}>{o.name}</option>
+        {/each}
+      </select>
     {/if}
     {#if model.usage}
       <div
@@ -111,24 +102,15 @@
         aria-valuemax={model.usage.size}
         aria-valuenow={model.usage.used}
         aria-valuetext={`${model.usage.used} of ${model.usage.size} tokens`}
-        title="Context tokens used / window"
+        title={`Context: ${model.usage.used.toLocaleString()} / ${model.usage.size.toLocaleString()} tokens`}
       >
         <div class="bar">
           <div class="fill" class:hot={pct >= 80} style:width={`${pct}%`}></div>
         </div>
-        <span class="muted"
-          >{model.usage.used.toLocaleString()} / {model.usage.size.toLocaleString()}</span
-        >
       </div>
     {/if}
   {/if}
-  <button type="button" class="small toggle" onclick={onsettings}>Settings</button>
-  <button
-    type="button"
-    class="small toggle"
-    aria-pressed={planOpen}
-    onclick={() => (planOpen = !planOpen)}>Plan</button
-  >
+  <Menu label="More" items={menu} />
 </header>
 
 <style>
@@ -139,7 +121,6 @@
     padding: 6px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
-    flex-wrap: wrap;
   }
   .title {
     overflow: hidden;
@@ -147,21 +128,26 @@
     white-space: nowrap;
     max-width: 30ch;
   }
-  .views {
+  .sessions {
     display: flex;
-    gap: 4px;
+    gap: 8px;
+    align-items: center;
+    min-width: 0;
+    max-width: 60%;
+  }
+  .sessions :global(svg) {
+    width: 16px;
+    height: 16px;
+    flex: none;
+  }
+  .proj {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .spacer {
     flex: 1;
-  }
-  .field {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .toggle[aria-pressed='true'] {
-    background: var(--code-bg);
-    border-color: var(--accent);
   }
   .usage {
     display: flex;

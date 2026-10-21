@@ -1,3 +1,4 @@
+import { closeSettings, connected, openModes as modesTab } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const goto = (page: Page, extra = '') =>
@@ -6,8 +7,8 @@ const goto = (page: Page, extra = '') =>
 async function openModes(page: Page, extra = '') {
   await goto(page, extra);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Modes' }).click();
+  await connected(page);
+  await modesTab(page);
 }
 
 const editor = (page: Page) => page.getByRole('region', { name: 'Mode editor' });
@@ -48,8 +49,8 @@ test('edits a prompt and the tools, reviews the diff and saves', async ({ page }
   await expect(editor(page)).not.toContainText('Unsaved changes');
 
   // persisted: leave and come back
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Chat' }).click();
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Modes' }).click();
+  await closeSettings(page);
+  await modesTab(page);
   await pick(page, 'plan').click();
   await expect(editor(page).getByRole('textbox', { name: 'Prompt' })).toHaveValue(
     'Plan very carefully.\nThen ask.'
@@ -171,17 +172,17 @@ test('reorders modes with the move buttons and warns before leaving with unsaved
   await expect(list(page).getByRole('listitem').nth(1)).toContainText('verify');
   await expect(editor(page)).toContainText('Unsaved changes');
 
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Chat' }).click();
+  await closeSettings(page);
   const dlg = page.getByRole('alertdialog', { name: 'Unsaved mode changes' });
   await expect(dlg).toBeVisible();
   await dlg.getByRole('button', { name: 'Keep editing' }).click();
   await expect(dlg).toHaveCount(0);
   await expect(editor(page)).toBeVisible();
 
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Chat' }).click();
+  await closeSettings(page);
   await page.getByRole('alertdialog').getByRole('button', { name: 'Discard changes' }).click();
   await expect(editor(page)).toHaveCount(0);
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Modes' }).click();
+  await modesTab(page);
   await expect(list(page).getByRole('listitem').nth(1)).toContainText('build');
 });
 
@@ -193,8 +194,8 @@ test('without a modes.toml it offers rc init (and a blank file)', async ({ page 
   await expect(wizard).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(wizard).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Modes' }).click();
+  await connected(page);
+  await modesTab(page);
   await expect(editor(page)).toContainText('No modes.toml');
   await editor(page)
     .getByLabel(/Choose which modes/)
@@ -213,8 +214,8 @@ test('the editor works against a WSL host', async ({ page }) => {
   await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/proj');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Modes' }).click();
+  await connected(page);
+  await modesTab(page);
   await expect(editor(page)).toContainText('/home/dev/proj/.ruckcode/modes.toml');
   await pick(page, 'plan').click();
   await editor(page).getByLabel('Description').fill('Think first');
@@ -227,5 +228,5 @@ test('the editor works against a WSL host', async ({ page }) => {
   expect(calls.map((c) => c.op)).toEqual(expect.arrayContaining(['get', 'preview', 'apply']));
   expect(calls.every((c) => c.distro === 'Ubuntu-24.04')).toBe(true);
   await editor(page).getByRole('button', { name: 'Reconnect the agent now' }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
 });

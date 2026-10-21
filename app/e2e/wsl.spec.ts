@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { send } from './helpers';
+import { connected, menu, picker, send } from './helpers';
 
 const open = (page: Page, platform = 'windows') =>
   page.goto(`/?mock=1&delay=2&platform=${platform}`);
@@ -49,14 +49,16 @@ test('lists distros, installs the bundled rc automatically, then connects throug
   await expect(connect).toBeEnabled();
 
   await connect.click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   expect((await connects(page)).at(-1)).toMatchObject({
     host: 'wsl',
     distro: 'Ubuntu-24.04',
     cwd: '/mnt/c/Users/me/proj'
   });
   // the connected project shows its host
+  await picker(page);
   await expect(page.getByRole('navigation')).toContainText('WSL: Ubuntu-24.04');
+  await page.keyboard.press('Escape');
   await send(page, 'hello wsl');
   await expect(page.getByTestId('assistant-msg')).toContainText('You said: hello wsl.');
 });
@@ -113,14 +115,14 @@ test('the host choice is remembered with the recent project', async ({ page }) =
   await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/app');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Disconnect' }).click();
+  await connected(page);
+  await menu(page, 'Disconnect');
 
   await page.reload();
   const recent = page.getByRole('button', { name: /app.*WSL: Ubuntu-24.04/ });
   await expect(recent).toBeVisible();
   await recent.click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   expect((await connects(page)).at(-1)).toMatchObject({
     host: 'wsl',
     distro: 'Ubuntu-24.04',
@@ -141,7 +143,7 @@ test('a WSL project in another distro is refused before connecting', async ({ pa
 test('an agent that exits shows its exit code and stderr tail immediately', async ({ page }) => {
   await open(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
   await send(page, 'mock:exit 3 config file is invalid');
   await expect(page.getByRole('alert')).toContainText('exited with code 3: config file is invalid');
   await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();

@@ -25,7 +25,6 @@
     sessions,
     activeId,
     onconnect,
-    ondisconnect,
     onbrowse,
     onforget,
     onnew,
@@ -47,7 +46,6 @@
     sessions: (SessionSummary & { open: boolean })[];
     activeId: string | null;
     onconnect: (project: Project) => void;
-    ondisconnect: () => void;
     onbrowse: () => void;
     onforget: (project: Project) => void;
     onnew: () => void;
@@ -80,7 +78,7 @@
           type="button"
           class="small"
           aria-expanded={picking}
-          onclick={() => (picking = !picking)}>Change</button
+          onclick={() => (picking = !picking)}>Switch project</button
         >
       {/if}
     </div>
@@ -90,22 +88,6 @@
           {#if hostLabel(current)}<span class="badge">{hostLabel(current)}</span>{/if}
           {current.path}
         </div>
-        <button
-          type="button"
-          class="icon"
-          aria-label="Disconnect"
-          title="Disconnect"
-          onclick={ondisconnect}
-          ><svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"><path d="M12 2v10" /><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /></svg
-          ></button
-        >
       </div>
     {/if}
     {#if showPicker && !showForm}
@@ -233,14 +215,11 @@
   .sidebar {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
-    overflow-y: auto;
+    min-width: 0;
   }
   section {
-    padding: 10px 12px;
+    padding: 10px 16px;
+    min-width: 0;
   }
   .open {
     width: 100%;
@@ -258,6 +237,8 @@
     justify-content: space-between;
   }
   .pname {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

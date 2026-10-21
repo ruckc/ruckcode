@@ -30,7 +30,7 @@ export const STEP_LABEL: Record<Step, string> = {
   done: 'Done'
 };
 
-export type SettingsTab = 'providers' | 'keys' | 'project' | 'updates';
+export type SettingsTab = 'providers' | 'keys' | 'modes' | 'project' | 'updates';
 
 /** `new`: a pasted key (saved as a named key in the per-user credentials file on save). */
 export type AuthKind = 'new' | 'existing' | 'none';

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openApp, send } from './helpers';
+import { menu, openApp, picker, send } from './helpers';
 
 test('send a prompt and see the streamed reply, plan and usage', async ({ page }) => {
   await openApp(page);
@@ -9,7 +9,11 @@ test('send a prompt and see the streamed reply, plan and usage', async ({ page }
   await expect(page.getByTestId('turn-end')).toContainText('end_turn');
   await expect(page.getByRole('complementary', { name: 'Plan' })).toContainText('Double-check');
   await expect(page.getByRole('meter', { name: 'Context window usage' })).toBeVisible();
-  // the session is now named after its first prompt in the sidebar
+  // the session is now named after its first prompt
+  await expect(page.getByRole('button', { name: 'Projects and sessions' })).toContainText(
+    'hello there'
+  );
+  await picker(page);
   await expect(page.getByRole('list', { name: 'Sessions' })).toContainText('hello there');
 });
 
@@ -110,12 +114,15 @@ test('change the model', async ({ page }) => {
 
 test('open an old session, replaying its history, and close it', async ({ page }) => {
   await openApp(page);
+  await picker(page);
   const sessions = page.getByRole('list', { name: 'Sessions' });
   await sessions.getByRole('button', { name: /Fix the login bug/ }).click();
+  await expect(page.getByRole('dialog', { name: 'Open' })).toHaveCount(0);
   await expect(page.getByTestId('user-msg')).toHaveText('Fix the login bug in src/auth.rs');
   await expect(page.getByTestId('assistant-msg')).toContainText('Fixed:');
   await expect(page.getByTestId('tool-card')).toHaveCount(2);
   await expect(page.getByRole('complementary', { name: 'Plan' })).toContainText('Fix it');
+  await picker(page);
   await page.getByRole('button', { name: 'Close session Fix the login bug' }).click();
   await expect(page.getByTestId('user-msg')).toHaveCount(0);
   await expect(sessions.getByRole('button', { name: /Fix the login bug/ })).toBeVisible();
@@ -172,7 +179,7 @@ test('agent crash shows a reconnect button that resumes the session', async ({ p
 
 test('recent projects are remembered across reloads', async ({ page }) => {
   await openApp(page);
-  await page.getByRole('button', { name: 'Disconnect' }).click();
+  await menu(page, 'Disconnect');
   await page.reload();
   await expect(page.getByRole('button', { name: /project/ }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent projects' })).toBeVisible();

@@ -1,3 +1,4 @@
+import { menu } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const calls = (page: Page) =>
@@ -82,7 +83,7 @@ test('Settings: the automatic-download toggle persists, and downloads then wait 
   page
 }) => {
   await open(page, 'uptodate');
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await menu(page, 'Settings');
   await page.getByRole('tab', { name: 'Updates' }).click();
   const box = page.getByRole('checkbox', { name: 'Automatically download updates' });
   await expect(box).toBeChecked();
@@ -101,7 +102,7 @@ test('Settings: the automatic-download toggle persists, and downloads then wait 
 test('Settings reports an unconfigured build', async ({ page }) => {
   await open(page, 'unconfigured');
   await expect(page.getByTestId('update-banner')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await menu(page, 'Settings');
   await page.getByRole('tab', { name: 'Updates' }).click();
   await expect(page.getByTestId('update-status')).toContainText('Updates are not configured');
 });

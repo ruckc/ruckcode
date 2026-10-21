@@ -93,6 +93,7 @@ button.ghost {
 /* A square icon-only button (e.g. Refresh). */
 button.icon {
   width: 30px;
+  min-height: 30px;
   padding: 0;
   display: inline-grid;
   place-items: center;

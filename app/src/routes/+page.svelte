@@ -6,6 +6,7 @@
   import PermissionDialog from '../lib/components/PermissionDialog.svelte';
   import PlanPanel from '../lib/components/PlanPanel.svelte';
   import Sidebar from '../lib/components/Sidebar.svelte';
+  import SessionsDialog from '../lib/components/SessionsDialog.svelte';
   import TopBar from '../lib/components/TopBar.svelte';
   import {
     browseFolder,
@@ -17,9 +18,7 @@
     getWsl,
     hostMode
   } from '../lib/host';
-  import ModesView from '../lib/components/ModesView.svelte';
   import TranscriptsView from '../lib/components/TranscriptsView.svelte';
-  import UnsavedDialog from '../lib/components/UnsavedDialog.svelte';
   import UpdateBanner from '../lib/components/UpdateBanner.svelte';
   import { UpdateController } from '../lib/state/updates.svelte';
   import type { ModesApi } from '../lib/host/modes';
@@ -30,6 +29,7 @@
   import type { SetupApi, SetupTarget } from '../lib/host/setup';
   import { ChatController } from '../lib/state/chat.svelte';
   import {
+    baseName,
     loadRecent,
     pushRecent,
     removeRecent,
@@ -50,20 +50,16 @@
   let rcPath = $state('');
   let platform = $state('linux');
   let current = $state<Project | null>(null);
-  let sidebarOpen = $state(true);
-  let planOpen = $state(true);
-  let view = $state<'chat' | 'transcripts' | 'modes'>('chat');
-  let modes = $state<{ api: ModesApi; target: SetupTarget } | null>(null);
-  /** The mode editor has unsaved edits. */
-  let modesDirty = $state(false);
-  /** Navigation waiting for the unsaved-changes dialog. */
-  let pendingNav = $state<(() => void) | null>(null);
+  /** The project & session picker (a dialog: switching sessions is not an everyday action). */
+  let sessionsOpen = $state(false);
+  let view = $state<'chat' | 'transcripts'>('chat');
   let transcripts = $state<{ api: TranscriptsApi; target: TranscriptTarget } | null>(null);
   let composer: { focus(): void } | undefined = $state();
   let settings = $state<{
     api: SetupApi;
     target: SetupTarget;
     tab: SettingsTab;
+    modesApi: ModesApi;
   } | null>(null);
   /** The setup wizard, a dialog of its own (first run, or "Add provider" from Settings). */
   let setup = $state<{ api: SetupApi; target: SetupTarget; firstRun: boolean } | null>(null);
@@ -95,14 +91,12 @@
     } else if (mode === 'mock') {
       cwd = '/demo/project';
     }
-    if (window.innerWidth < 900) {
-      sidebarOpen = false;
-      planOpen = false;
-    }
     return () => updates?.stop();
   });
 
   const active = $derived(chat.active);
+  /** The plan panel appears only while the agent has a plan. */
+  const showPlan = $derived(view === 'chat' && (active?.model.plan.length ?? 0) > 0);
   const dialogOpen = $derived(!!chat.permission || !!chat.question);
 
   async function connectProject(project: Project, skipOnboarding = false) {
@@ -172,42 +166,11 @@
 
   async function openSettings(tab: SettingsTab = 'providers') {
     const p = await resolveProject();
-    settings = { api: await getSetup(), target: targetOf(p), tab };
+    const [api, modesApi] = await Promise.all([getSetup(), getModes()]);
+    settings = { api, target: targetOf(p), tab, modesApi };
   }
 
-  /** Run `action`, first asking what to do with unsaved mode edits. */
-  function guard(action: () => void) {
-    if (view === 'modes' && modesDirty) pendingNav = action;
-    else action();
-  }
-
-  function leaveModes() {
-    const a = pendingNav;
-    pendingNav = null;
-    modesDirty = false;
-    view = 'chat';
-    a?.();
-  }
-
-  function showView(v: 'chat' | 'transcripts' | 'modes') {
-    if (v !== view) guard(() => void switchView(v));
-  }
-
-  async function switchView(v: 'chat' | 'transcripts' | 'modes') {
-    if (v === 'chat') {
-      view = 'chat';
-      return;
-    }
-    if (v === 'modes') {
-      const p = await resolveProject();
-      if (!p.path) {
-        chat.error = 'Choose a project folder first.';
-        return;
-      }
-      modes = { api: await getModes(), target: targetOf(p) };
-      view = 'modes';
-      return;
-    }
+  async function openTranscripts() {
     const p = await resolveProject();
     if (!p.path) {
       chat.error = 'Choose a project folder first.';
@@ -278,10 +241,18 @@
     saveRecent(recent);
   }
 
+  // Close the picker once connected; reopen it after a disconnect (nothing else to do then).
+  let wasConnected = false;
+  $effect(() => {
+    const c = chat.connected;
+    if (c && !wasConnected) sessionsOpen = false;
+    wasConnected = c;
+  });
+
   // Keep the prompt box focused when the session changes or a dialog closes.
   $effect(() => {
     void chat.activeId;
-    if (!dialogOpen && chat.connected) queueMicrotask(() => composer?.focus());
+    if (!dialogOpen && !sessionsOpen && chat.connected) queueMicrotask(() => composer?.focus());
   });
 
   function onWindowKey(e: KeyboardEvent) {
@@ -300,54 +271,35 @@
   );
 </script>
 
-<svelte:window
-  onkeydown={onWindowKey}
-  onbeforeunload={(e) => {
-    if (view === 'modes' && modesDirty) e.preventDefault();
-  }}
-/>
+<svelte:window onkeydown={onWindowKey} />
 
-<div class="shell" class:no-sidebar={!sidebarOpen} class:no-plan={!planOpen || view !== 'chat'}>
-  {#if sidebarOpen}
-    <div class="side">
-      <Sidebar
-        bind:cwd
-        bind:host
-        bind:distro
-        bind:rcPath
-        {platform}
-        {current}
-        connected={chat.connected}
-        connecting={chat.status === 'connecting'}
-        canBrowse={mode === 'tauri' || (mode === 'mock' && platform === 'windows')}
-        noHost={mode === 'none'}
-        {recent}
-        sessions={chat.sidebar}
-        activeId={chat.activeId}
-        onconnect={(p) => guard(() => void connectProject(p))}
-        ondisconnect={() => chat.disconnect()}
-        onbrowse={browse}
-        onforget={forget}
-        onnew={() => chat.newSession()}
-        onopen={(id) => chat.openSession(id)}
-        onclose={(id) => chat.closeSession(id)}
-      />
-    </div>
-  {/if}
-
+<div class="shell" class:with-plan={showPlan}>
   <div class="main">
     <TopBar
       model={active?.model ?? null}
       title={chat.sidebar.find((s) => s.id === chat.activeId)?.title ??
-        (chat.connected ? 'New session' : 'ruckcode')}
+        (chat.connected ? 'New session' : current ? baseName(current.path) : 'Open a project')}
+      project={chat.connected && current ? baseName(current.path) : ''}
       disabled={!chat.connected}
-      bind:planOpen
-      bind:sidebarOpen
+      connected={chat.connected}
       {view}
-      onview={showView}
+      onback={() => (view = 'chat')}
+      onsessions={() => (sessionsOpen = true)}
       onmode={(id) => chat.setMode(id)}
       onconfig={(id, v) => chat.setConfig(id, v)}
-      onsettings={() => openSettings()}
+      menu={[
+        { label: 'New session', onclick: () => void chat.newSession(), disabled: !chat.connected },
+        { label: 'Open project or session…', onclick: () => (sessionsOpen = true) },
+        'sep',
+        { label: 'Transcripts', onclick: () => void openTranscripts() },
+        { label: 'Settings', onclick: () => void openSettings() },
+        ...(chat.connected
+          ? [
+              'sep' as const,
+              { label: 'Disconnect', onclick: () => chat.disconnect(), danger: true }
+            ]
+          : [])
+      ]}
     />
 
     {#if updates}
@@ -380,16 +332,6 @@
           onresume={resumeSession}
         />
       {/key}
-    {:else if view === 'modes' && modes}
-      {#key `${modes.target.distro ?? ''}\0${modes.target.project}`}
-        <ModesView
-          api={modes.api}
-          target={modes.target}
-          ondirty={(d) => (modesDirty = d)}
-          canReconnect={chat.connected}
-          onreconnect={() => void chat.reconnect()}
-        />
-      {/key}
     {:else if active}
       <ChatView items={active.model.items} running={active.running} loading={active.loading} />
     {:else}
@@ -400,13 +342,12 @@
         {:else if chat.status === 'lost'}
           <p class="muted">The agent is not running. Reconnect to continue.</p>
         {:else}
-          <h1>ruckcode</h1>
-          <p class="muted">Choose a project folder and connect to start a session.</p>
+          <div class="start">{@render picker()}</div>
         {/if}
       </div>
     {/if}
 
-    {#if view === 'chat'}
+    {#if view === 'chat' && (chat.connected || chat.status === 'lost')}
       <Composer
         bind:this={composer}
         disabled={!chat.connected || !active || active.loading}
@@ -421,13 +362,45 @@
     {/if}
   </div>
 
-  {#if planOpen && view === 'chat'}
+  {#if showPlan}
     <div class="planp"><PlanPanel plan={active?.model.plan ?? []} /></div>
   {/if}
 </div>
 
-{#if pendingNav}
-  <UnsavedDialog onkeep={() => (pendingNav = null)} ondiscard={leaveModes} />
+{#snippet picker()}
+  <Sidebar
+    bind:cwd
+    bind:host
+    bind:distro
+    bind:rcPath
+    {platform}
+    {current}
+    connected={chat.connected}
+    connecting={chat.status === 'connecting'}
+    canBrowse={mode === 'tauri' || (mode === 'mock' && platform === 'windows')}
+    noHost={mode === 'none'}
+    {recent}
+    sessions={chat.sidebar}
+    activeId={chat.activeId}
+    onconnect={(p) => void connectProject(p)}
+    onbrowse={browse}
+    onforget={forget}
+    onnew={() => {
+      sessionsOpen = false;
+      void chat.newSession();
+    }}
+    onopen={(id) => {
+      sessionsOpen = false;
+      void chat.openSession(id);
+    }}
+    onclose={(id) => chat.closeSession(id)}
+  />
+{/snippet}
+
+{#if sessionsOpen && chat.connected}
+  <SessionsDialog onclose={() => (sessionsOpen = false)}>
+    {@render picker()}
+  </SessionsDialog>
 {/if}
 
 {#if settings}
@@ -435,6 +408,9 @@
     api={settings.api}
     target={settings.target}
     bind:tab={settings.tab}
+    modesApi={settings.modesApi}
+    canReconnect={chat.connected}
+    onreconnect={() => void chat.reconnect()}
     {updates}
     onclose={closeSettings}
     onaddprovider={addProvider}
@@ -464,19 +440,12 @@
 <style>
   .shell {
     display: grid;
-    grid-template-columns: 260px minmax(0, 1fr) 280px;
+    grid-template-columns: minmax(0, 1fr);
     height: 100vh;
   }
-  .shell.no-sidebar {
+  .shell.with-plan {
     grid-template-columns: minmax(0, 1fr) 280px;
   }
-  .shell.no-plan {
-    grid-template-columns: 260px minmax(0, 1fr);
-  }
-  .shell.no-sidebar.no-plan {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .side,
   .planp {
     min-height: 0;
     overflow-y: auto;
@@ -512,31 +481,18 @@
     justify-content: center;
     gap: 6px;
   }
-  .welcome h1 {
-    margin: 0;
-    font-size: 28px;
+  .start {
+    width: min(460px, 94vw);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
   }
   @media (max-width: 900px) {
-    .shell,
-    .shell.no-sidebar,
-    .shell.no-plan,
-    .shell.no-sidebar.no-plan {
+    .shell.with-plan {
       grid-template-columns: minmax(0, 1fr);
     }
-    .side,
     .planp {
-      position: fixed;
-      top: 0;
-      bottom: 0;
-      z-index: 5;
-      width: min(300px, 88vw);
-      background: var(--surface);
-    }
-    .side {
-      left: 0;
-    }
-    .planp {
-      right: 0;
+      display: none;
     }
   }
 </style>

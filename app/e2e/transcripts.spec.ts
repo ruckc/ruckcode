@@ -1,10 +1,11 @@
+import { connected, menu } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const BIG = 'Refactor step 1';
 
 async function openView(page: Page, extra = '') {
   await page.goto(`/?mock=1&delay=2&transcriptdelay=10${extra}`);
-  await page.getByRole('button', { name: 'Transcripts', exact: true }).click();
+  await menu(page, 'Transcripts');
   await expect(page.getByRole('heading', { name: 'Transcripts' })).toBeVisible();
   await expect(page.getByTestId('session')).toHaveCount(5);
 }
@@ -147,9 +148,10 @@ test('resume opens the session in chat', async ({ page }) => {
 
 test('view toggle returns to the chat', async ({ page }) => {
   await openView(page);
-  await page.getByRole('button', { name: 'Chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to chat' }).click();
   await expect(page.getByRole('heading', { name: 'Transcripts' })).toHaveCount(0);
-  await expect(page.getByRole('textbox', { name: 'Prompt' })).toBeVisible();
+  // not connected yet: the chat shows the project picker
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
 test('works for WSL projects: the distro is passed to the backend', async ({ page }) => {
@@ -160,9 +162,9 @@ test('works for WSL projects: the distro is passed to the backend', async ({ pag
     .getByRole('textbox', { name: 'Project folder' })
     .fill('\\\\wsl.localhost\\Ubuntu-24.04\\home\\dev\\app');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
+  await connected(page);
 
-  await page.getByRole('button', { name: 'Transcripts', exact: true }).click();
+  await menu(page, 'Transcripts');
   await expect(rows(page)).toHaveCount(5);
   await rows(page).filter({ hasText: 'Fix the login bug' }).click();
   await expect(detail(page).getByRole('list', { name: 'Timeline' })).toBeVisible();

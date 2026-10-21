@@ -7,12 +7,18 @@
   import ProjectTab from './ProjectTab.svelte';
   import UpdatesTab from './UpdatesTab.svelte';
   import ProvidersTab from './ProvidersTab.svelte';
+  import ModesView from './ModesView.svelte';
+  import UnsavedDialog from './UnsavedDialog.svelte';
+  import type { ModesApi } from '../host/modes';
 
   let {
     api,
     target,
     tab = $bindable('providers'),
     updates = null,
+    modesApi = null,
+    canReconnect = false,
+    onreconnect,
     onclose,
     onaddprovider
   }: {
@@ -21,6 +27,11 @@
     tab?: SettingsTab;
     /** The app's update controller; adds the Updates tab. */
     updates?: UpdateController | null;
+    /** Adds the Modes tab (the modes.toml editor). */
+    modesApi?: ModesApi | null;
+    canReconnect?: boolean;
+    /** Restart the agent so saved modes take effect. */
+    onreconnect?: () => void;
     onclose: () => void;
     /** Open the setup wizard (a separate dialog) to add a provider. */
     onaddprovider: () => void;
@@ -29,6 +40,7 @@
   const TABS: { id: SettingsTab; label: string }[] = $derived([
     { id: 'providers', label: 'Providers' },
     { id: 'keys', label: 'API keys' },
+    ...(modesApi ? [{ id: 'modes' as const, label: 'Modes' }] : []),
     { id: 'project', label: 'Project' },
     ...(updates ? [{ id: 'updates' as const, label: 'Updates' }] : [])
   ]);
@@ -50,8 +62,29 @@
     info = s;
   }
 
+  /** The Modes tab has unsaved edits. */
+  let modesDirty = $state(false);
+  /** An action waiting on "keep editing / discard" for unsaved modes. */
+  let pending = $state<(() => void) | null>(null);
+
+  function guard(action: () => void) {
+    if (tab === 'modes' && modesDirty) pending = action;
+    else action();
+  }
+
+  function discard() {
+    const a = pending;
+    pending = null;
+    modesDirty = false;
+    a?.();
+  }
+
   function close() {
-    onclose();
+    guard(onclose);
+  }
+
+  function select(t: SettingsTab) {
+    if (t !== tab) guard(() => (tab = t));
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -66,12 +99,17 @@
     const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
     if (!d) return;
     e.preventDefault();
-    tab = TABS[(i + d + TABS.length) % TABS.length].id;
+    select(TABS[(i + d + TABS.length) % TABS.length].id);
     queueMicrotask(() => document.getElementById(`tab-${tab}`)?.focus());
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window
+  {onkeydown}
+  onbeforeunload={(e) => {
+    if (modesDirty) e.preventDefault();
+  }}
+/>
 
 <div class="backdrop" role="presentation">
   <div
@@ -100,7 +138,7 @@
           aria-selected={tab === t.id}
           aria-controls={`panel-${t.id}`}
           tabindex={tab === t.id ? 0 : -1}
-          onclick={() => (tab = t.id)}>{t.label}</button
+          onclick={() => select(t.id)}>{t.label}</button
         >
       {/each}
     </div>
@@ -115,6 +153,14 @@
         <p class="muted" role="status">Loading...</p>
       {:else if tab === 'providers'}
         <ProvidersTab {info} onadd={onaddprovider} />
+      {:else if tab === 'modes' && modesApi}
+        <ModesView
+          api={modesApi}
+          {target}
+          ondirty={(d) => (modesDirty = d)}
+          {canReconnect}
+          {onreconnect}
+        />
       {:else if tab === 'keys'}
         <KeysTab {api} {target} {info} onchange={changed} />
       {:else}
@@ -124,9 +170,14 @@
   </div>
 </div>
 
+{#if pending}
+  <UnsavedDialog onkeep={() => (pending = null)} ondiscard={discard} />
+{/if}
+
 <style>
   .settings {
-    width: min(760px, 96vw);
+    width: min(1000px, 96vw);
+    height: min(760px, 92vh);
     max-height: 92vh;
     display: flex;
     flex-direction: column;
