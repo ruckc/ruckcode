@@ -1,12 +1,33 @@
 # ACP support
 
 `ruckcode-acp` serves the agent over the Agent Client Protocol (v1, newline-delimited JSON-RPC 2.0).
-`rc acp` serves on stdio; `rc` itself talks to an in-process agent over a duplex pipe.
+`rc acp` serves on stdio; `rc` itself talks to an in-process agent over an in-memory byte pipe, so
+the wire is the same in both cases.
 
 Wire types are the official [`agent-client-protocol-schema`](https://crates.io/crates/agent-client-protocol-schema)
 crate, pinned to `=1.12.0` with `default-features = false` (no `schemars`) and **no `unstable_*`
 features**. `ruckcode_acp::schema` re-exports its `v1` types plus our extension types and helpers.
-The JSON-RPC transport (`rpc.rs`) and the request dispatch are our own.
+The JSON-RPC layer (framing, request ids, response routing, error replies, the dispatch loop) is
+the official [`agent-client-protocol`](https://crates.io/crates/agent-client-protocol) SDK (3.4,
+`default-features = false`; it depends on the same `agent-client-protocol-schema =1.12.0`, so there
+is one copy of the schema). `rpc.rs` is a thin adapter on top of it: a method-string + JSON `Value`
+view (`Handler`, `Connection`) so `_ruckcode/*` extensions, `_meta` and lenient parsing stay
+independent of the typed schema, plus a tokio line transport. Request dispatch (`agent.rs`) is ours.
+
+Transport behavior worth knowing:
+
+- **Ordering**: the SDK runs notification callbacks inline in its dispatch loop and routes responses
+  in the same loop, so `session/update` notifications sent before a response are handled by the
+  receiver before that response resolves (regression test: `rpc::tests::response_after_all_prior_notifications_handled`).
+  A notification handler must not await a request on the same connection.
+- **Concurrency**: each request runs on its own tokio task, so a long `session/prompt` can issue
+  `session/request_permission` / `_ruckcode/ask_user_question` and still receive `session/cancel`.
+- Blank and non-JSON lines on the wire are ignored (the SDK itself would answer with `-32700`).
+- A request whose `initialize` lacks a valid `protocolVersion`, or asks for a version above 1, is
+  clamped to 1 before the SDK sees it (its version guard would otherwise reject the former and drop
+  capabilities of the latter); the response still negotiates `min(requested, 1)`.
+- Per JSON-RPC, `params` must be an object or array (the SDK rejects scalars with `-32602`); all ACP
+  and `_ruckcode/*` params are objects.
 
 Inbound parsing is lenient where the official types are strict, so lenient clients keep working:
 a missing `protocolVersion` means v1; `mcpServers` may be omitted (and a malformed or unsupported

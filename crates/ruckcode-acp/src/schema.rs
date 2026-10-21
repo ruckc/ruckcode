@@ -18,8 +18,6 @@ use serde_json::Value;
 pub use agent_client_protocol_schema::v1::*;
 pub use agent_client_protocol_schema::ProtocolVersion;
 
-use crate::rpc::RpcError;
-
 // ---- standard method names (mirrors of AGENT_METHOD_NAMES / CLIENT_METHOD_NAMES) -------------
 
 pub const INITIALIZE: &str = "initialize";
@@ -184,16 +182,6 @@ pub fn default_mcp_servers(params: &mut Value) {
     }
 }
 
-impl From<Error> for RpcError {
-    fn from(e: Error) -> Self {
-        RpcError {
-            code: i64::from(i32::from(e.code)),
-            message: e.message,
-            data: e.data,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,7 +265,7 @@ mod tests {
 
     #[test]
     fn error_conversion() {
-        let e: RpcError = Error::method_not_found().into();
+        let e: crate::rpc::RpcError = Error::method_not_found().into();
         assert_eq!(e.code, -32601);
     }
 }

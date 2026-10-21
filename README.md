@@ -329,7 +329,8 @@ permission requests are denied; AskUserQuestion is cancelled. Exit codes: `0` fi
 ```
 
 Wire types come from the official [`agent-client-protocol-schema`](https://crates.io/crates/agent-client-protocol-schema)
-crate (ACP v1, stable surface only). Supported methods (including `session/list`, `session/resume`,
+crate (ACP v1, stable surface only) and the JSON-RPC transport from the official
+[`agent-client-protocol`](https://crates.io/crates/agent-client-protocol) SDK. Supported methods (including `session/list`, `session/resume`,
 `session/close` and the `model` config option), notifications and the `_ruckcode/*` extensions are
 documented in [docs/ACP.md](docs/ACP.md).
 
@@ -343,7 +344,7 @@ crates/
   ruckcode-mise     mise task discovery, schema mapping, execution
   ruckcode-mcp      MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
   ruckcode-hooks    hook config, matching, runner, fix-turn feedback
-  ruckcode-acp      ACP JSON-RPC server and client plumbing
+  ruckcode-acp      ACP agent server + client plumbing (official ACP SDK for JSON-RPC)
   ruckcode-cli      `rc` binary: TUI, headless `-p`, `rc acp`, `rc init`
 ```
 

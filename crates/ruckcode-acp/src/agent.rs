@@ -42,8 +42,9 @@ use ruckcode_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use crate::rpc::{Connection, Handler, RpcError};
+use crate::rpc::{self, Connection, Handler, RpcError};
 use crate::schema::{self as acp, *};
+use agent_client_protocol as sdk;
 
 struct Shared {
     agent: Arc<Agent>,
@@ -504,13 +505,6 @@ fn session_title(first_prompt: &str) -> Option<String> {
 #[async_trait]
 impl Handler for AcpAgent {
     async fn request(&self, method: &str, mut params: Value) -> Result<Value, RpcError> {
-        // The connection is installed right after `Connection::new`; tolerate the tiny race.
-        for _ in 0..100 {
-            if self.shared.conn.get().is_some() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
         match method {
             INITIALIZE => {
                 // Lenient: a missing version means v1.
@@ -685,18 +679,27 @@ where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    serve_transport(agent, rpc::lines_transport(reader, writer)).await
+}
+
+async fn serve_transport(
+    agent: Arc<Agent>,
+    transport: impl sdk::ConnectTo<sdk::Agent> + 'static,
+) -> anyhow::Result<()> {
     let acp = Arc::new(AcpAgent::new(agent));
-    let (conn, join) = Connection::new(reader, writer, acp.clone());
+    let (link, conn) = Connection::link();
     acp.set_connection(conn);
-    join.await?;
-    Ok(())
+    rpc::run(sdk::Agent, transport, acp, link, None)
+        .await
+        .map_err(|e| anyhow::anyhow!("acp connection: {e}"))
 }
 
 pub async fn serve_stdio(agent: Arc<Agent>) -> anyhow::Result<()> {
     serve(agent, tokio::io::stdin(), tokio::io::stdout()).await
 }
 
-/// Wire an agent to a client-side handler over a duplex pipe; returns the client-side connection.
+/// Wire an agent to a client-side handler in process (over an in-memory byte pipe, so the wire
+/// is the same as over stdio); returns the client-side connection.
 pub fn spawn_in_process(agent: Arc<Agent>, client_handler: Arc<dyn Handler>) -> Connection {
     let (a, b) = tokio::io::duplex(1024 * 1024);
     let (ar, aw) = tokio::io::split(a);
@@ -704,6 +707,5 @@ pub fn spawn_in_process(agent: Arc<Agent>, client_handler: Arc<dyn Handler>) -> 
     tokio::spawn(async move {
         let _ = serve(agent, ar, aw).await;
     });
-    let (client, _) = Connection::new(br, bw, client_handler);
-    client
+    rpc::spawn_client(rpc::lines_transport(br, bw), client_handler)
 }
