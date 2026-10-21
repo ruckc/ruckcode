@@ -360,10 +360,6 @@
     margin-left: auto;
     font-size: 12px;
   }
-  .small {
-    padding: 2px 8px;
-    font-size: 12px;
-  }
   .search {
     width: 100%;
   }

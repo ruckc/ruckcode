@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import type { ComponentProps } from 'svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import HostPicker from './HostPicker.svelte';
@@ -31,38 +31,26 @@ describe('HostPicker', () => {
     render(HostPicker, props());
     expect(screen.getByRole('radio', { name: 'WSL2' })).toHaveAttribute('aria-checked', 'true');
     const select = await screen.findByRole('combobox', { name: 'WSL distro' });
-    await screen.findByRole('option', { name: /Ubuntu-24.04 \(default, Running, WSL2\)/ });
+    await screen.findByRole('option', { name: 'Ubuntu-24.04' });
+    // no default/running/stopped noise in the list
+    expect(screen.getByRole('option', { name: 'Debian' })).toBeInTheDocument();
     expect((select as HTMLSelectElement).value).toBe('Ubuntu-24.04'); // the default distro
     expect(screen.getByRole('option', { name: /Alpine.*WSL1/ })).toBeDisabled();
     expect(screen.getByRole('option', { name: /docker-desktop/ })).toBeDisabled();
     expect(screen.getByRole('option', { name: /Debian/ })).not.toBeDisabled();
   });
 
-  it('installs the bundled rc automatically when it is missing', async () => {
-    render(HostPicker, props());
-    const status = await screen.findByRole('status', { name: 'rc status' });
-    await screen.findByText(/rc 0.1.0 \(bundled\)/);
-    expect(status).toHaveAttribute('data-state', 'ok');
-    expect(screen.getByLabelText('Install progress').textContent).toContain('copying bundled rc');
-    // No manual step needed, but a reinstall stays available.
-    expect(screen.queryByRole('button', { name: 'Install rc' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Reinstall rc' })).toBeInTheDocument();
+  it('installs the bundled rc automatically and then shows nothing', async () => {
+    const { container } = render(HostPicker, props());
+    await waitFor(() => expect(container.querySelector('[data-rc="ok"]')).not.toBeNull());
+    expect(screen.queryByRole('status', { name: 'rc status' })).toBeNull();
+    expect(screen.queryByLabelText('Install progress')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Install rc|Reinstall rc/ })).toBeNull();
   });
 
   it('updates an older rc automatically', async () => {
-    render(HostPicker, props({ distro: 'Debian' }));
-    await screen.findByText(/rc 0.1.0 \(bundled\)/);
-    expect(screen.getByRole('status', { name: 'rc status' })).toHaveAttribute('data-state', 'ok');
-  });
-
-  it('reinstalls on request', async () => {
-    render(HostPicker, props({ distro: 'Debian' }));
-    await screen.findByText(/rc 0.1.0/);
-    await fireEvent.click(screen.getByRole('button', { name: 'Reinstall rc' }));
-    await waitFor(() =>
-      expect(screen.getByLabelText('Install progress').textContent).toContain('installed')
-    );
-    await screen.findByText(/rc 0.1.0 \(bundled\)/);
+    const { container } = render(HostPicker, props({ distro: 'Debian' }));
+    await waitFor(() => expect(container.querySelector('[data-rc="ok"]')).not.toBeNull());
   });
 
   it('shows the translated Linux path, or why the path cannot be used', async () => {

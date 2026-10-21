@@ -231,7 +231,7 @@ test('creates modes.toml from the Project tab', async ({ page }) => {
 test('the whole flow works against a WSL host in mock mode', async ({ page }) => {
   await page.goto('/?mock=1&delay=2&platform=windows&setupdelay=20');
   await page.getByRole('radio', { name: 'WSL2' }).click();
-  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
+  await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/proj');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();

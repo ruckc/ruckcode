@@ -1,13 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { getWsl } from '../host';
-  import {
-    distroLabel,
-    versionMatches,
-    type RcStatus,
-    type WslApi,
-    type WslDistro
-  } from '../host/wsl';
+  import { versionMatches, type RcStatus, type WslApi, type WslDistro } from '../host/wsl';
   import type { ProjectHost } from '../state/projects';
 
   let {
@@ -53,7 +47,19 @@
   /** Progress lines arrive only when `rc` is actually being copied/installed. */
   const provisioning = $derived(installing || (checking && progress.length > 0));
   /** This session installed the bundled copy (so the picker can say so). */
-  const viaBundle = $derived(progress.some((l) => l.includes('bundled rc (')));
+  const rcState = $derived(
+    provisioning
+      ? 'installing'
+      : checking
+        ? 'checking'
+        : checkError
+          ? 'error'
+          : !rc?.installed
+            ? 'missing'
+            : matches
+              ? 'ok'
+              : 'mismatch'
+  );
 
   $effect(() => {
     onready?.(
@@ -181,7 +187,7 @@
   }
 </script>
 
-<div class="hostpicker">
+<div class="hostpicker" data-rc={host === 'wsl' && distro ? rcState : undefined}>
   <div class="seg" role="radiogroup" aria-label="Agent host">
     {#each hosts as h (h.id)}
       <button
@@ -212,65 +218,59 @@
           >
             {#each distros as d (d.name)}
               <option value={d.name} disabled={!d.selectable} title={d.reason ?? ''}>
-                {distroLabel(d)}{d.reason ? ` - ${d.reason}` : ''}
+                {d.name}{d.reason ? ` - ${d.reason}` : ''}
               </option>
             {/each}
           </select>
         </label>
         <button
           type="button"
-          class="small"
+          class="icon"
+          class:spin={listing}
           disabled={listing}
           aria-label="Refresh distros"
-          onclick={refresh}>{listing ? '…' : 'Refresh'}</button
+          title="Refresh distros"
+          onclick={refresh}
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg
+          ></button
         >
       </div>
       {#if listError}<p class="err" role="alert">{listError}</p>{/if}
 
-      {#if distro}
-        <div
-          class="rc"
-          role="status"
-          aria-label="rc status"
-          data-state={provisioning
-            ? 'installing'
-            : checking
-              ? 'checking'
-              : checkError
-                ? 'error'
-                : !rc?.installed
-                  ? 'missing'
-                  : matches
-                    ? 'ok'
-                    : 'mismatch'}
-        >
+      {#if distro && (provisioning || checking || checkError || installError || (rc && !(rc.installed && matches)))}
+        <div class="rc" role="status" aria-label="rc status" data-state={rcState}>
           {#if provisioning}
-            <span class="muted">Installing bundled rc into {distro}…</span>
+            <span class="muted">Installing rc into {distro}…</span>
           {:else if checking}
             <span class="muted">Checking rc in {distro}…</span>
           {:else if checkError}
             <span class="err">{checkError}</span>
           {:else if rc && !rc.installed}
             <span class="warn">rc is not installed in {distro}.</span>
-          {:else if rc && matches}
-            <span class="ok">rc {rc.version} {viaBundle ? '(bundled)' : 'installed'}</span>
-          {:else if rc}
+          {:else if rc && !matches}
             <span class="warn"
               >rc {rc.version ?? '(unknown version)'} is installed, but this app is {rc.expected}.</span
             >
           {/if}
-          {#if !checking && !installing && (rc || checkError)}
-            <button type="button" class="small" onclick={reinstall}>
+          {#if !checking && !installing && (checkError || installError || (rc && !(rc.installed && matches)))}
+            <button type="button" onclick={reinstall}>
               {rc?.installed ? 'Reinstall rc' : 'Install rc'}
             </button>
           {/if}
         </div>
-        {#if progress.length}
-          <pre class="log" aria-label="Install progress" aria-live="polite">{progress.join(
-              '\n'
-            )}</pre>
+        {#if installError}
+          <p class="err" role="alert">Installing rc failed: {installError}</p>
+          {#if progress.length}
+            <pre class="log" aria-label="Install progress">{progress.join('\n')}</pre>
+          {/if}
         {/if}
-        {#if installError}<p class="err" role="alert">Installing rc failed: {installError}</p>{/if}
       {/if}
     </div>
   {/if}
@@ -298,8 +298,8 @@
     flex: 1;
     border: 0;
     border-radius: 0;
-    padding: 3px 6px;
-    font-size: 12px;
+    min-height: 28px;
+    padding: 0 6px;
     background: var(--surface);
   }
   .seg button + button {
@@ -340,13 +340,6 @@
     flex-wrap: wrap;
     font-size: 12px;
   }
-  .small {
-    padding: 2px 8px;
-    font-size: 12px;
-  }
-  .ok {
-    color: var(--ok);
-  }
   .warn {
     color: var(--warn);
   }
@@ -354,6 +347,14 @@
     color: var(--err);
     margin: 0;
     font-size: 12px;
+  }
+  .spin svg {
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .log {
     margin: 0;

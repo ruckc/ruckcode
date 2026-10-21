@@ -210,7 +210,7 @@ test('without a modes.toml it offers rc init (and a blank file)', async ({ page 
 test('the editor works against a WSL host', async ({ page }) => {
   await page.goto('/?mock=1&delay=2&platform=windows&setupdelay=5&modesdelay=5');
   await page.getByRole('radio', { name: 'WSL2' }).click();
-  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
+  await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/proj');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();

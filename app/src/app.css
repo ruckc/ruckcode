@@ -69,6 +69,38 @@ button {
   padding: 5px 12px;
   cursor: pointer;
 }
+
+/* Every form control shares one box: the same height, border, radius and font. */
+button,
+input[type='text'],
+input[type='password'],
+input[type='search'],
+input[type='number'],
+input[type='url'],
+select {
+  box-sizing: border-box;
+  min-height: 30px;
+  line-height: 18px;
+  vertical-align: middle;
+}
+/* List rows and links styled as buttons size to their content. */
+button.link,
+button.item,
+button.x,
+button.ghost {
+  min-height: 0;
+}
+/* A square icon-only button (e.g. Refresh). */
+button.icon {
+  width: 30px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+button.icon svg {
+  width: 15px;
+  height: 15px;
+}
 button:hover:not(:disabled) {
   border-color: var(--accent);
 }
@@ -87,6 +119,9 @@ button.danger {
 
 input[type='text'],
 input[type='password'],
+input[type='search'],
+input[type='number'],
+input[type='url'],
 textarea,
 select {
   font: inherit;

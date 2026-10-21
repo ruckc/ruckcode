@@ -46,13 +46,26 @@
   {#if updates.lastChecked}
     <p class="muted">Last checked {new Date(updates.lastChecked).toLocaleString()}.</p>
   {/if}
-  <button
-    type="button"
-    disabled={updates.phase === 'checking' ||
-      updates.phase === 'downloading' ||
-      updates.phase === 'installing'}
-    onclick={() => void updates.check(true)}>Check for updates</button
-  >
+  {#if updates.phase === 'ready' || updates.phase === 'installing'}
+    <button
+      type="button"
+      class="primary"
+      disabled={updates.phase === 'installing' || updates.busy}
+      title={updates.busy ? 'Waiting for the agent to finish its turn' : undefined}
+      onclick={() => void updates.restartNow()}
+      >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</button
+    >
+  {:else if updates.phase === 'available'}
+    <button type="button" class="primary" onclick={() => void updates.download()}
+      >Download v{updates.version}</button
+    >
+  {:else}
+    <button
+      type="button"
+      disabled={updates.phase === 'checking' || updates.phase === 'downloading'}
+      onclick={() => void updates.check(true)}>Check for updates</button
+    >
+  {/if}
 </section>
 
 <style>

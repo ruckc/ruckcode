@@ -155,7 +155,7 @@ test('view toggle returns to the chat', async ({ page }) => {
 test('works for WSL projects: the distro is passed to the backend', async ({ page }) => {
   await page.goto('/?mock=1&delay=2&transcriptdelay=10&platform=windows');
   await page.getByRole('radio', { name: 'WSL2' }).click();
-  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
+  await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page
     .getByRole('textbox', { name: 'Project folder' })
     .fill('\\\\wsl.localhost\\Ubuntu-24.04\\home\\dev\\app');

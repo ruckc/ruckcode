@@ -57,6 +57,9 @@
 
   let picking = $state(false);
   const showPicker = $derived(picking || !connected);
+  /** Choosing a new project: the host/folder form is rolled up otherwise (recent projects stay). */
+  let choosing = $state(false);
+  const showForm = $derived(choosing || !recent.length);
   let hostReady = $state(true);
   const here = $derived<Project>({
     path: cwd,
@@ -87,12 +90,18 @@
         {current.path}
       </div>
     {/if}
-    {#if showPicker}
+    {#if showPicker && !showForm}
+      <button type="button" class="primary open" onclick={() => (choosing = true)}
+        >Open a project…</button
+      >
+    {/if}
+    {#if showPicker && showForm}
       <form
         class="picker"
         onsubmit={(e) => {
           e.preventDefault();
           picking = false;
+          choosing = false;
           onconnect(here);
         }}
       >
@@ -113,6 +122,9 @@
         />
         <div class="row">
           {#if canBrowse}<button type="button" onclick={onbrowse}>Browse…</button>{/if}
+          {#if recent.length}
+            <button type="button" onclick={() => (choosing = false)}>Cancel</button>
+          {/if}
           <button
             class="primary"
             type="submit"
@@ -121,39 +133,42 @@
             {connecting ? 'Connecting…' : connected ? 'Open' : 'Connect'}
           </button>
         </div>
-        {#if recent.length}
-          <h3>Recent projects</h3>
-          <ul class="recent">
-            {#each recent as r (projectKey(r))}
-              <li>
-                <button
-                  type="button"
-                  class="link"
-                  title={r.path}
-                  disabled={connecting || noHost}
-                  onclick={() => {
-                    picking = false;
-                    cwd = r.path;
-                    host = r.host;
-                    distro = r.distro ?? '';
-                    rcPath = r.rcPath ?? '';
-                    onconnect(r);
-                  }}
-                  >{baseName(r.path)}
-                  <span class="muted">{hostLabel(r) ? `${hostLabel(r)} · ` : ''}{r.path}</span
-                  ></button
-                >
-                <button
-                  type="button"
-                  class="x"
-                  aria-label={`Forget ${r.path}`}
-                  onclick={() => onforget(r)}>&times;</button
-                >
-              </li>
-            {/each}
-          </ul>
-        {/if}
       </form>
+    {/if}
+    {#if showPicker}
+      {#if recent.length}
+        <h3>Recent projects</h3>
+        <ul class="recent">
+          {#each recent as r (projectKey(r))}
+            <li>
+              <button
+                type="button"
+                class="link"
+                title={r.path}
+                disabled={connecting || noHost}
+                onclick={() => {
+                  picking = false;
+                  choosing = false;
+                  cwd = r.path;
+                  host = r.host;
+                  distro = r.distro ?? '';
+                  rcPath = r.rcPath ?? '';
+                  onconnect(r);
+                }}
+                >{baseName(r.path)}
+                <span class="muted">{hostLabel(r) ? `${hostLabel(r)} · ` : ''}{r.path}</span
+                ></button
+              >
+              <button
+                type="button"
+                class="x"
+                aria-label={`Forget ${r.path}`}
+                onclick={() => onforget(r)}>&times;</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {/if}
     {#if connected}
       <button type="button" class="small disc" onclick={ondisconnect}>Disconnect</button>
@@ -212,6 +227,9 @@
   section {
     padding: 10px 12px;
   }
+  .open {
+    width: 100%;
+  }
   .project {
     border-bottom: 1px solid var(--border);
     display: grid;
@@ -259,10 +277,6 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--muted);
-  }
-  .small {
-    padding: 2px 8px;
-    font-size: 12px;
   }
   .disc {
     justify-self: start;

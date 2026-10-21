@@ -251,10 +251,6 @@
     gap: 10px;
     align-items: center;
   }
-  .small {
-    padding: 2px 8px;
-    font-size: 12px;
-  }
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));

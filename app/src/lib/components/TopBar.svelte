@@ -159,10 +159,6 @@
     gap: 6px;
     align-items: center;
   }
-  .small {
-    padding: 2px 8px;
-    font-size: 12px;
-  }
   .toggle[aria-pressed='true'] {
     background: var(--code-bg);
     border-color: var(--accent);
