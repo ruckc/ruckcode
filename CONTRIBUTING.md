@@ -41,3 +41,30 @@ rather than committed.
 - Tests use plain `cargo test` (no extra tool install).
 - Recommended branch protection for `main`: require the `fmt`, `clippy`, `test`,
   `check`, `PR title` and `PR commits` checks, and allow squash merging.
+
+## Branch protection
+
+`main` is protected by the ruleset in [`.github/rulesets/main.json`](.github/rulesets/main.json):
+
+- Changes land through pull requests only, merged by **squash** (the PR title becomes the
+  Conventional Commit on `main`). No approvals are required.
+- These checks must pass on an up-to-date branch: `fmt`, `clippy`, `test`,
+  `check (macos-14)`, `check (windows-2022)`, `PR title` and `PR commits`.
+- Review threads must be resolved. Force pushes, branch deletion and non-linear history are
+  blocked.
+- Repository admins can bypass the rules only when merging a pull request, for example to land
+  a fix for broken CI. They cannot push directly.
+
+The release workflow is unaffected because it creates tags and releases through the API.
+
+To apply or update the ruleset (needs repo admin):
+
+```sh
+# create
+gh api -X POST repos/ruckc/ruckcode/rulesets --input .github/rulesets/main.json
+# update an existing one
+gh api repos/ruckc/ruckcode/rulesets --jq '.[] | select(.name=="main") | .id'
+gh api -X PUT repos/ruckc/ruckcode/rulesets/<id> --input .github/rulesets/main.json
+```
+
+Or import it in the GitHub UI: Settings → Rules → Rulesets → New ruleset → Import a ruleset.
