@@ -28,6 +28,8 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_NET_RETRY: "10"
   # No debug info in test/check builds: halves target/ so jobs fit on the runner disk.
+  # Cargo cache keys include this file's hash: a change to these settings invalidates every
+  # cached target/, and a key that only followed Cargo.lock kept restoring unusable builds.
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
@@ -79,7 +81,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-clippy-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-clippy-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-clippy-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -92,7 +94,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-clippy-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-clippy-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
 
   test:
     runs-on: ubuntu-24.04
@@ -127,7 +129,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: cargo test --workspace --locked
@@ -142,7 +144,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
   check:
     name: check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -155,6 +157,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Real-time scanning of every file rustc/link.exe writes slows Windows builds noticeably.
+      - name: Exclude build folders from Defender (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup", $env:RUNNER_TEMP -ErrorAction SilentlyContinue
       - name: Install Rust
         shell: bash
         run: |
@@ -177,7 +184,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: cargo check --workspace --all-targets --locked
@@ -190,7 +197,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
 
   # Release site tooling (update manifests, download page, install.sh): Python standard library and
   # POSIX sh only.
@@ -316,7 +323,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/ruckcode-app/target
-          key: cargo-app-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          key: cargo-app-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-app-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: cargo check --manifest-path crates/ruckcode-app/Cargo.toml --all-targets --locked
@@ -329,7 +336,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/ruckcode-app/target
-          key: cargo-app-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          key: cargo-app-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
 
   # The WSL2 host only runs on Windows: type-check (and run the platform-independent tests of)
   # the Tauri shell there. WebView2 is preinstalled on GitHub's Windows runners.
@@ -357,6 +364,11 @@ jobs:
       # The Tauri build embeds the built frontend (app/build).
       - run: pnpm -C app install --frozen-lockfile
       - run: pnpm -C app build
+      # Real-time scanning of every file rustc/link.exe writes slows Windows builds noticeably.
+      - name: Exclude build folders from Defender (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup", $env:RUNNER_TEMP -ErrorAction SilentlyContinue
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
@@ -371,7 +383,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/ruckcode-app/target
-          key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: cargo check --manifest-path crates/ruckcode-app/Cargo.toml --all-targets --locked
@@ -385,7 +397,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/ruckcode-app/target
-          key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
 
   # ---------------------------------------------------------------------------------------
   # Release pipeline (push to main only). Everything up to release-site runs in PARALLEL with
@@ -487,6 +499,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Real-time scanning of every file rustc/link.exe writes slows Windows builds noticeably.
+      - name: Exclude build folders from Defender (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup", $env:RUNNER_TEMP -ErrorAction SilentlyContinue
       - name: Install Rust
         shell: bash
         run: |
@@ -512,7 +529,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - name: Build
@@ -555,7 +572,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
 
   # Desktop app bundles (Tauri v2 CLI from app/ devDependencies; no third-party actions).
   # Linux builds on ubuntu-22.04 on purpose: bundles link against that image's glibc (2.35) and
@@ -599,6 +616,11 @@ jobs:
           corepack enable
           corepack prepare "pnpm@${PNPM_VERSION}" --activate
           pnpm --version
+      # Real-time scanning of every file rustc/link.exe writes slows Windows builds noticeably.
+      - name: Exclude build folders from Defender (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup", $env:RUNNER_TEMP -ErrorAction SilentlyContinue
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --no-self-update --target "$TARGET"
@@ -637,7 +659,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/ruckcode-app/target
-          key: cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          key: cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: pnpm -C app install --frozen-lockfile
@@ -928,7 +950,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/ruckcode-app/target
-          key: cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          key: cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
       - name: Save pnpm store
         if: always() && github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
