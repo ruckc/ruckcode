@@ -498,6 +498,48 @@ jobs:
             return [int]$si.GetType().InvokeMember('Property', 'GetProperty', $null, $si, @(15))
           }
 
+          # Windows Installer does not write HKCU/HKLM ...\Uninstall keys for MSI products (it keeps
+          # them in its own UserData store), so MSI installs are checked through the Installer API:
+          # context 1/2 = per-user (managed/unmanaged), 4 = per-machine.
+          function Get-MsiInstall {
+            $inst = New-Object -ComObject WindowsInstaller.Installer
+            $products = $inst.GetType().InvokeMember('ProductsEx', 'GetProperty', $null, $inst, @('', '', 7))
+            foreach ($p in $products) {
+              $name = $p.GetType().InvokeMember('InstallProperty', 'GetProperty', $null, $p, @('ProductName'))
+              if ($name -eq 'ruckcode') {
+                return [pscustomobject]@{
+                  Context = [int]$p.GetType().InvokeMember('Context', 'GetProperty', $null, $p, $null)
+                  Code = $p.GetType().InvokeMember('ProductCode', 'GetProperty', $null, $p, $null)
+                }
+              }
+            }
+            return $null
+          }
+          function Show-MsiLog([string]$log) {
+            if (Test-Path $log) {
+              Write-Host "--- $log (scope-related lines) ---"
+              Select-String -Path $log -Pattern 'ALLUSERS|MSIINSTALLPERUSER|INSTALLDIR|ProgramFiles64Folder|Context|per-user|Return value 3' |
+                Select-Object -First 60 | ForEach-Object { Write-Host $_.Line }
+            }
+          }
+          function Assert-MsiScope([string]$what, [string]$scope, [string]$log) {
+            $p = Get-MsiInstall
+            $userExe = Join-Path $userPrograms 'ruckcode\ruckcode.exe'
+            $machineExe = Join-Path $env:ProgramFiles 'ruckcode\ruckcode.exe'
+            $ok = $false
+            if ($p) {
+              if ($scope -eq 'user') { $ok = ($p.Context -band 3) -and (Test-Path $userExe) }
+              else { $ok = ($p.Context -eq 4) -and (Test-Path $machineExe) }
+            }
+            if (-not $ok) {
+              Write-Host "MSI product: $(if ($p) { "context=$($p.Context) code=$($p.Code)" } else { 'not registered' })"
+              Write-Host "user exe present: $(Test-Path $userExe); machine exe present: $(Test-Path $machineExe)"
+              Show-MsiLog $log
+              throw "$what : expected a $scope install"
+            }
+            Write-Host "ok $what -> $scope scope (context $($p.Context))"
+          }
+
           # --- MSI: package metadata, then a plain install (per-user) and an ALLUSERS=1 install ---
           if ((Msi-Prop $msi 'ALLUSERS') -ne '2') { throw 'MSI: ALLUSERS must be 2 (per-user or per-machine)' }
           if ((Msi-Prop $msi 'MSIINSTALLPERUSER') -ne '1') { throw 'MSI: MSIINSTALLPERUSER must be 1 (default to per-user)' }
@@ -506,17 +548,17 @@ jobs:
           Write-Host "ok MSI properties: ALLUSERS=2 MSIINSTALLPERUSER=1 WordCount=$wc"
 
           Run msiexec.exe @('/i', "`"$msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-user.log`"")
-          Assert-Scope 'msi default' 'user' | Out-Null
+          Assert-MsiScope 'msi default' 'user' "$env:RUNNER_TEMP\msi-user.log"
           # What the updater runs for an MSI update: same package again, passive/quiet.
           Run msiexec.exe @('/i', "`"$msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-user-update.log`"")
-          Assert-Scope 'msi update' 'user' | Out-Null
+          Assert-MsiScope 'msi update' 'user' "$env:RUNNER_TEMP\msi-user-update.log"
           Run msiexec.exe @('/x', "`"$msi`"", '/qn')
-          if (Get-Install 'HKCU') { throw 'msi: per-user uninstall left the entry behind' }
+          if (Get-MsiInstall) { throw 'msi: per-user uninstall left the product registered' }
 
           Run msiexec.exe @('/i', "`"$msi`"", '/qn', 'ALLUSERS=1', '/l*v', "`"$env:RUNNER_TEMP\msi-machine.log`"")
-          Assert-Scope 'msi ALLUSERS=1' 'machine' | Out-Null
+          Assert-MsiScope 'msi ALLUSERS=1' 'machine' "$env:RUNNER_TEMP\msi-machine.log"
           Run msiexec.exe @('/x', "`"$msi`"", '/qn')
-          if (Get-Install 'HKLM') { throw 'msi: per-machine uninstall left the entry behind' }
+          if (Get-MsiInstall) { throw 'msi: per-machine uninstall left the product registered' }
 
           # --- NSIS: /S is per-user; /ALLUSERS is per-machine; /UPDATE keeps whichever scope ---
           Run $nsis @('/S')
