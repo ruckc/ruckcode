@@ -183,7 +183,9 @@ pub struct TranscriptWriter {
 impl TranscriptWriter {
     /// Create `<project>/.ruckcode/sessions/<id>.jsonl` and write `session_start`.
     pub fn create(project: &Path, meta: SessionMeta) -> Result<Self> {
-        std::fs::create_dir_all(sessions_dir(project))?;
+        let dir = sessions_dir(project);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("creating the session folder {}", dir.display()))?;
         let path = session_path(project, &meta.id);
         let file = OpenOptions::new()
             .create_new(true)
@@ -202,7 +204,7 @@ impl TranscriptWriter {
             .open(path)
             .with_context(|| format!("opening {}", path.display()))?;
         // A crash may have left a partial last line; start on a fresh one.
-        let text = std::fs::read(path)?;
+        let text = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
         if text.last().is_some_and(|b| *b != b'\n') {
             file.write_all(b"\n")?;
         }

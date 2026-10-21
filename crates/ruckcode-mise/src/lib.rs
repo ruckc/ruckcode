@@ -216,7 +216,10 @@ async fn run_task(task: &str, args: &[String], ctx: &ToolContext) -> anyhow::Res
             RUN_TIMEOUT.as_secs()
         ))),
         Err(ExecError::Cancelled) => Ok(ToolOutput::error("mise task cancelled")),
-        Err(ExecError::Io(e)) => Ok(ToolOutput::error(format!("failed to run mise: {e}"))),
+        Err(ExecError::Io(e)) => Ok(ToolOutput::error(format!(
+            "failed to run mise in {}: {e}",
+            ctx.cwd.display()
+        ))),
     }
 }
 

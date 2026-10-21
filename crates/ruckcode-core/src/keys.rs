@@ -140,7 +140,7 @@ pub(crate) fn write_private(path: &Path, contents: &str) -> Result<()> {
             use std::os::unix::fs::PermissionsExt;
             f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         }
-        std::fs::rename(&tmp, path)?;
+        std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
     })();
     if result.is_err() {
@@ -246,7 +246,7 @@ pub fn use_key(
     let p = config_path(scope, user_dir, project)?;
     let text = render_key_ref(&read(&p)?, profile, Some(name))?;
     if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
+        std::fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
     }
     std::fs::write(&p, text).with_context(|| format!("writing {}", p.display()))?;
     Ok(p)
