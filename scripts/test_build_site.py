@@ -2,6 +2,8 @@
 """Tests for build_site.py and site/install.sh (stdlib only): python3 -m unittest scripts/test_build_site.py"""
 
 import base64
+import contextlib
+import io
 import hashlib
 import json
 import os
@@ -81,7 +83,13 @@ def run_build(root, dist, signed=True, pubkey=PUBKEY, **kw):
     if signed:
         args += ["--signed"]
     (root / "notes.md").write_text("### Features\n- add **updates** (abc1234)\n- see [docs](https://x.y/z) <script>\n")
-    return out, build_site.main(args)
+    # Capture the script's output: its errors are printed as `::error::` workflow commands, which
+    # GitHub would otherwise turn into annotations for tests that fail on purpose.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        code = build_site.main(args)
+    run_build.output = buf.getvalue()
+    return out, code
 
 
 class BuildSite(unittest.TestCase):
