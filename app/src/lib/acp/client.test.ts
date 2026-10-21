@@ -44,7 +44,7 @@ describe('AcpClient over a fake transport', () => {
     const s = await client.newSession('/proj');
     expect(s.sessionId).toBe('sess-1');
     expect(s.modes?.currentModeId).toBe('implement');
-    expect(s.modes?.availableModes.map((m) => m.id)).toEqual(['explore', 'implement']);
+    expect(s.modes?.availableModes.map((m) => m.id)).toEqual(['explore', 'plan', 'implement']);
   });
 
   it('streams a prompt turn into the chat model', async () => {
@@ -59,7 +59,7 @@ describe('AcpClient over a fake transport', () => {
     expect(kinds).toContain('assistant');
     const assistant = model.items.find((i) => i.kind === 'assistant');
     expect(assistant && 'text' in assistant && assistant.text).toBe('You said: hello. ');
-    expect(model.plan).toHaveLength(2);
+    expect(model.plan).toHaveLength(3);
     expect(model.usage).toEqual({ used: 120, size: 200000 });
     expect(model.items.at(-1)).toMatchObject({ kind: 'notice', title: 'Turn finished' });
   });

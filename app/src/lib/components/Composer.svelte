@@ -1,0 +1,189 @@
+<script lang="ts">
+  let {
+    disabled,
+    running,
+    queue,
+    history,
+    placeholder,
+    onsend,
+    oncancel,
+    onunqueue
+  }: {
+    disabled: boolean;
+    running: boolean;
+    queue: string[];
+    history: string[];
+    placeholder: string;
+    onsend: (text: string) => void;
+    oncancel: () => void;
+    onunqueue: (index: number) => void;
+  } = $props();
+
+  let text = $state('');
+  let input: HTMLTextAreaElement | undefined = $state();
+  /** Position in `history` while recalling (history.length = not recalling). */
+  let cursor = $state(-1);
+  let draft = '';
+
+  export function focus() {
+    input?.focus();
+  }
+
+  function submit() {
+    const t = text.trim();
+    if (!t || disabled) return;
+    onsend(text);
+    text = '';
+    cursor = -1;
+  }
+
+  function recall(delta: -1 | 1) {
+    if (!history.length) return false;
+    if (cursor === -1) {
+      if (delta === 1) return false;
+      draft = text;
+      cursor = history.length;
+    }
+    const n = cursor + delta;
+    if (n < 0) return true;
+    if (n >= history.length) {
+      cursor = -1;
+      text = draft;
+    } else {
+      cursor = n;
+      text = history[n];
+    }
+    queueMicrotask(() => input?.setSelectionRange(text.length, text.length));
+    return true;
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      submit();
+    } else if (e.key === 'Escape' && running) {
+      e.preventDefault();
+      oncancel();
+    } else if (e.key === 'ArrowUp' && !e.shiftKey && (cursor !== -1 || !text.includes('\n'))) {
+      // Only recall when the box is empty/recalled, or the caret is on the first line.
+      const el = e.currentTarget as HTMLTextAreaElement;
+      if (cursor !== -1 || el.selectionStart === 0) {
+        if (recall(-1)) e.preventDefault();
+      }
+    } else if (e.key === 'ArrowDown' && !e.shiftKey && cursor !== -1) {
+      if (recall(1)) e.preventDefault();
+    }
+  }
+</script>
+
+<form
+  class="composer"
+  onsubmit={(e) => {
+    e.preventDefault();
+    submit();
+  }}
+>
+  {#if queue.length}
+    <ol class="queue" aria-label="Queued prompts">
+      {#each queue as q, i (i)}
+        <li>
+          <span class="muted">queued</span>
+          <span class="qtext">{q}</span>
+          <button
+            type="button"
+            class="x"
+            aria-label={`Remove queued prompt ${i + 1}`}
+            onclick={() => onunqueue(i)}>&times;</button
+          >
+        </li>
+      {/each}
+    </ol>
+  {/if}
+  <div class="row">
+    <textarea
+      bind:this={input}
+      rows="2"
+      {placeholder}
+      aria-label="Prompt"
+      bind:value={text}
+      {disabled}
+      {onkeydown}
+      oninput={() => {
+        if (cursor !== -1) cursor = -1;
+      }}></textarea>
+    <div class="btns">
+      {#if running}
+        <button
+          type="button"
+          class="danger"
+          onclick={oncancel}
+          aria-label="Cancel the running turn"
+        >
+          Stop <kbd>Esc</kbd>
+        </button>
+      {/if}
+      <button class="primary" type="submit" disabled={disabled || !text.trim()}>
+        {running ? 'Queue' : 'Send'}
+      </button>
+    </div>
+  </div>
+  <p class="hint muted">Enter to send, Shift+Enter for a new line, Up/Down for history.</p>
+</form>
+
+<style>
+  .composer {
+    padding: 8px 12px 6px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+  }
+  .btns {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .queue {
+    margin: 0 0 6px;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 2px;
+    font-size: 12.5px;
+  }
+  .queue li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .qtext {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .x {
+    border: 0;
+    background: none;
+    padding: 0 6px;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .hint {
+    margin: 4px 0 0;
+    font-size: 11px;
+  }
+  kbd {
+    font: inherit;
+    font-size: 11px;
+    opacity: 0.8;
+    margin-left: 4px;
+  }
+</style>

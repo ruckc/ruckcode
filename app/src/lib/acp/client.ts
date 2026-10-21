@@ -4,7 +4,11 @@ import {
   PROTOCOL_VERSION,
   type ClientConnection,
   type InitializeResponse,
+  type ListSessionsResponse,
+  type LoadSessionResponse,
   type NewSessionResponse,
+  type ResumeSessionResponse,
+  type SetSessionConfigOptionResponse,
   type PromptResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -72,6 +76,44 @@ export class AcpClient {
 
   newSession(cwd: string): Promise<NewSessionResponse> {
     return this.connection.agent.request(methods.agent.session.new, { cwd, mcpServers: [] });
+  }
+
+  listSessions(cwd: string): Promise<ListSessionsResponse> {
+    return this.connection.agent.request(methods.agent.session.list, { cwd });
+  }
+
+  /** Reopen a stored session and replay its history as `session/update` notifications. */
+  loadSession(sessionId: string, cwd: string): Promise<LoadSessionResponse> {
+    return this.connection.agent.request(methods.agent.session.load, {
+      sessionId,
+      cwd,
+      mcpServers: []
+    });
+  }
+
+  /** Reopen a stored session without replaying history. */
+  resumeSession(sessionId: string, cwd: string): Promise<ResumeSessionResponse> {
+    return this.connection.agent.request(methods.agent.session.resume, {
+      sessionId,
+      cwd,
+      mcpServers: []
+    });
+  }
+
+  closeSession(sessionId: string): Promise<unknown> {
+    return this.connection.agent.request(methods.agent.session.close, { sessionId });
+  }
+
+  setConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string
+  ): Promise<SetSessionConfigOptionResponse> {
+    return this.connection.agent.request(methods.agent.session.setConfigOption, {
+      sessionId,
+      configId,
+      value
+    });
   }
 
   prompt(sessionId: string, text: string): Promise<PromptResponse> {

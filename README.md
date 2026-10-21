@@ -337,15 +337,17 @@ documented in [docs/ACP.md](docs/ACP.md).
 ## Desktop app (preview)
 
 A Tauri v2 + SvelteKit desktop app that is another ACP client, like the TUI and editors; see
-[docs/APP_PLAN.md](docs/APP_PLAN.md). It is a scaffold for now: pick a project folder, connect,
-and chat (streaming text, tool calls, permission and AskUserQuestion dialogs, cancel, current
-mode). Try it with the mock model (see above) before configuring a real provider.
+[docs/APP_PLAN.md](docs/APP_PLAN.md). Pick a project folder (recent projects are remembered), connect,
+and chat: a sessions sidebar (list, open with history replay, close), streaming markdown, reasoning
+blocks, tool cards with diffs, a plan panel, permission and AskUserQuestion dialogs, mode and model
+pickers, token usage, cancel (Esc) and queued prompts. Try it with the mock model (see above) before configuring a real provider.
 
 ```sh
 mise run app:install   # pnpm install in app/ (node 22, pnpm 10 are pinned in mise.toml)
 mise run app:dev       # Vite dev server + Tauri window (embedded agent)
 mise run app:check     # svelte-check, eslint, prettier --check
-mise run app:test      # vitest
+mise run app:test      # vitest (reducer, controller, components)
+mise run app:e2e       # Playwright against the built app with the mock agent
 mise run app:build     # release bundles (slow)
 ```
 
@@ -357,7 +359,11 @@ libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-ess
 `app:test:rust`).
 
 The frontend can also run in a plain browser against a scripted fake agent:
-`pnpm -C app dev` then open `http://localhost:5173/?mock=1`.
+`pnpm -C app dev` then open `http://localhost:5173/?mock=1` (add `&delay=0` for instant
+streaming). Prompts such as `mock:write a.txt hi`, `mock:askmulti`, `mock:mode explore`,
+`mock:edit`, `mock:bash`, `mock:md` and `mock:slow` trigger the scripted features.
+The e2e task needs a Chromium that matches Playwright 1.56 (`pnpm -C app exec playwright install
+chromium`, or `PLAYWRIGHT_BROWSERS_PATH` pointing at an existing install).
 
 ## Workspace layout
 

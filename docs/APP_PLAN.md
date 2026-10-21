@@ -89,8 +89,8 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
 
 1. **Scaffold. Done.** SvelteKit SPA, the Tauri crate, mise tasks, and CI checks. A local host
    that relays ACP, plus a minimal chat with the mock model. See "Milestone 1 notes" below.
-2. **Core chat and tools.** Full UI, permissions, AskUserQuestion, modes, model picker and
-   sessions.
+2. **Core chat and tools. Done.** Full UI, permissions, AskUserQuestion, modes, model picker and
+   sessions. See "Milestone 2 notes" below.
 3. **WSL2 host.** Distro discovery, `rc` provisioning inside WSL, path translation, and a stdio
    relay.
 4. **Setup and keys UI**, including the JSON outputs for the CLI subcommands.
@@ -122,8 +122,51 @@ Built as planned, with these deviations and details:
   the build script's app manifest) and `dialog:allow-open`.
 - **Browser demo.** `?mock=1` swaps the Tauri host for a scripted in-memory agent
   (`host/fake-agent.ts`, also used by the vitest suite and for screenshots).
-- **Not done yet:** Playwright against `pnpm preview` is not wired into `app:test` (only vitest);
-  the milestone-1 UI has no project history, session list, markdown rendering or diff view.
+- **Superseded by milestone 2:** Playwright, project history, session list, markdown and diff views.
+
+## Milestone 2 notes
+
+- **Layout.** Left sidebar (project header with folder input, Browse in Tauri, recent projects in
+  `localStorage` under `ruckcode.recent`, always inside try/catch; session list from
+  `session/list`, New session, close), main chat, and a collapsible plan panel on the right.
+  Below 900px the side panels become overlays.
+- **State.** `ChatController` (`state/chat.svelte.ts`) owns one connection and a map of open
+  sessions (`SessionView`: transcript model, `running`, `loading`, prompt `queue`).
+  `session/update` is routed by `sessionId`, so a session keeps streaming while another is shown.
+  Opening a stored session uses `session/load` (replay, `canLoad` from `loadSession`; falls back
+  to `session/resume`); already-open sessions just switch. Reconnect after a crash uses
+  `session/resume` for every open session and keeps their transcripts on screen. Permission and
+  AskUserQuestion requests queue connection-wide and show one at a time (`1 of N pending`).
+  Prompts typed during a turn queue like the TUI and run in order; Esc cancels (queue is kept,
+  as in the TUI).
+- **Reducer** (`state/reducer.ts`) covers every update kind: chunks, tool calls (rawInput,
+  locations, text output, `diff` contents), plan, mode, usage, notices, `config_option_update`
+  (select options flattened) and `session_info_update`. Turn ends are pushed by the controller from
+  the `session/prompt` stop reason.
+- **Rendering.** `marked` + DOMPurify (links get `target=_blank rel=noopener`), copy buttons added
+  to code blocks after each streamed render; diffs computed with the `diff` package
+  (`structuredPatch`, unified or side-by-side); tool kind icons are inline SVG.
+- **Dialogs.** Permission: y/a/n (allow once / always / reject), Esc cancels the turn; `switch_mode`
+  proposals get explicit wording ("Switch to X" / "Stay in current mode"). Ask: one tab per
+  question, 1-9 pick options, Alt+Left/Right switch tabs, Ctrl+Enter submits, "(Recommended)"
+  in a label becomes a badge, free-text Other. Both trap focus and restore it on close.
+- **Fake agent** (`host/fake-agent.ts`) now implements initialize capabilities, `session/new|list|
+  load|resume|close|set_mode|set_config_option`, a shared `FakeStore` (so mock reconnect finds
+  sessions) and prompt scripts: `mock:write`, `mock:ask`, `mock:askmulti`, `mock:mode <id>`,
+  `mock:edit`, `mock:bash`, `mock:md`, `mock:notice`, `mock:slow`, `mock:error`, `mock:crash`.
+  `?mock=1&delay=<ms>` sets the streaming delay.
+- **Connection loss.** `LineTransport` gained an optional `onClose`; when it fires (or the SDK
+  connection closes) the app shows a Reconnect banner. The Tauri transport raises it when
+  `agent_send` fails; the Rust shell does not yet emit an explicit "agent exited" event, so a
+  silently dead agent is only noticed on the next send.
+- **Tests.** vitest: reducer, diff, format, projects, markdown, controller (against the fake
+  agent), and component tests with `@testing-library/svelte` in jsdom (jsdom pinned to 26
+  because 30 needs a newer Node patch than the pinned 22.22.0). Playwright (`@playwright/test`
+  1.56, matching the preinstalled chromium-1194) in `app/e2e`, run with `mise run app:e2e` or
+  `pnpm -C app e2e` (builds, serves `pnpm preview`, uses `?mock=1`). CI runs it after the build,
+  installing chromium with `playwright install --with-deps chromium`.
+- **Not done.** Model change to "default" (`_ruckcode/set_model` with null), image/resource
+  prompt content, terminal content blocks (shown as a placeholder), slash commands.
 
 ## Open items for later
 

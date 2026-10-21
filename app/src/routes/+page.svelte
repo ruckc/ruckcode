@@ -1,274 +1,254 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount } from 'svelte';
   import AskDialog from '../lib/components/AskDialog.svelte';
+  import ChatView from '../lib/components/ChatView.svelte';
+  import Composer from '../lib/components/Composer.svelte';
   import PermissionDialog from '../lib/components/PermissionDialog.svelte';
-  import ToolCard from '../lib/components/ToolCard.svelte';
+  import PlanPanel from '../lib/components/PlanPanel.svelte';
+  import Sidebar from '../lib/components/Sidebar.svelte';
+  import TopBar from '../lib/components/TopBar.svelte';
   import { hostMode } from '../lib/host';
   import { pickFolder } from '../lib/host/tauri';
   import { ChatController } from '../lib/state/chat.svelte';
+  import { loadRecent, pushRecent, removeRecent, saveRecent } from '../lib/state/projects';
 
   const chat = new ChatController();
   const mode = hostMode();
 
-  function loadCwd(): string {
-    try {
-      return localStorage.getItem('ruckcode.cwd') ?? '';
-    } catch {
-      return '';
+  let recent = $state<string[]>([]);
+  let cwd = $state('');
+  let sidebarOpen = $state(true);
+  let planOpen = $state(true);
+  let composer: { focus(): void } | undefined = $state();
+
+  onMount(() => {
+    recent = loadRecent();
+    cwd = recent[0] ?? (mode === 'mock' ? '/demo/project' : '');
+    if (window.innerWidth < 900) {
+      sidebarOpen = false;
+      planOpen = false;
     }
+  });
+
+  const active = $derived(chat.active);
+  const dialogOpen = $derived(!!chat.permission || !!chat.question);
+
+  async function connectProject(path: string) {
+    const p = path.trim();
+    if (!p) return;
+    cwd = p;
+    recent = pushRecent(recent, p);
+    saveRecent(recent);
+    await chat.connect({ cwd: p });
   }
-
-  let cwd = $state(loadCwd() || (mode === 'mock' ? '/demo/project' : ''));
-  let prompt = $state('');
-  let scroller: HTMLElement | undefined = $state();
-
-  const connected = $derived(chat.status === 'ready' || chat.status === 'busy');
 
   async function browse() {
     const dir = await pickFolder().catch(() => null);
     if (dir) cwd = dir;
   }
 
-  async function connect() {
-    try {
-      localStorage.setItem('ruckcode.cwd', cwd);
-    } catch {
-      // storage unavailable; the folder just isn't remembered
-    }
-    await chat.connect({ cwd });
+  function forget(path: string) {
+    recent = removeRecent(recent, path);
+    saveRecent(recent);
   }
 
-  async function submit(e: Event) {
-    e.preventDefault();
-    const text = prompt;
-    prompt = '';
-    await chat.send(text);
-  }
-
+  // Keep the prompt box focused when the session changes or a dialog closes.
   $effect(() => {
-    // Keep the newest output in view while streaming.
-    void chat.model.items.length;
-    void chat.model.items.at(-1);
-    tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+    void chat.activeId;
+    if (!dialogOpen && chat.connected) queueMicrotask(() => composer?.focus());
   });
+
+  function onWindowKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && !e.defaultPrevented && active?.running && !dialogOpen) {
+      e.preventDefault();
+      void chat.cancel();
+    }
+  }
+
+  const placeholder = $derived(
+    !chat.connected
+      ? 'Not connected'
+      : active?.running
+        ? 'The agent is working. Enter queues your message.'
+        : 'Message the agent'
+  );
 </script>
 
-<div class="app">
-  <header>
-    <strong>ruckcode</strong>
-    <input
-      type="text"
-      class="cwd"
-      placeholder="Project folder"
-      aria-label="Project folder"
-      bind:value={cwd}
-      disabled={connected}
-    />
-    {#if mode === 'tauri'}
-      <button onclick={browse} disabled={connected}>Browse...</button>
-    {/if}
-    {#if connected}
-      <button onclick={() => chat.disconnect()}>Disconnect</button>
-    {:else}
-      <button
-        class="primary"
-        onclick={connect}
-        disabled={!cwd.trim() || chat.status === 'connecting' || mode === 'none'}
-      >
-        {chat.status === 'connecting' ? 'Connecting...' : 'Connect'}
-      </button>
-    {/if}
-    <span class="spacer"></span>
-    {#if connected}
-      <label class="mode">
-        mode
-        {#if chat.modes.length}
-          <select
-            value={chat.model.currentModeId ?? ''}
-            onchange={(e) => chat.setMode(e.currentTarget.value)}
-            aria-label="Mode"
-          >
-            {#each chat.modes as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
-          </select>
-        {:else}
-          <code data-testid="mode">{chat.model.currentModeId ?? '-'}</code>
-        {/if}
-      </label>
-      {#if chat.model.usage}
-        <span class="muted" title="context tokens used / window">
-          {chat.model.usage.used.toLocaleString()} / {chat.model.usage.size.toLocaleString()} tok
-        </span>
-      {/if}
-    {/if}
-  </header>
+<svelte:window onkeydown={onWindowKey} />
 
-  {#if mode === 'none'}
-    <p class="banner">
-      No agent host available. Run the desktop app (<code>mise run app:dev</code>), or open this
-      page with <code>?mock=1</code> for a scripted demo agent.
-    </p>
+<div class="shell" class:no-sidebar={!sidebarOpen} class:no-plan={!planOpen}>
+  {#if sidebarOpen}
+    <div class="side">
+      <Sidebar
+        bind:cwd
+        connected={chat.connected}
+        connecting={chat.status === 'connecting'}
+        canBrowse={mode === 'tauri'}
+        noHost={mode === 'none'}
+        {recent}
+        sessions={chat.sidebar}
+        activeId={chat.activeId}
+        onconnect={connectProject}
+        ondisconnect={() => chat.disconnect()}
+        onbrowse={browse}
+        onforget={forget}
+        onnew={() => chat.newSession()}
+        onopen={(id) => chat.openSession(id)}
+        onclose={(id) => chat.closeSession(id)}
+      />
+    </div>
   {/if}
-  {#if chat.error}<p class="banner error" role="alert">{chat.error}</p>{/if}
 
-  <main bind:this={scroller}>
-    {#if !connected && chat.model.items.length === 0}
-      <p class="muted empty">Choose a project folder and connect to start a session.</p>
-    {/if}
-    {#each chat.model.items as item, i (i)}
-      {#if item.kind === 'user'}
-        <div class="msg user">{item.text}</div>
-      {:else if item.kind === 'assistant'}
-        <div class="msg assistant">{item.text}</div>
-      {:else if item.kind === 'thought'}
-        <details class="thought">
-          <summary>reasoning</summary>
-          {item.text}
-        </details>
-      {:else if item.kind === 'tool'}
-        <ToolCard tool={item} />
-      {:else}
-        <div class="notice" data-severity={item.severity}>
-          {item.title}{item.description ? `: ${item.description}` : ''}
-        </div>
-      {/if}
-    {/each}
-    {#if chat.model.plan.length}
-      <ul class="plan" aria-label="Plan">
-        {#each chat.model.plan as p, i (i)}
-          <li data-status={p.status}>{p.content}</li>
-        {/each}
-      </ul>
-    {/if}
-  </main>
+  <div class="main">
+    <TopBar
+      model={active?.model ?? null}
+      title={chat.sidebar.find((s) => s.id === chat.activeId)?.title ??
+        (chat.connected ? 'New session' : 'ruckcode')}
+      disabled={!chat.connected}
+      bind:planOpen
+      bind:sidebarOpen
+      onmode={(id) => chat.setMode(id)}
+      onconfig={(id, v) => chat.setConfig(id, v)}
+    />
 
-  <form class="composer" onsubmit={submit}>
-    <textarea
-      rows="2"
-      placeholder={connected ? 'Message the agent (try "mock:write a.txt hi")' : 'Not connected'}
-      aria-label="Prompt"
-      bind:value={prompt}
-      disabled={!connected}
-      onkeydown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-          e.preventDefault();
-          e.currentTarget.form?.requestSubmit();
-        }
-      }}></textarea>
-    {#if chat.status === 'busy'}
-      <button type="button" class="danger" onclick={() => chat.cancel()}>Cancel</button>
+    {#if mode === 'none'}
+      <p class="banner">
+        No agent host available. Run the desktop app (<code>mise run app:dev</code>), or open this
+        page with <code>?mock=1</code> for a scripted demo agent.
+      </p>
+    {/if}
+    {#if chat.status === 'lost'}
+      <div class="banner error" role="alert">
+        <span>{chat.error}</span>
+        <button class="primary" onclick={() => chat.reconnect()}>Reconnect</button>
+      </div>
+    {:else if chat.error}
+      <div class="banner error" role="alert">
+        <span>{chat.error}</span>
+        <button onclick={() => chat.dismissError()}>Dismiss</button>
+      </div>
+    {/if}
+
+    {#if active}
+      <ChatView items={active.model.items} running={active.running} loading={active.loading} />
     {:else}
-      <button class="primary" type="submit" disabled={!connected || !prompt.trim()}>Send</button>
+      <div class="welcome">
+        {#if chat.connected}
+          <p class="muted">No session is open.</p>
+          <button class="primary" onclick={() => chat.newSession()}>New session</button>
+        {:else if chat.status === 'lost'}
+          <p class="muted">The agent is not running. Reconnect to continue.</p>
+        {:else}
+          <h1>ruckcode</h1>
+          <p class="muted">Choose a project folder and connect to start a session.</p>
+        {/if}
+      </div>
     {/if}
-  </form>
+
+    <Composer
+      bind:this={composer}
+      disabled={!chat.connected || !active || active.loading}
+      running={active?.running ?? false}
+      queue={active?.queue ?? []}
+      history={chat.history}
+      {placeholder}
+      onsend={(t) => chat.send(t)}
+      oncancel={() => chat.cancel()}
+      onunqueue={(i) => chat.unqueue(i)}
+    />
+  </div>
+
+  {#if planOpen}
+    <div class="planp"><PlanPanel plan={active?.model.plan ?? []} /></div>
+  {/if}
 </div>
 
-{#if chat.permission}<PermissionDialog pending={chat.permission} />{/if}
-{#if chat.question}<AskDialog pending={chat.question} />{/if}
+{#if chat.permission}
+  {#key chat.permission}
+    <PermissionDialog pending={chat.permission} total={chat.permissions.length} />
+  {/key}
+{:else if chat.question}
+  {#key chat.question}
+    <AskDialog pending={chat.question} total={chat.questions.length} />
+  {/key}
+{/if}
 
 <style>
-  .app {
-    display: flex;
-    flex-direction: column;
+  .shell {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr) 280px;
     height: 100vh;
   }
-  header {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
+  .shell.no-sidebar {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+  .shell.no-plan {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+  .shell.no-sidebar.no-plan {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .side,
+  .planp {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .planp {
+    border-left: 1px solid var(--border);
     background: var(--surface);
   }
-  .cwd {
-    flex: 1;
-    max-width: 420px;
-    min-width: 120px;
-  }
-  .spacer {
-    flex: 1;
-  }
-  .mode {
+  .main {
     display: flex;
-    gap: 6px;
-    align-items: center;
-    color: var(--muted);
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
   }
   .banner {
     margin: 0;
     padding: 6px 12px;
     background: var(--code-bg);
     border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
   }
   .banner.error {
     color: var(--err);
   }
-  main {
+  .welcome {
     flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    align-items: flex-start;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
-  main > :global(*) {
-    max-width: min(820px, 100%);
-  }
-  .empty {
-    align-self: center;
-    margin-top: 20vh;
-  }
-  .msg {
-    white-space: pre-wrap;
-    padding: 6px 10px;
-    border-radius: 8px;
-  }
-  .msg.user {
-    background: var(--accent);
-    color: var(--accent-text);
-    align-self: flex-end;
-  }
-  .msg.assistant {
-    background: var(--surface);
-    border: 1px solid var(--border);
-  }
-  .thought {
-    color: var(--muted);
-    font-style: italic;
-    white-space: pre-wrap;
-  }
-  .notice {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .notice[data-severity='warning'] {
-    color: var(--warn);
-  }
-  .notice[data-severity='error'] {
-    color: var(--err);
-  }
-  .plan {
+  .welcome h1 {
     margin: 0;
-    padding-left: 20px;
-    color: var(--muted);
+    font-size: 28px;
   }
-  .plan li[data-status='completed'] {
-    text-decoration: line-through;
-  }
-  .plan li[data-status='in_progress'] {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .composer {
-    display: flex;
-    gap: 8px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .composer textarea {
-    flex: 1;
-    resize: none;
+  @media (max-width: 900px) {
+    .shell,
+    .shell.no-sidebar,
+    .shell.no-plan,
+    .shell.no-sidebar.no-plan {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .side,
+    .planp {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      z-index: 5;
+      width: min(300px, 88vw);
+      background: var(--surface);
+    }
+    .side {
+      left: 0;
+    }
+    .planp {
+      right: 0;
+    }
   }
 </style>

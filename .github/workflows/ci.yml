@@ -211,6 +211,10 @@ jobs:
         run: pnpm -C app test
       - name: Build frontend
         run: pnpm -C app build
+      - name: End-to-end tests (Playwright, mock agent)
+        run: |
+          pnpm -C app exec playwright install --with-deps chromium
+          pnpm -C app e2e
       - name: Install webkit2gtk and Tauri system dependencies
         run: |
           sudo apt-get update

@@ -19,6 +19,7 @@ export async function connectTauri(
   rcPath?: string
 ): Promise<LineTransport> {
   const listeners = new Set<(line: string) => void>();
+  const closers = new Set<() => void>();
   const channel = new Channel<string>();
   channel.onmessage = (line) => listeners.forEach((l) => l(line));
   const id = await invoke<number>('agent_connect', {
@@ -29,14 +30,23 @@ export async function connectTauri(
   });
   return {
     send(line) {
-      invoke('agent_send', { id, line }).catch((e) => console.error('agent_send failed', e));
+      // A failed send means the agent is gone (exited or disconnected): surface it as a close.
+      invoke('agent_send', { id, line }).catch((e) => {
+        console.error('agent_send failed', e);
+        closers.forEach((c) => c());
+      });
     },
     onLine(cb) {
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
+    onClose(cb) {
+      closers.add(cb);
+      return () => closers.delete(cb);
+    },
     async close() {
       listeners.clear();
+      closers.clear();
       await invoke('agent_disconnect', { id });
     }
   };

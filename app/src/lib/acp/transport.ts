@@ -8,6 +8,8 @@ export interface LineTransport {
   send(line: string): void;
   /** Subscribe to lines from the agent. Returns an unsubscribe function. */
   onLine(cb: (line: string) => void): () => void;
+  /** Subscribe to the connection ending unexpectedly (agent exit, broken pipe). Optional. */
+  onClose?(cb: () => void): () => void;
   /** Tear down the underlying connection (optional). */
   close?(): void | Promise<void>;
 }
@@ -17,9 +19,17 @@ export function transportToStream(transport: LineTransport): Stream {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let unsubscribe: (() => void) | undefined;
+  let unsubscribeClose: (() => void) | undefined;
 
   const input = new ReadableStream<Uint8Array>({
     start(controller) {
+      unsubscribeClose = transport.onClose?.(() => {
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      });
       unsubscribe = transport.onLine((line) => {
         try {
           controller.enqueue(encoder.encode(line + '\n'));
@@ -30,6 +40,7 @@ export function transportToStream(transport: LineTransport): Stream {
     },
     cancel() {
       unsubscribe?.();
+      unsubscribeClose?.();
     }
   });
 

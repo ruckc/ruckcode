@@ -56,6 +56,11 @@ description = "Run the frontend unit tests (vitest)"
 depends = ["app:install"]
 run = "pnpm -C app test"
 
+[tasks."app:e2e"]
+description = "Playwright end-to-end tests against pnpm build + preview with the mock agent (needs chromium: pnpm -C app exec playwright install chromium)"
+depends = ["app:install"]
+run = "pnpm -C app e2e"
+
 [tasks."app:lint:rust"]
 description = "clippy for the Tauri shell"
 run = "cargo clippy --manifest-path crates/ruckcode-app/Cargo.toml --all-targets -- -D warnings"

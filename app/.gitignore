@@ -3,3 +3,5 @@ build
 .svelte-kit
 .vite
 *.log
+test-results
+playwright-report
