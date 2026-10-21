@@ -1009,7 +1009,41 @@ pub async fn resolve_linux_path(distro: &str, path: &str) -> Result<String, Stri
             return Ok(p);
         }
     }
+    // `rc` gets the path as plain data (no shell), so `~` must be expanded here: left as is it
+    // becomes a relative `./~/...` directory under whatever the agent's cwd happens to be.
+    if pure == "~" || pure.starts_with("~/") {
+        let home = linux_home(distro).await?;
+        return Ok(expand_home(&pure, &home));
+    }
     Ok(pure)
+}
+
+/// `$HOME` inside `distro`.
+async fn linux_home(distro: &str) -> Result<String, String> {
+    let prog = require_windows()?;
+    let out = run(
+        prog,
+        &strs(&["-d", distro, "--exec", "sh", "-c", "printf %s \"$HOME\""]),
+        Duration::from_secs(15),
+    )
+    .await?;
+    let text = decode_wsl_output(&out.stdout);
+    let home = text.trim();
+    if out.code == Some(0) && home.starts_with('/') {
+        Ok(home.to_string())
+    } else {
+        Err(format!(
+            "could not find the home folder in `{distro}`: {home}"
+        ))
+    }
+}
+
+fn expand_home(path: &str, home: &str) -> String {
+    let home = home.trim_end_matches('/');
+    match path.strip_prefix('~') {
+        Some(rest) => format!("{home}{rest}"),
+        None => path.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -1091,6 +1125,13 @@ mod tests {
         assert_eq!(s.version.as_deref(), Some("0.2.3-4-gabc"));
         let s = parse_rc_check("", "0.1.0");
         assert!(!s.installed && s.version.is_none());
+    }
+
+    #[test]
+    fn expands_home() {
+        assert_eq!(expand_home("~", "/home/u"), "/home/u");
+        assert_eq!(expand_home("~/a/b", "/home/u/"), "/home/u/a/b");
+        assert_eq!(expand_home("/x", "/home/u"), "/x");
     }
 
     #[test]
