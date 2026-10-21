@@ -68,10 +68,6 @@
       "minimumSystemVersion": "11.0"
     },
     "windows": {
-      "nsis": {
-        "installMode": "both",
-        "template": "nsis/installer.nsi"
-      },
       "wix": {
         "template": "wix/main.wxs",
         "upgradeCode": "6a1f3c52-5d8e-4b0f-9c47-2e7d9a31b8c4"

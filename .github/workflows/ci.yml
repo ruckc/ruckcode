@@ -578,7 +578,7 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, bundles: "appimage,deb" }
           - { target: aarch64-apple-darwin,     os: macos-14,     bundles: "app,dmg" }
           - { target: x86_64-apple-darwin,      os: macos-14,     bundles: "app,dmg" }
-          - { target: x86_64-pc-windows-msvc,   os: windows-2022, bundles: "msi,nsis" }
+          - { target: x86_64-pc-windows-msvc,   os: windows-2022, bundles: "msi" }
     env:
       VERSION: ${{ needs.release-version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -745,7 +745,7 @@ jobs:
           prefix="ruckcode-app-${VERSION}-${TARGET}"
           signed="${UPDATER_SIGNED:-false}"
           # Updater bundles (+ .sig) exist only when signing is configured. Per platform: the
-          # macOS .app.tar.gz, the Windows MSI and NSIS installers, the Linux AppImage.
+          # macOS .app.tar.gz, the Windows MSI, the Linux AppImage.
           with_sig() { cp "$1" "$2"; if [ "$signed" = true ]; then cp "$1.sig" "$2.sig"; fi; }
           case "$TARGET" in
             *apple-darwin)
@@ -756,10 +756,8 @@ jobs:
                 tar -C "$bundle/macos" -czf "dist/${prefix}.app.tar.gz" ruckcode.app
               fi ;;
             *windows*)
-              # Both Windows installers are updater bundles: the updater picks the one matching
-              # how the running copy was installed (windows-x86_64-msi / -nsis in latest.json).
-              with_sig "$(ls "$bundle"/msi/*.msi)" "dist/${prefix}.msi"
-              with_sig "$(ls "$bundle"/nsis/*-setup.exe)" "dist/${prefix}-setup.exe" ;;
+              # The MSI is the only Windows installer and also the updater bundle.
+              with_sig "$(ls "$bundle"/msi/*.msi)" "dist/${prefix}.msi" ;;
             *linux*)
               with_sig "$(ls "$bundle"/appimage/*.AppImage)" "dist/${prefix}.AppImage"
               cp "$bundle"/deb/*.deb "dist/${prefix}.deb" ;;
@@ -788,46 +786,22 @@ jobs:
               # cross-compiled on Apple Silicon, so it is never executed here.
               lipo -archs "$RUNNER_TEMP"/ruckcode.app/Contents/MacOS/* ;;
             *windows*)
-              test -s "${prefix}.msi"; test -s "${prefix}-setup.exe" ;;
+              test -s "${prefix}.msi" ;;
           esac
-      # Both installers default to a per-user install (no UAC) and offer a per-machine one. The
-      # runner is an administrator, so "no elevation needed" cannot be observed directly; check
-      # the package metadata (MSI), the resulting scope (location + uninstall key hive) and that
-      # an in-place update (`/UPDATE`, what the updater runs) keeps the scope and never creates a
-      # second copy. Windows Installer / NSIS scope behavior cannot be checked on other systems.
-      - name: Verify installers are per-user by default (Windows)
+      # The MSI defaults to a per-user install (no UAC) and offers a per-machine one
+      # (ALLUSERS=1). The runner is an administrator, so "no elevation needed" cannot be observed
+      # directly; check the package metadata, the resulting install context and that an in-place
+      # update (what the updater runs) keeps the scope. Windows Installer behavior cannot be
+      # checked on other systems.
+      - name: Verify installer is per-user by default (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $prefix = "dist/ruckcode-app-$env:VERSION-$env:TARGET"
           $msi = (Resolve-Path "$prefix.msi").Path
-          $nsis = (Resolve-Path "$prefix-setup.exe").Path
           $userPrograms = Join-Path $env:LOCALAPPDATA 'Programs'
-          $uninst = 'Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
-          function Get-Install([string]$hive) {
-            Get-ChildItem "${hive}:\$uninst" -ErrorAction SilentlyContinue |
-              ForEach-Object { Get-ItemProperty $_.PSPath } |
-              Where-Object { $_.DisplayName -eq 'ruckcode' }
-          }
-          function Assert-Scope([string]$what, [string]$scope) {
-            $u = Get-Install 'HKCU'; $m = Get-Install 'HKLM'
-            if ($scope -eq 'user') {
-              if (-not $u) { throw "$what : no HKCU uninstall entry" }
-              if ($m) { throw "$what : unexpected HKLM uninstall entry" }
-              $loc = ($u.InstallLocation -replace '"','').TrimEnd('\')
-              if (-not $loc.StartsWith($userPrograms, [StringComparison]::OrdinalIgnoreCase)) { throw "$what : installed to '$loc', expected under $userPrograms" }
-            } else {
-              if (-not $m) { throw "$what : no HKLM uninstall entry" }
-              if ($u) { throw "$what : unexpected HKCU uninstall entry" }
-              $loc = ($m.InstallLocation -replace '"','').TrimEnd('\')
-              if (-not $loc.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)) { throw "$what : installed to '$loc', expected under $env:ProgramFiles" }
-            }
-            if (-not (Test-Path (Join-Path $loc 'ruckcode.exe'))) { throw "$what : ruckcode.exe missing in $loc" }
-            Write-Host "ok $what -> $scope scope at $loc"
-            return $loc
-          }
           function Run([string]$exe, [string[]]$arguments) {
             $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru
             if ($p.ExitCode -ne 0) { throw "$exe $arguments exited with $($p.ExitCode)" }
@@ -908,25 +882,6 @@ jobs:
           Assert-MsiScope 'msi ALLUSERS=1' 'machine' "$env:RUNNER_TEMP\msi-machine.log"
           Run msiexec.exe @('/x', "`"$msi`"", '/qn')
           if (Get-MsiInstall) { throw 'msi: per-machine uninstall left the product registered' }
-
-          # --- NSIS: /S is per-user; /ALLUSERS is per-machine; /UPDATE keeps whichever scope ---
-          Run $nsis @('/S')
-          $loc = Assert-Scope 'nsis /S' 'user'
-          Run $nsis @('/S', '/UPDATE')
-          $loc2 = Assert-Scope 'nsis /S /UPDATE' 'user'
-          if ($loc -ne $loc2) { throw "nsis update moved the install: $loc -> $loc2" }
-          Run (Join-Path $loc 'uninstall.exe') @('/S', "_?=$loc")
-          Remove-Item -Recurse -Force $loc -ErrorAction SilentlyContinue
-          if (Get-Install 'HKCU') { throw 'nsis: per-user uninstall left the entry behind' }
-
-          Run $nsis @('/S', '/ALLUSERS')
-          $loc = Assert-Scope 'nsis /S /ALLUSERS' 'machine'
-          Run $nsis @('/S', '/UPDATE')
-          $loc2 = Assert-Scope 'nsis /S /UPDATE (per-machine)' 'machine'
-          if ($loc -ne $loc2) { throw "nsis update moved the install: $loc -> $loc2" }
-          Run (Join-Path $loc 'uninstall.exe') @('/S', "_?=$loc")
-          Remove-Item -Recurse -Force $loc -ErrorAction SilentlyContinue
-          if (Get-Install 'HKLM') { throw 'nsis: per-machine uninstall left the entry behind' }
       - name: Upload installer logs (Windows, on failure)
         if: failure() && runner.os == 'Windows'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -80,7 +80,7 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
   webkit2gtk installed via apt. Only official `actions/*` actions are used, consistent with the
   existing workflows.
 - **Release:** builds the Tauri bundles with the Tauri CLI directly (no third-party action):
-  `.dmg` and `.app` for both macOS architectures, `.msi` and NSIS `.exe`, and `.AppImage` and
+  `.dmg` and `.app` for both macOS architectures, `.msi` (the only Windows installer; the NSIS installer was dropped: MSI only, which avoids admin UAC prompts), and `.AppImage` and
   `.deb`. They are attached to the same GitHub release with checksums.
 - **Code signing and notarization** (macOS, Windows) are optional and need secrets, so they are
   skipped until configured and documented.
@@ -394,7 +394,7 @@ Built as planned, with these deviations and details:
   only `actions/*` (checkout, setup-node, cache, upload-artifact) and `pnpm -C app tauri build`.
 - **Version.** `--config '{"version":"X.Y.Z"}'` overrides the bundle version at build time and
   `RUCKCODE_VERSION` feeds `app_version` (falls back to `CARGO_PKG_VERSION` locally). Nothing is committed.
-- **Artifacts.** `ruckcode-app-<version>-<target>.{dmg,app.tar.gz,msi,-setup.exe,AppImage,deb}` plus
+- **Artifacts.** `ruckcode-app-<version>-<target>.{dmg,app.tar.gz,msi,AppImage,deb}` plus
   `.sha256`; `publish` waits for `app`, folds them into `SHA256SUMS` and the release. A failed app
   build blocks the release (the CLI and app stay in lockstep, and `rc` install from the app relies on
   matching versions).
@@ -403,7 +403,7 @@ Built as planned, with these deviations and details:
   config. Unsigned otherwise; `.app.tar.gz` is made with `tar` since Tauri only emits it with updater artifacts.
 - **Checks.** The deb version, macOS Info.plist version and architecture are verified; GUI binaries are
   never launched, and the cross-built x86_64 macOS app is not run.
-- **Metadata.** category DeveloperTool, descriptions, copyright, MIT, homepage, Windows installers per-user by default (MSI dual-purpose via a vendored WiX template, NSIS `both` with a vendored template defaulting to current user; per-machine via `ALLUSERS=1` / `/ALLUSERS`),
+- **Metadata.** category DeveloperTool, descriptions, copyright, MIT, homepage, Windows MSI per-user by default (dual-purpose via a vendored WiX template; per-machine via `ALLUSERS=1`),
   macOS minimum 11.0. Icons remain placeholders.
 - **Local check.** `tauri build --bundles deb` produced `ruckcode_0.0.0-test_amd64.deb` with the right
   metadata. The macOS and Windows jobs have not run yet; expect first-run fixes (paths under
@@ -432,7 +432,7 @@ publicly downloadable) while GitHub Pages is public.
   has four narrow commands (`update_check`, `update_download` with a progress `Channel`,
   `update_install`, `update_restart`; capability grants only these). Restart uses `AppHandle::restart`,
   so `tauri-plugin-process` is not needed. `manual_reason` turns off self-update for deb, rpm
-  and unbundled builds (MSI and NSIS update themselves, each with its own package). `UpdateController` (`state/updates.svelte.ts`) checks at startup and every
+  and unbundled builds (the MSI updates itself). `UpdateController` (`state/updates.svelte.ts`) checks at startup and every
   6 hours, downloads automatically (setting `ruckcode.autoUpdate` in localStorage), shows a subtle
   progress line and then the "Update vX ready" banner; restart is held back while any session runs.
   Skipped in dev and plain mock mode; `?mock=1&update=1|manual|unconfigured|uptodate|error|
@@ -448,7 +448,7 @@ publicly downloadable) while GitHub Pages is public.
 - **WSL.** `wsl.rs` now fills the shared `site/install.sh` (also served as `install.sh`) with the
   site URL and public key and runs it in the distro; it reads the latest version from
   `rc/latest.json` (falling back to the app's own version when no manifest exists).
-- **Limits.** The Windows updater runs the NSIS or MSI installer matching the install (the process exits;
+- **Limits.** The Windows updater runs the MSI installer (the process exits;
   passive mode, no UAC for per-user installs; an update of a per-machine install needs elevation). macOS and Windows builds are still not code-signed, so first launch warnings stay.
   The release steps for macOS and Windows updater artifacts have not run on CI yet; expect
   first-run path fixes like in milestone 7.

@@ -31,6 +31,6 @@ ruckcode-core = { path = "../ruckcode-core" }
 zeroize = "1"
 anyhow = "1"
 # The default `zip` feature only extracts .zip / compressed-AppImage update bundles. We ship
-# the NSIS installer and a raw AppImage (macOS .app.tar.gz extraction is always built in), so
+# the MSI installer and a raw AppImage (macOS .app.tar.gz extraction is always built in), so
 # leave it off: it pulls in zip 4.x (RUSTSEC-2026-0367/0368/0369).
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }

@@ -41,7 +41,7 @@ rather than committed.
 `app/` (no third-party action), only when a release is being made. The version is passed as
 `--config '{"version":"X.Y.Z"}'` plus `RUCKCODE_VERSION`, so `tauri.conf.json` and `Cargo.toml`
 stay at `0.1.0`. Artifacts: `ruckcode-app-<version>-<target>.{dmg,app.tar.gz}` (macOS aarch64 and
-x86_64, the latter cross-built on macos-14), `.msi` and `-setup.exe` (Windows x86_64),
+x86_64, the latter cross-built on macos-14), `.msi` (Windows x86_64),
 `.AppImage` and `.deb` (Linux x86_64, built on ubuntu-22.04 for glibc 2.35 compatibility), each with
 a `.sha256` (plus a `.sig` for the updater bundles when signing is configured). `release-publish`
 needs all builds, so any failed bundle blocks the release. `release.yml` is only the manual
@@ -123,23 +123,20 @@ desktop app) overrides `https://ruckc.github.io/ruckcode` for `rc self-update`, 
 the desktop app. The default is a constant in `crates/ruckcode-cli/src/update.rs` and
 `crates/ruckcode-app/src/update.rs` (a test keeps them, the workflow and `tauri.conf.json` in sync).
 
-Platform notes: the desktop app updates itself on macOS, from the Windows NSIS and MSI installers
+Platform notes: the desktop app updates itself on macOS, from the Windows MSI
 and from the Linux AppImage. `.deb` installs only get an "update available, download from the
-download page" notice. `latest.json` has the generic keys (`windows-x86_64` = NSIS, `linux-x86_64`,
+download page" notice. `latest.json` has the generic keys (`windows-x86_64` = MSI, `linux-x86_64`,
 `darwin-*`) plus the per-installer keys the updater plugin looks up first
-(`windows-x86_64-msi`, `windows-x86_64-nsis`, `linux-x86_64-appimage`, `darwin-*-app`), so each
+(`windows-x86_64-msi`, `linux-x86_64-appimage`, `darwin-*-app`), so each
 install is updated with its own kind of package; `scripts/build_site.py` writes them.
 
-**Windows installers are per-user by default.** Tauri's stock templates are per-machine (MSI) or
-need a choice (NSIS `both` defaults to per-machine for admins), so the repo vendors two templates,
-`crates/ruckcode-app/wix/main.wxs` (MSI: `ALLUSERS=2`, `MSIINSTALLPERUSER=1`,
-`InstallPrivileges="limited"`, `InstallerVersion=500`, `HKMU` for the optional protocol keys) and
-`crates/ruckcode-app/nsis/installer.nsi` (`installMode: both`, `MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER`;
-execution level stays upstream's `Highest` because stock `MultiUser.nsh` requires it for mixed mode). Every edit is marked `ruckcode:`. **When upgrading the Tauri CLI,
-diff both against the new `tauri-bundler` templates** (`src/bundle/windows/msi/main.wxs`,
-`src/bundle/windows/nsis/installer.nsi` in the `tauri-bundler` crate) and re-apply the marked edits.
-The WiX `upgradeCode` in `tauri.conf.json` must never change. The release job's "Verify installers
-are per-user by default" step installs both packages per-user and per-machine and checks scope,
+**The Windows MSI is per-user by default** (NSIS was dropped: MSI only). Tauri's stock WiX template is
+per-machine, so the repo vendors `crates/ruckcode-app/wix/main.wxs` (MSI: `ALLUSERS=2`, `MSIINSTALLPERUSER=1`,
+`InstallPrivileges="limited"`, `InstallerVersion=500`, `HKMU` for the optional protocol keys). Every edit is marked `ruckcode:`. **When upgrading the Tauri CLI,
+diff it against the new `tauri-bundler` template** (`src/bundle/windows/msi/main.wxs` in the
+`tauri-bundler` crate) and re-apply the marked edits.
+The WiX `upgradeCode` in `tauri.conf.json` must never change. The release job's "Verify installer
+is per-user by default" step installs the package per-user and per-machine and checks scope,
 location and update-in-place; it is the only automated check of this. `rc self-update` refuses for package-manager installs. Tests never touch a
 real key: unit and integration tests generate a throwaway minisign key pair in memory.
 

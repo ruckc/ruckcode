@@ -459,7 +459,7 @@ the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sha256`, al
 |----|------|-------|
 | macOS (Apple Silicon) | `...-aarch64-apple-darwin.dmg` (or `.app.tar.gz`) | open the dmg, drag to Applications |
 | macOS (Intel) | `...-x86_64-apple-darwin.dmg` | same |
-| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc-setup.exe` or `.msi` | per-user by default, no administrator needed (see below) |
+| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc.msi` | per-user by default, no administrator needed (see below) |
 | Linux x86_64 | `...-x86_64-unknown-linux-gnu.AppImage` or `.deb` | built on Ubuntu 22.04 (glibc 2.35, webkit2gtk 4.1) |
 
 Release builds are **unsigned** until signing secrets are configured. macOS Gatekeeper says the app
@@ -469,15 +469,11 @@ Run anyway. On Linux, `chmod +x ruckcode-app-*.AppImage && ./ruckcode-app-*.AppI
 or run with `--appimage-extract-and-run`), or `sudo apt install ./ruckcode-app-*.deb`. Verify downloads
 with `sha256sum -c SHA256SUMS --ignore-missing`.
 
-**Windows scope.** Both Windows installers install **for the current user by default** (into
-`%LocalAppData%\Programs\ruckcode`). The `.msi` never asks for administrator rights for a per-user
-install or its updates. The `-setup.exe` uses NSIS's standard multi-user mode: standard users run it
-without a prompt, while Windows shows administrators a UAC prompt when it starts (including when the
-app updates itself) even though it still defaults to per-user. Prefer the `.msi` if you are an
-administrator and want prompt-free updates. To install for all users (`C:\Program Files\ruckcode`, needs an administrator):
-for the `.msi` run `msiexec /i ruckcode-app-<version>-x86_64-pc-windows-msvc.msi ALLUSERS=1`; for the
-`-setup.exe` run it with `/ALLUSERS` (silent: `/S /ALLUSERS`), or pick "Install for anyone using this
-computer" on its install-mode page. Updates keep the scope and location of the existing install.
+**Windows scope.** The `.msi` is the only Windows installer. It installs **for the current user by
+default** (into `%LocalAppData%\Programs\ruckcode`) and never asks for administrator rights, for the
+install or for its updates. To install for all users (`C:\Program Files\ruckcode`, needs an
+administrator) run `msiexec /i ruckcode-app-<version>-x86_64-pc-windows-msvc.msi ALLUSERS=1`. Updates
+keep the scope and location of the existing install and are prompt-free for per-user installs.
 
 On Windows, install the app on Windows itself (not inside WSL2) and choose the WSL2 host to run the
 agent in a distribution; the app installs a matching `rc` there. Linux GUI apps inside WSL2 (WSLg)
@@ -594,8 +590,7 @@ are not downloadable). Everything is verified with the project's minisign key (t
   agent turn: while one runs, Restart is held back (an explicit "Restart anyway" exists). Open
   sessions end on restart and can be resumed. **Settings, Updates** has the "Automatically download
   updates" switch (when off, you are asked before anything is downloaded) and **Check for
-  updates**. Self-updating works for the macOS app, both Windows installers (an `.msi` install is updated
-  with the MSI, a `-setup.exe` install with the setup program) and the Linux **AppImage**. A copy
+  updates**. Self-updating works for the macOS app, the Windows MSI and the Linux **AppImage**. A copy
   installed from the `.deb` cannot update itself: the app tells you a new version exists and
   links to the download page. On Windows the app can also update
   `rc` inside WSL distros (see WSL2 above).
@@ -658,8 +653,8 @@ GitHub Release `vX.Y.Z` with:
 
 - `rc-<version>-<target>.tar.gz` (`.zip` on Windows) containing `rc`, `LICENSE`, `README.md`
 - per-archive `.sha256` files and a combined `SHA256SUMS`
-- desktop app bundles: `ruckcode-app-<version>-<target>` with `.dmg`, `.app.tar.gz` (macOS), `.msi`, `-setup.exe` (Windows), `.AppImage`, `.deb` (Linux x86_64)
-- `.sig` minisign signatures for the `rc` archives and the updater bundles (`.app.tar.gz`, `-setup.exe`, `.AppImage`), when updater signing is configured
+- desktop app bundles: `ruckcode-app-<version>-<target>` with `.dmg`, `.app.tar.gz` (macOS), `.msi` (Windows), `.AppImage`, `.deb` (Linux x86_64)
+- `.sig` minisign signatures for the `rc` archives and the updater bundles (`.app.tar.gz`, `.msi`, `.AppImage`), when updater signing is configured
 - `CHANGELOG.md` and release notes generated from the commits
 
 After the release is published, a `release-pages` job deploys the latest version to GitHub Pages
@@ -677,7 +672,7 @@ Manifest formats:
 { "version": "0.2.0", "notes": "...", "pub_date": "2026-01-02T03:04:05Z",
   "platforms": {
     "darwin-aarch64": { "signature": "<.sig contents>", "url": ".../ruckcode-app-0.2.0-aarch64-apple-darwin.app.tar.gz" },
-    "darwin-x86_64":  { ... }, "windows-x86_64": { "url": ".../...-setup.exe", ... },
+    "darwin-x86_64":  { ... }, "windows-x86_64": { "url": ".../...x86_64-pc-windows-msvc.msi", ... },
     "linux-x86_64":   { "url": ".../...x86_64-unknown-linux-gnu.AppImage", ... } } }
 // /rc/latest.json  (rc self-update, install.sh)
 { "version": "0.2.0", "notes": "...", "pub_date": "...",

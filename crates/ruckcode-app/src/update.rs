@@ -8,7 +8,7 @@
 //! cases are decided here, and the downloaded bytes never leave Rust.
 //!
 //! Flow driven by the UI: `update_check` stages the update, `update_download` fetches it with
-//! progress events, `update_install` applies it (on Windows this runs the NSIS or MSI installer and
+//! progress events, `update_install` applies it (on Windows this runs the MSI installer and
 //! the process exits), `update_restart` relaunches.
 
 use std::time::Duration;
@@ -65,8 +65,9 @@ pub fn pubkey(app: &AppHandle) -> Option<String> {
 }
 
 /// Why this installation cannot update itself, or `None` when it can. The updater swaps the app
-/// in place, which works for AppImage, NSIS, MSI and macOS app bundles (the manifest has a
-/// per-bundle key for each, so an MSI install is updated with the MSI); a `.deb`/`.rpm` install
+/// in place, which works for AppImage, MSI and macOS app bundles (the manifest has a
+/// per-bundle key for each; a legacy NSIS install, no longer shipped, still counts as updatable
+/// and receives the MSI through the generic key); a `.deb`/`.rpm` install
 /// (or an unbundled dev build) must be updated by hand from the download page.
 pub fn manual_reason(bundle: Option<&BundleType>) -> Option<&'static str> {
     match bundle {

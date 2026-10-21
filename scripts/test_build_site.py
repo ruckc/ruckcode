@@ -32,11 +32,10 @@ APP_FILES = [
     f"ruckcode-app-{VERSION}-x86_64-apple-darwin.dmg",
     f"ruckcode-app-{VERSION}-x86_64-apple-darwin.app.tar.gz",
     f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi",
-    f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc-setup.exe",
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.AppImage",
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.deb",
 ]
-UPDATER_FILES = [f for f in APP_FILES if f.endswith((".app.tar.gz", "-setup.exe", ".msi", ".AppImage"))]
+UPDATER_FILES = [f for f in APP_FILES if f.endswith((".app.tar.gz", ".msi", ".AppImage"))]
 
 
 def rc_name(triple):
@@ -100,7 +99,7 @@ class BuildSite(unittest.TestCase):
         self.assertIn("updates", tauri["notes"])
         self.assertEqual(set(tauri["platforms"]), {
                 "darwin-aarch64", "darwin-aarch64-app", "darwin-x86_64", "darwin-x86_64-app",
-                "windows-x86_64", "windows-x86_64-nsis", "windows-x86_64-msi",
+                "windows-x86_64", "windows-x86_64-msi",
                 "linux-x86_64", "linux-x86_64-appimage",
             },
         )
@@ -108,14 +107,11 @@ class BuildSite(unittest.TestCase):
             self.assertEqual(p["signature"], SIG, key)
             self.assertTrue(p["url"].startswith(f"{BASE}/download/v{VERSION}/"), key)
             self.assertTrue((out / "download" / f"v{VERSION}" / p["url"].rsplit("/", 1)[1]).is_file(), key)
-        self.assertTrue(tauri["platforms"]["windows-x86_64"]["url"].endswith("-setup.exe"))
         p = tauri["platforms"]
-        # An MSI install updates with the MSI, an NSIS install with the setup.exe; the generic
-        # key (fallback for anything else) stays NSIS.
-        self.assertTrue(p["windows-x86_64-msi"]["url"].endswith(".msi"))
-        self.assertTrue(p["windows-x86_64-nsis"]["url"].endswith("-setup.exe"))
-        self.assertEqual(p["windows-x86_64"], p["windows-x86_64-nsis"])
-        self.assertNotEqual(p["windows-x86_64-msi"]["url"], p["windows-x86_64"]["url"])
+        # The MSI is the only Windows installer: the generic key and the msi key both use it.
+        self.assertNotIn("windows-x86_64-nsis", p)
+        self.assertTrue(p["windows-x86_64"]["url"].endswith(".msi"))
+        self.assertEqual(p["windows-x86_64"], p["windows-x86_64-msi"])
         self.assertTrue(p["linux-x86_64-appimage"]["url"].endswith(".AppImage"))
         self.assertEqual(p["darwin-aarch64-app"], p["darwin-aarch64"])
         self.assertTrue((out / "download" / f"v{VERSION}" / f"{Path(p['windows-x86_64-msi']['url']).name}.sig").is_file())
