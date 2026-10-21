@@ -709,3 +709,43 @@ pub fn spawn_in_process(agent: Arc<Agent>, client_handler: Arc<dyn Handler>) -> 
     });
     rpc::spawn_client(rpc::lines_transport(br, bw), client_handler)
 }
+
+/// Wire an agent to a raw client end in process: the returned sender takes ACP JSON-RPC lines
+/// (no trailing newline) destined for the agent, and the receiver yields the agent's lines.
+/// For hosts that relay the protocol verbatim (e.g. a webview). Dropping the sender ends the
+/// connection; the receiver then closes.
+pub fn spawn_in_process_raw(
+    agent: Arc<Agent>,
+) -> (
+    tokio::sync::mpsc::UnboundedSender<String>,
+    tokio::sync::mpsc::UnboundedReceiver<String>,
+) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let (a, b) = tokio::io::duplex(1024 * 1024);
+    let (ar, aw) = tokio::io::split(a);
+    let (br, mut bw) = tokio::io::split(b);
+    tokio::spawn(async move {
+        let _ = serve(agent, ar, aw).await;
+    });
+    let (to_agent, mut from_host) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (to_host, from_agent) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        while let Some(line) = from_host.recv().await {
+            let mut buf = line.into_bytes();
+            buf.push(b'\n');
+            if bw.write_all(&buf).await.is_err() || bw.flush().await.is_err() {
+                break;
+            }
+        }
+        let _ = bw.shutdown().await;
+    });
+    tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(br).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if !line.trim().is_empty() && to_host.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    (to_agent, from_agent)
+}

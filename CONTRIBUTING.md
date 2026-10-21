@@ -39,6 +39,11 @@ rather than committed.
   saved only on `main` (even when a job fails); PRs restore but never write, so
   they cannot thrash the repository cache budget.
 - Tests use plain `cargo test` (no extra tool install).
+- The `app` job covers the desktop app: pnpm (via corepack, version pinned in the workflow and
+  `app/package.json`) with the store cached through `actions/cache` keyed on
+  `app/pnpm-lock.yaml`, `app:check`, vitest, the frontend build, then webkit2gtk from apt and
+  `cargo check` of `crates/ruckcode-app` (a separate Cargo workspace with its own `Cargo.lock`,
+  so the other jobs' `--workspace` commands never need webkit).
 - Recommended branch protection for `main`: require the `fmt`, `clippy`, `test`,
   `check`, `PR title` and `PR commits` checks, and allow squash merging.
 

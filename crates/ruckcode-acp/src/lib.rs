@@ -8,7 +8,7 @@ pub mod agent;
 pub mod rpc;
 pub mod schema;
 
-pub use agent::{serve, serve_stdio, spawn_in_process, AcpAgent};
+pub use agent::{serve, serve_stdio, spawn_in_process, spawn_in_process_raw, AcpAgent};
 pub use rpc::{Connection, Handler, RpcError};
 pub use schema::ProtocolVersion;
 

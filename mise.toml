@@ -1,5 +1,9 @@
+[tools]
+node = "22"
+pnpm = "10"
+
 [tasks.build]
-description = "Build the workspace"
+description = "Build the workspace (the desktop app crate is excluded, see app:*)"
 run = "cargo build --workspace"
 
 [tasks.test]
@@ -21,3 +25,41 @@ run = "cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
 [tasks.install]
 description = "Install the rc binary"
 run = "cargo install --path crates/ruckcode-cli"
+
+# Desktop app: SvelteKit UI in app/, Tauri shell in crates/ruckcode-app (its own Cargo
+# workspace, needs webkit2gtk on Linux).
+[tasks."app:install"]
+description = "Install the desktop app's JS dependencies"
+run = "pnpm -C app install --frozen-lockfile"
+
+[tasks."app:dev"]
+description = "Run the desktop app in dev mode (Vite dev server + Tauri window)"
+depends = ["app:install"]
+run = "pnpm -C app tauri dev"
+
+[tasks."app:build"]
+description = "Build the desktop app bundles (release profile; slow)"
+depends = ["app:install"]
+run = "pnpm -C app tauri build"
+
+[tasks."app:check"]
+description = "svelte-check, eslint and prettier --check"
+depends = ["app:install"]
+run = [
+  "pnpm -C app check",
+  "pnpm -C app lint",
+  "pnpm -C app format:check",
+]
+
+[tasks."app:test"]
+description = "Run the frontend unit tests (vitest)"
+depends = ["app:install"]
+run = "pnpm -C app test"
+
+[tasks."app:lint:rust"]
+description = "clippy for the Tauri shell"
+run = "cargo clippy --manifest-path crates/ruckcode-app/Cargo.toml --all-targets -- -D warnings"
+
+[tasks."app:test:rust"]
+description = "Rust tests for the Tauri shell"
+run = "cargo test --manifest-path crates/ruckcode-app/Cargo.toml"

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# The Tauri shell is its own workspace (needs webkit2gtk); see crates/ruckcode-app/Cargo.toml.
+exclude = ["crates/ruckcode-app"]
 
 [workspace.package]
 version = "0.1.0"

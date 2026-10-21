@@ -87,8 +87,8 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
 
 ## Milestones
 
-1. **Scaffold.** SvelteKit SPA, the Tauri crate, mise tasks, and CI checks. A local host that
-   relays ACP, plus a minimal chat with the mock model.
+1. **Scaffold. Done.** SvelteKit SPA, the Tauri crate, mise tasks, and CI checks. A local host
+   that relays ACP, plus a minimal chat with the mock model. See "Milestone 1 notes" below.
 2. **Core chat and tools.** Full UI, permissions, AskUserQuestion, modes, model picker and
    sessions.
 3. **WSL2 host.** Distro discovery, `rc` provisioning inside WSL, path translation, and a stdio
@@ -97,6 +97,33 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
 5. **Transcript browser.**
 6. **Mode/hook editor**, including the new `rc modes` subcommand.
 7. **Release bundles** in CI, and documentation.
+
+## Milestone 1 notes
+
+Built as planned, with these deviations and details:
+
+- **Separate Cargo workspace.** `cargo ... --workspace` ignores `default-members`, so the only
+  way to keep `--workspace` webkit-free was to exclude `crates/ruckcode-app` from the root
+  workspace (`exclude` in the root `Cargo.toml`) and give it its own `[workspace]` and
+  `Cargo.lock`. Use `--manifest-path crates/ruckcode-app/Cargo.toml` (CI does) instead of
+  `-p ruckcode-app`. It depends on `ruckcode-core` and `ruckcode-acp` by path.
+- **SvelteKit 3.** Configuration lives in `vite.config.ts` (no `svelte.config.js`), and
+  `$lib` is gone, so imports are relative. TypeScript is 6.x (svelte-check and typescript-eslint
+  do not support 7 yet). The ACP SDK is `@agentclientprotocol/sdk` 2.0 (stable v1 entrypoint,
+  `client().onRequest(...)`/`onNotification(...)` with `ndJsonStream`; it needs `zod` as a peer).
+- **Transport.** `LineTransport { send, onLine, close? }` is adapted to the SDK's `Stream` with
+  `ndJsonStream` over Web Streams (`app/src/lib/acp/transport.ts`). `_ruckcode/ask_user_question`
+  is registered as a custom request handler with a zod-validated payload. The client advertises
+  `session.notices` and `_meta.ruckcode.{askUserQuestion,notices}`.
+- **Backend.** `agent_connect(cwd, host?, rcPath?, onLine: Channel<String>) -> id`,
+  `agent_send(id, line)`, `agent_disconnect(id)`. Hosts: `local` (embedded agent through the new
+  `ruckcode_acp::spawn_in_process_raw`) and `subprocess` (`rc acp`, path configurable; no UI for
+  it yet). Capabilities grant only the three app commands (generated `allow-*` permissions via
+  the build script's app manifest) and `dialog:allow-open`.
+- **Browser demo.** `?mock=1` swaps the Tauri host for a scripted in-memory agent
+  (`host/fake-agent.ts`, also used by the vitest suite and for screenshots).
+- **Not done yet:** Playwright against `pnpm preview` is not wired into `app:test` (only vitest);
+  the milestone-1 UI has no project history, session list, markdown rendering or diff view.
 
 ## Open items for later
 

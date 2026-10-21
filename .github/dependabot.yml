@@ -18,3 +18,21 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /crates/ruckcode-app
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      cargo-app:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      npm:
+        patterns: ["*"]

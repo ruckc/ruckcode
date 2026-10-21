@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the main window: the agent relay commands and the folder picker.",
+  "windows": ["main"],
+  "permissions": ["allow-agent-connect", "allow-agent-send", "allow-agent-disconnect", "dialog:allow-open"]
+}

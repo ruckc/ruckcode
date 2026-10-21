@@ -334,6 +334,31 @@ crate (ACP v1, stable surface only) and the JSON-RPC transport from the official
 `session/close` and the `model` config option), notifications and the `_ruckcode/*` extensions are
 documented in [docs/ACP.md](docs/ACP.md).
 
+## Desktop app (preview)
+
+A Tauri v2 + SvelteKit desktop app that is another ACP client, like the TUI and editors; see
+[docs/APP_PLAN.md](docs/APP_PLAN.md). It is a scaffold for now: pick a project folder, connect,
+and chat (streaming text, tool calls, permission and AskUserQuestion dialogs, cancel, current
+mode). Try it with the mock model (see above) before configuring a real provider.
+
+```sh
+mise run app:install   # pnpm install in app/ (node 22, pnpm 10 are pinned in mise.toml)
+mise run app:dev       # Vite dev server + Tauri window (embedded agent)
+mise run app:check     # svelte-check, eslint, prettier --check
+mise run app:test      # vitest
+mise run app:build     # release bundles (slow)
+```
+
+On Linux, building the Tauri shell needs webkit2gtk (`libwebkit2gtk-4.1-dev libsoup-3.0-dev
+libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-essential`).
+`crates/ruckcode-app` is its own Cargo workspace, so `cargo build/test/clippy --workspace` for
+`rc` never needs webkit. Build it with
+`cargo check --manifest-path crates/ruckcode-app/Cargo.toml` (or `mise run app:lint:rust`,
+`app:test:rust`).
+
+The frontend can also run in a plain browser against a scripted fake agent:
+`pnpm -C app dev` then open `http://localhost:5173/?mock=1`.
+
 ## Workspace layout
 
 ```
@@ -346,6 +371,8 @@ crates/
   ruckcode-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp      ACP agent server + client plumbing (official ACP SDK for JSON-RPC)
   ruckcode-cli      `rc` binary: TUI, headless `-p`, `rc acp`, `rc init`
+  ruckcode-app      Tauri v2 desktop shell (separate Cargo workspace, see below)
+app/                SvelteKit UI for the desktop app (TypeScript, Svelte 5, pnpm)
 ```
 
 ## Development
@@ -354,6 +381,7 @@ crates/
 mise run test    # cargo test --workspace
 mise run lint    # cargo clippy --workspace --all-targets -- -D warnings
 mise run fmt     # cargo fmt --all
+# the desktop app is excluded from --workspace; see "Desktop app" for its tasks
 ```
 
 Set `RUCKCODE_LOG=debug` for logs (the TUI logs to `~/.cache/ruckcode/rc.log`). Provider tests run

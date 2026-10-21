@@ -1,0 +1,30 @@
+# Standalone workspace on purpose: the Tauri shell needs webkit2gtk on Linux, so keeping it out
+# of the root workspace keeps `cargo build/test/clippy --workspace` free of webview dependencies.
+# Build it with `cargo <cmd> --manifest-path crates/ruckcode-app/Cargo.toml` (or from this
+# directory). It has its own Cargo.lock and target directory.
+[workspace]
+
+[package]
+name = "ruckcode-app"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ruckc/ruckcode"
+description = "ruckcode desktop app (Tauri v2 shell around the SvelteKit UI)"
+publish = false
+
+[lib]
+name = "ruckcode_app_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros"] }
+ruckcode-acp = { path = "../ruckcode-acp" }
+ruckcode-core = { path = "../ruckcode-core" }

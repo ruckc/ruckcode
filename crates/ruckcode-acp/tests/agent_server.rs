@@ -817,3 +817,26 @@ async fn tool_call_update_omits_empty_content() {
     // An empty `content` array would clear what the client already shows.
     assert!(progress.fields.content.is_none());
 }
+
+#[tokio::test]
+async fn raw_in_process_relays_json_lines() {
+    let env = Env::new();
+    let (tx, mut rx) = ruckcode_acp::spawn_in_process_raw(env.agent(mock([])));
+    tx.send(
+        json!({"jsonrpc":"2.0","id":1,"method":INITIALIZE,"params":{"protocolVersion":1}})
+            .to_string(),
+    )
+    .unwrap();
+    let line = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .expect("timeout")
+        .expect("closed");
+    let v: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["id"], 1);
+    assert_eq!(v["result"]["protocolVersion"], 1);
+    drop(tx);
+    let end = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .expect("timeout");
+    assert!(end.is_none());
+}
