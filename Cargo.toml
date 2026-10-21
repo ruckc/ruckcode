@@ -14,24 +14,24 @@ anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
-crossterm = { version = "0.28", features = ["event-stream"] }
-dirs = "5"
+crossterm = { version = "0.29", features = ["event-stream"] }
+dirs = "7"
 futures = "0.3"
 globset = "0.4"
 ignore = "0.4"
-ratatui = "0.29"
+ratatui = "0.30"
 regex = "1"
 rmcp = { version = "3.6", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-similar = "2"
+similar = "3"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-toml = { version = "0.8", features = ["preserve_order"] }
-toml_edit = "0.22"
+toml = { version = "1.1", features = ["preserve_order"] }
+toml_edit = "0.25"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }

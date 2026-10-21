@@ -1,6 +1,6 @@
 //! `rc -p`: run one prompt non-interactively.
 
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -110,11 +110,41 @@ impl Handler for HeadlessHandler {
     }
 }
 
+const STDIN_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Read all of stdin. With `first_data_timeout`, return empty if neither data nor EOF
+/// arrives within that time; once data starts flowing it is read to the end.
+fn read_piped_stdin(first_data_timeout: Option<std::time::Duration>) -> String {
+    use std::io::Read as _;
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        let mut buf = [0u8; 8192];
+        while let Ok(n @ 1..) = stdin.read(&mut buf) {
+            if tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut bytes = match first_data_timeout {
+        Some(t) => match rx.recv_timeout(t) {
+            Ok(first) => first,
+            Err(_) => return String::new(),
+        },
+        None => Vec::new(),
+    };
+    bytes.extend(rx.iter().flatten());
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 fn read_prompt(cli: &Cli) -> Result<String> {
     let mut prompt = cli.prompt.clone().unwrap_or_default();
     if !std::io::stdin().is_terminal() {
-        let mut piped = String::new();
-        std::io::stdin().read_to_string(&mut piped).ok();
+        // With a prompt argument, stdin is optional extra context: a parent process may
+        // leave it open without ever writing (CI, subprocesses), so give up if no data
+        // arrives promptly instead of blocking forever.
+        let wait = (!prompt.trim().is_empty()).then_some(STDIN_GRACE);
+        let piped = read_piped_stdin(wait);
         if !piped.trim().is_empty() {
             prompt = if prompt.is_empty() {
                 piped
