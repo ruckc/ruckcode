@@ -31,10 +31,13 @@ rather than committed.
 
 - Every GitHub Action is pinned to a full commit SHA with a `# vX.Y.Z` comment;
   Dependabot (weekly) proposes updates. Keep that format when adding actions.
-- Caching uses `Swatinem/rust-cache` with a `shared-key` per job and saves only
-  on `main`; PRs restore but never write. sccache was evaluated and rejected: a
-  workspace this size gains little over a restored `target/` cache, and
-  rust-cache needs no extra action, wrapper env or cache-service dependency.
+- Workflows use only official GitHub `actions/*` actions, pinned by commit SHA.
+  Rust is installed with the runner's preinstalled `rustup`; git-cliff is
+  downloaded from its release and checked against a pinned SHA-512.
+- Caching uses `actions/cache` (restore/save) keyed by job, OS, rustc version and
+  `Cargo.lock`, covering the cargo registry, git deps and `target/`. Caches are
+  saved only on `main` (even when a job fails); PRs restore but never write, so
+  they cannot thrash the repository cache budget.
 - Tests use plain `cargo test` (no extra tool install).
 - Recommended branch protection for `main`: require the `fmt`, `clippy`, `test`,
   `check`, `PR title` and `PR commits` checks, and allow squash merging.
