@@ -679,11 +679,60 @@ pub async fn check_rc_with(program: &str, distro: &str) -> Result<RcStatus, Stri
     let text = decode_wsl_output(&out.stdout);
     let expected = crate::app_version();
     match out.code {
-        Some(0) => Ok(parse_rc_check(&text, expected)),
+        Some(0) => return Ok(parse_rc_check(&text, expected)),
         // `command -v rc` failed inside the distro: not installed.
-        Some(1) if !text.contains('/') => Ok(parse_rc_check("", expected)),
-        _ => Err(format!("could not run rc in `{distro}`: {}", text.trim())),
+        Some(1) if !text.contains('/') => return Ok(parse_rc_check("", expected)),
+        _ => {}
     }
+    // The wrapped check failed in an unexpected way. Probe the usual install location directly,
+    // without a login shell or the base64 wrapper, before giving up.
+    let fallback = run(
+        program,
+        &strs(&["-d", distro, "--exec", "sh", "-c", FALLBACK_CHECK]),
+        Duration::from_secs(60),
+    )
+    .await;
+    if let Ok(fb) = &fallback {
+        let fb_text = decode_wsl_output(&fb.stdout);
+        if fb.code == Some(0) {
+            return Ok(parse_rc_check(&fb_text, expected));
+        }
+    }
+    Err(check_failure(
+        distro,
+        out.code,
+        &text,
+        fallback.ok().as_ref(),
+    ))
+}
+
+/// Direct probe of `~/.local/bin/rc` used when the wrapped check fails; contains no characters
+/// that any shell layer could re-parse differently.
+const FALLBACK_CHECK: &str =
+    "command -v rc || ls $HOME/.local/bin/rc && $HOME/.local/bin/rc --version";
+
+fn check_failure(distro: &str, code: Option<i32>, text: &str, fallback: Option<&Output>) -> String {
+    let code = code.map_or_else(|| "none".to_string(), |c| c.to_string());
+    let text = text.trim();
+    let mut msg = format!(
+        "could not run rc in `{distro}` (exit code {code}): {}",
+        if text.is_empty() { "no output" } else { text }
+    );
+    if let Some(fb) = fallback {
+        let fb_text = decode_wsl_output(&fb.stdout);
+        let fb_text = fb_text.trim();
+        msg.push_str(&format!(
+            "; direct probe exit code {}: {}",
+            fb.code
+                .map_or_else(|| "none".to_string(), |c| c.to_string()),
+            if fb_text.is_empty() {
+                "no output"
+            } else {
+                fb_text
+            }
+        ));
+    }
+    msg
 }
 
 /// Run the install script (latest `rc` from the update site), reporting each output line to
