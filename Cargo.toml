@@ -49,6 +49,6 @@ ruckcode-mise = { path = "crates/ruckcode-mise" }
 ruckcode-tools = { path = "crates/ruckcode-tools" }
 
 [profile.release]
-lto = "thin"
-codegen-units = 1
+# Fast builds over the last few percent of speed/size: no cross-crate LTO, parallel codegen.
+lto = false
 strip = true
