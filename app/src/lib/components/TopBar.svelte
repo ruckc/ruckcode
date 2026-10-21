@@ -18,8 +18,8 @@
     disabled: boolean;
     planOpen: boolean;
     sidebarOpen: boolean;
-    view?: 'chat' | 'transcripts';
-    onview?: (v: 'chat' | 'transcripts') => void;
+    view?: 'chat' | 'transcripts' | 'modes';
+    onview?: (v: 'chat' | 'transcripts' | 'modes') => void;
     onmode: (id: string) => void;
     onconfig: (id: string, value: string) => void;
     onsettings: () => void;
@@ -43,7 +43,9 @@
     aria-label="Toggle sidebar"
     onclick={() => (sidebarOpen = !sidebarOpen)}>&#9776;</button
   >
-  <strong class="title" {title}>{view === 'transcripts' ? 'Transcripts' : title}</strong>
+  <strong class="title" {title}
+    >{view === 'transcripts' ? 'Transcripts' : view === 'modes' ? 'Modes' : title}</strong
+  >
   {#if onview}
     <div class="views" role="group" aria-label="View">
       <button
@@ -57,6 +59,12 @@
         class="small toggle"
         aria-pressed={view === 'transcripts'}
         onclick={() => onview('transcripts')}>Transcripts</button
+      >
+      <button
+        type="button"
+        class="small toggle"
+        aria-pressed={view === 'modes'}
+        onclick={() => onview('modes')}>Modes</button
       >
     </div>
   {/if}

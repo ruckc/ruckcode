@@ -28,6 +28,10 @@ fn main() {
             "transcripts_list",
             "transcripts_read",
             "transcripts_search",
+            "modes_get",
+            "modes_validate",
+            "modes_preview",
+            "modes_apply",
         ])),
     )
     .expect("failed to run tauri-build");

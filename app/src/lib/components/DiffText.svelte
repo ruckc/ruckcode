@@ -1,6 +1,10 @@
 <script lang="ts">
   /** Renders unified-diff text from the setup preview (added/removed lines coloured). */
-  let { text, label = 'Changes to be written' }: { text: string; label?: string } = $props();
+  let {
+    text,
+    label = 'Changes to be written',
+    maxHeight = '340px'
+  }: { text: string; label?: string; maxHeight?: string } = $props();
   const lines = $derived(text.replace(/\n$/, '').split('\n'));
   function kind(l: string): string {
     if (l.startsWith('+++') || l.startsWith('---')) return 'file';
@@ -13,9 +17,11 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<pre class="diff" aria-label={label} tabindex="0">{#each lines as l, i (i)}<span class={kind(l)}
-      >{l || ' '}</span
-    >
+<pre
+  class="diff"
+  aria-label={label}
+  tabindex="0"
+  style:max-height={maxHeight}>{#each lines as l, i (i)}<span class={kind(l)}>{l || ' '}</span>
   {/each}</pre>
 
 <style>
@@ -27,6 +33,8 @@
     border-radius: 6px;
     overflow: auto;
     max-height: 340px;
+    /* The markup's own line breaks must not add blank lines; each span is a pre-wrapped block. */
+    white-space: normal;
   }
   span {
     display: block;

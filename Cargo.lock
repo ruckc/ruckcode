@@ -2412,6 +2412,7 @@ dependencies = [
  "chrono",
  "dirs",
  "globset",
+ "regex",
  "ruckcode-hooks",
  "ruckcode-llm",
  "ruckcode-mcp",

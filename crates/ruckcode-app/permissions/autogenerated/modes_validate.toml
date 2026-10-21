@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-modes-validate"
+description = "Enables the modes_validate command without any pre-configured scope."
+commands.allow = ["modes_validate"]
+
+[[permission]]
+identifier = "deny-modes-validate"
+description = "Denies the modes_validate command without any pre-configured scope."
+commands.deny = ["modes_validate"]

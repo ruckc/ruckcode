@@ -6,6 +6,7 @@ mod init_cmd;
 mod keys_cmd;
 mod mcp_cmd;
 mod models_cmd;
+mod modes_cmd;
 mod sessions_cmd;
 mod setup_cmd;
 mod tui;
@@ -103,6 +104,11 @@ pub enum Command {
     Keys {
         #[command(subcommand)]
         action: keys_cmd::KeysAction,
+    },
+    /// Read, validate and write .ruckcode/modes.toml as JSON (the desktop app's mode editor).
+    Modes {
+        #[command(subcommand)]
+        action: modes_cmd::ModesAction,
     },
     /// List the models an endpoint offers (JSON with --json).
     Models(models_cmd::ModelsArgs),
@@ -221,6 +227,7 @@ async fn main() -> ExitCode {
             .map(|_| 0),
         Some(Command::Setup(args)) => setup_cmd::run(&cli, args).await.map(|_| 0),
         Some(Command::Models(args)) => models_cmd::run(args).await.map(|_| 0),
+        Some(Command::Modes { action }) => modes_cmd::run(&cli, action).await.map(|_| 0),
         Some(Command::Keys { action }) => keys_cmd::run(&cli, action).await.map(|_| 0),
         Some(Command::Sessions(args)) => {
             async {

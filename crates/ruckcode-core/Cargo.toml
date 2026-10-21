@@ -11,6 +11,7 @@ async-trait.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 globset.workspace = true
+regex.workspace = true
 ruckcode-hooks.workspace = true
 ruckcode-llm.workspace = true
 ruckcode-mcp.workspace = true

@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { LineTransport } from '../acp/transport';
+import type { ModesApi } from './modes';
 import type { SetupApi } from './setup';
 import type { TranscriptsApi } from './transcripts';
 import type { RcStatus, WslApi, WslDistro } from './wsl';
@@ -138,6 +139,18 @@ export const tauriSetup: SetupApi = {
       projectScope
     });
   },
+  initModes: (t, opts) =>
+    invoke('init_modes', { project: t.project, distro: t.distro ?? null, opts: opts ?? null })
+};
+
+/** The mode editor through the Tauri backend (local core, or `rc modes --json` inside WSL). */
+export const tauriModes: ModesApi = {
+  get: (t) => invoke('modes_get', { project: t.project, distro: t.distro ?? null }),
+  validate: (t, doc) =>
+    invoke('modes_validate', { project: t.project, distro: t.distro ?? null, doc }),
+  preview: (t, doc) =>
+    invoke('modes_preview', { project: t.project, distro: t.distro ?? null, doc }),
+  apply: (t, doc) => invoke('modes_apply', { project: t.project, distro: t.distro ?? null, doc }),
   initModes: (t, opts) =>
     invoke('init_modes', { project: t.project, distro: t.distro ?? null, opts: opts ?? null })
 };

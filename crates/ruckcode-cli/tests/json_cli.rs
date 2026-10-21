@@ -483,3 +483,78 @@ fn sessions_errors_are_rc_lines() {
         assert_eq!(err.trim().lines().count(), 1, "{err}");
     }
 }
+
+#[test]
+fn modes_get_validate_set() {
+    let e = Env::new();
+    let g = e.json(&["modes", "get", "--json"], "");
+    assert_eq!(g["status"], "missing");
+    assert!(g["path"].as_str().unwrap().ends_with("modes.toml"));
+    assert!(g["catalog"]["builtinTools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["name"] == "Bash" && t["readOnly"] == false && t["kind"] == "execute"));
+    assert_eq!(g["catalog"]["hookEvents"][4]["name"], "post_edit");
+    assert_eq!(
+        g["catalog"]["permissionValues"],
+        serde_json::json!(["allow", "ask", "deny"])
+    );
+    assert_eq!(g["catalog"]["templates"].as_array().unwrap().len(), 9);
+    assert!(g.get("modes").unwrap().as_array().unwrap().is_empty());
+
+    // create from a document, previewing first
+    let doc = r#"{"defaultMode":"a","modes":[{"id":"a","description":"first","tools":["Read"],
+      "hooks":{"post_edit":[{"run":"fmt {files}","glob":"*.rs","onFailure":"fix_turn"}]}},
+      {"id":"b","next":["a"],"permissions":{"Bash":"deny"}}]}"#;
+    let p = e.json(&["modes", "set", "--doc-stdin", "--preview", "--json"], doc);
+    assert_eq!(p["changed"], true);
+    assert!(p["diff"].as_str().unwrap().contains("+[modes.a]"));
+    assert!(!e.proj.path().join(".ruckcode/modes.toml").exists());
+    let r = e.json(&["modes", "set", "--doc-stdin", "--json"], doc);
+    assert_eq!(r["changed"], true);
+    assert!(r["path"].as_str().unwrap().ends_with("modes.toml"));
+
+    let g = e.json(&["modes", "get", "--json"], "");
+    assert_eq!(g["status"], "ready");
+    assert_eq!(g["defaultMode"], "a");
+    assert_eq!(g["modes"][0]["originalId"], "a");
+    assert_eq!(g["modes"][0]["tools"], serde_json::json!(["Read"]));
+    assert_eq!(
+        g["modes"][0]["hooks"]["post_edit"][0]["onFailure"],
+        "fix_turn"
+    );
+    assert_eq!(g["modes"][0]["hooks"]["post_edit"][0]["maxFixTurns"], 2);
+    assert_eq!(g["modes"][1]["permissions"]["Bash"], "deny");
+    assert_eq!(g["modes"][1]["tools"], Value::Null);
+
+    // validation issues
+    let v = e.json(
+        &["modes", "validate", "--doc-stdin", "--json"],
+        r#"{"defaultMode":"zz","modes":[{"id":"a","next":["q"],"hooks":{"stop":[{"run":"x","matcher":"("}]}}]}"#,
+    );
+    let paths: Vec<&str> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["path"].as_str().unwrap())
+        .collect();
+    assert!(paths.contains(&"defaultMode") && paths.contains(&"modes[0].next[0]"));
+    assert!(paths.contains(&"modes[0].hooks.stop[0].matcher"));
+    assert_eq!(v[0]["severity"], "error");
+
+    // an invalid document is refused with `rc: msg` and exit 1
+    let o = e.rc(
+        &["modes", "set", "--doc-stdin", "--json"],
+        r#"{"defaultMode":"x","modes":[]}"#,
+    );
+    assert_eq!(o.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.starts_with("rc: ") && err.contains("at least one mode"),
+        "{err}"
+    );
+    let o = e.rc(&["modes", "set", "--doc-stdin", "--json"], "not json");
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&o.stderr).starts_with("rc: "));
+}

@@ -4,11 +4,13 @@ import {
   inTauri,
   pickFolder,
   tauriPlatform,
+  tauriModes,
   tauriSetup,
   tauriTranscripts,
   tauriWsl,
   type HostKind
 } from './tauri';
+import type { ModesApi } from './modes';
 import type { SetupApi } from './setup';
 import type { TranscriptsApi } from './transcripts';
 import type { WslApi } from './wsl';
@@ -19,6 +21,7 @@ let mockStore: import('./fake-agent').FakeStore | undefined;
 let mockWsl: WslApi | undefined;
 let mockSetup: SetupApi | undefined;
 let mockTranscripts: TranscriptsApi | undefined;
+let mockModes: import('./fake-modes').FakeModes | undefined;
 
 export type HostMode = 'tauri' | 'mock' | 'none';
 
@@ -103,11 +106,40 @@ export async function getSetup(): Promise<SetupApi> {
     const delay = Number(q.get('setupdelay') ?? 150);
     mockSetup ??= new FakeSetup({
       fresh: q.get('setup') === 'fresh',
-      delayMs: Number.isFinite(delay) ? delay : 150
+      delayMs: Number.isFinite(delay) ? delay : 150,
+      modes: await fakeModes()
     });
     return mockSetup;
   }
   return tauriSetup;
+}
+
+/** The one in-memory modes.toml store of this page (shared by the setup and mode editor fakes). */
+async function fakeModes() {
+  if (!mockModes) {
+    const { FakeModes } = await import('./fake-modes');
+    const q = new URLSearchParams(location.search);
+    const delay = Number(q.get('modesdelay') ?? 40);
+    mockModes = new FakeModes({
+      fresh: q.get('setup') === 'fresh',
+      broken: q.get('modes') === 'broken',
+      delayMs: Number.isFinite(delay) ? delay : 40,
+      profiles: () => (mockSetup as unknown as { profiles?: [] } | undefined)?.profiles ?? []
+    });
+  }
+  return mockModes;
+}
+
+/**
+ * The mode editor API (in-memory in mock mode; `?modes=broken` starts with an unreadable file,
+ * `?modesdelay=<ms>` sets the latency).
+ */
+export async function getModes(): Promise<ModesApi> {
+  if (hostMode() === 'mock') {
+    await getSetup(); // so the fake profiles are the setup fake's
+    return fakeModes();
+  }
+  return tauriModes;
 }
 
 /** The transcript browser API (seeded in-memory transcripts in mock mode). */

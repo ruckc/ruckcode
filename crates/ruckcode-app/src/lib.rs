@@ -2,6 +2,7 @@
 //! the SvelteKit UI (the ACP client lives in TypeScript, see `app/`).
 
 mod host;
+mod modes;
 mod setup;
 mod transcripts;
 mod wsl;
@@ -252,6 +253,38 @@ async fn transcripts_search(
     transcripts::search(&Target::from_distro(distro), &project, &text, limit).await
 }
 
+// ---- mode/hook editor ---------------------------------------------------------------------------
+//
+// `doc` is the camelCase modes document of `ruckcode_core::modes_api`; saving keeps comments.
+
+#[tauri::command]
+async fn modes_get(project: String, distro: Option<String>) -> Result<Value, String> {
+    modes::get(&Target::from_distro(distro), &project).await
+}
+
+#[tauri::command]
+async fn modes_validate(
+    project: String,
+    distro: Option<String>,
+    doc: Value,
+) -> Result<Value, String> {
+    modes::validate(&Target::from_distro(distro), &project, &doc).await
+}
+
+#[tauri::command]
+async fn modes_preview(
+    project: String,
+    distro: Option<String>,
+    doc: Value,
+) -> Result<Value, String> {
+    modes::preview(&Target::from_distro(distro), &project, &doc).await
+}
+
+#[tauri::command]
+async fn modes_apply(project: String, distro: Option<String>, doc: Value) -> Result<Value, String> {
+    modes::apply(&Target::from_distro(distro), &project, &doc).await
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -279,7 +312,11 @@ pub fn run() {
             init_modes,
             transcripts_list,
             transcripts_read,
-            transcripts_search
+            transcripts_search,
+            modes_get,
+            modes_validate,
+            modes_preview,
+            modes_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running ruckcode app");

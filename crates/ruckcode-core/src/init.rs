@@ -4,8 +4,8 @@ use anyhow::{bail, Context, Result};
 use ruckcode_mise::MiseTask;
 use std::collections::{BTreeSet, HashSet};
 
-const FULL: &str = include_str!("../templates/modes.toml");
-const MINIMAL: &str = include_str!("../templates/modes-minimal.toml");
+pub(crate) const FULL: &str = include_str!("../templates/modes.toml");
+pub(crate) const MINIMAL: &str = include_str!("../templates/modes-minimal.toml");
 
 #[derive(Debug, Clone, Default)]
 pub struct InitOptions {

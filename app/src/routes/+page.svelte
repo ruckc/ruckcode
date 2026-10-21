@@ -9,13 +9,17 @@
   import TopBar from '../lib/components/TopBar.svelte';
   import {
     browseFolder,
+    getModes,
     getPlatform,
     getSetup,
     getTranscripts,
     getWsl,
     hostMode
   } from '../lib/host';
+  import ModesView from '../lib/components/ModesView.svelte';
   import TranscriptsView from '../lib/components/TranscriptsView.svelte';
+  import UnsavedDialog from '../lib/components/UnsavedDialog.svelte';
+  import type { ModesApi } from '../lib/host/modes';
   import type { TranscriptsApi, TranscriptTarget } from '../lib/host/transcripts';
   import type { SettingsTab } from '../lib/state/wizard.svelte';
   import SettingsDialog from '../lib/components/SettingsDialog.svelte';
@@ -42,7 +46,12 @@
   let current = $state<Project | null>(null);
   let sidebarOpen = $state(true);
   let planOpen = $state(true);
-  let view = $state<'chat' | 'transcripts'>('chat');
+  let view = $state<'chat' | 'transcripts' | 'modes'>('chat');
+  let modes = $state<{ api: ModesApi; target: SetupTarget } | null>(null);
+  /** The mode editor has unsaved edits. */
+  let modesDirty = $state(false);
+  /** Navigation waiting for the unsaved-changes dialog. */
+  let pendingNav = $state<(() => void) | null>(null);
   let transcripts = $state<{ api: TranscriptsApi; target: TranscriptTarget } | null>(null);
   let composer: { focus(): void } | undefined = $state();
   let settings = $state<{
@@ -150,9 +159,37 @@
     settings = { api: await getSetup(), target: targetOf(p), tab, firstRun: false };
   }
 
-  async function showView(v: 'chat' | 'transcripts') {
+  /** Run `action`, first asking what to do with unsaved mode edits. */
+  function guard(action: () => void) {
+    if (view === 'modes' && modesDirty) pendingNav = action;
+    else action();
+  }
+
+  function leaveModes() {
+    const a = pendingNav;
+    pendingNav = null;
+    modesDirty = false;
+    view = 'chat';
+    a?.();
+  }
+
+  function showView(v: 'chat' | 'transcripts' | 'modes') {
+    if (v !== view) guard(() => void switchView(v));
+  }
+
+  async function switchView(v: 'chat' | 'transcripts' | 'modes') {
     if (v === 'chat') {
       view = 'chat';
+      return;
+    }
+    if (v === 'modes') {
+      const p = await resolveProject();
+      if (!p.path) {
+        chat.error = 'Choose a project folder first.';
+        return;
+      }
+      modes = { api: await getModes(), target: targetOf(p) };
+      view = 'modes';
       return;
     }
     const p = await resolveProject();
@@ -239,7 +276,12 @@
   );
 </script>
 
-<svelte:window onkeydown={onWindowKey} />
+<svelte:window
+  onkeydown={onWindowKey}
+  onbeforeunload={(e) => {
+    if (view === 'modes' && modesDirty) e.preventDefault();
+  }}
+/>
 
 <div class="shell" class:no-sidebar={!sidebarOpen} class:no-plan={!planOpen || view !== 'chat'}>
   {#if sidebarOpen}
@@ -258,7 +300,7 @@
         {recent}
         sessions={chat.sidebar}
         activeId={chat.activeId}
-        onconnect={connectProject}
+        onconnect={(p) => guard(() => void connectProject(p))}
         ondisconnect={() => chat.disconnect()}
         onbrowse={browse}
         onforget={forget}
@@ -310,6 +352,16 @@
           onresume={resumeSession}
         />
       {/key}
+    {:else if view === 'modes' && modes}
+      {#key `${modes.target.distro ?? ''}\0${modes.target.project}`}
+        <ModesView
+          api={modes.api}
+          target={modes.target}
+          ondirty={(d) => (modesDirty = d)}
+          canReconnect={chat.connected}
+          onreconnect={() => void chat.reconnect()}
+        />
+      {/key}
     {:else if active}
       <ChatView items={active.model.items} running={active.running} loading={active.loading} />
     {:else}
@@ -345,6 +397,10 @@
     <div class="planp"><PlanPanel plan={active?.model.plan ?? []} /></div>
   {/if}
 </div>
+
+{#if pendingNav}
+  <UnsavedDialog onkeep={() => (pendingNav = null)} ondiscard={leaveModes} />
+{/if}
 
 {#if settings}
   <SettingsDialog

@@ -96,7 +96,7 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
 4. **Setup and keys UI. Done.** Settings dialog with the setup wizard, keys manager and project tab,
    plus the JSON outputs for the CLI subcommands. See "Milestone 4 notes" below.
 5. **Transcript browser. Done.** List, search, timeline, metrics, resume and export. See "Milestone 5 notes" below.
-6. **Mode/hook editor**, including the new `rc modes` subcommand.
+6. **Mode/hook editor. Done.** Graphical `modes.toml` editor with comment-preserving saves, plus the new `rc modes` subcommand. See "Milestone 6 notes" below.
 7. **Release bundles** in CI, and documentation.
 
 ## Milestone 1 notes
@@ -314,6 +314,76 @@ Built as planned, with these deviations and details:
 - **Deviations.** Metrics need every record, so opening the Metrics tab loads the rest of a large
   transcript. Search returns one hit per record (the first matching field). Unknown future record
   types count as skipped lines rather than being shown.
+
+## Milestone 6 notes
+
+- **Shared backend.** `ruckcode_core::modes_api` (new, camelCase JSON, same approach as `setup_api`):
+  `get` (status `missing|broken|ready`, path, document, `globalHooks`, catalog), `validate`, `preview`
+  and `apply`. The catalog has the built-in tools (name, ACP kind, read-only; `SwitchMode` included),
+  discovered mise tasks, configured MCP *server* names (tool names need a running server, so the editor
+  suggests `mcp__<server>__*` and takes free-text globs), profiles with their models, hook events (with
+  whether glob/matcher apply), permission values and the lifecycle templates (the six full ones and
+  plan/build/verify). `ModeDto` covers every `ModeDef` field; hooks are a map by event of `HookSpec`s.
+  `globalHooks` (the merged `config.toml` `[hooks]`) is read-only: hooks that run in every mode are a
+  config concern, and editing `config.toml` safely is the setup wizard's job. Parsing is lenient (dangling
+  references still open so they can be fixed); `broken` means TOML syntax or schema errors.
+  Only the project file `.ruckcode/modes.toml` is edited, never the user-level one.
+- **Comment-preserving writer** (`modes_edit.rs`). The file is split into sections at the explicit
+  `[table]`/`[[array]]` headers using `toml_edit` spans (so a `[header]`-looking line inside a
+  multi-line prompt cannot split anything); comments directly above a header belong to that section and
+  a trailing comment block at the end of the file stays last. Modes are reordered, removed, renamed
+  (headers rewritten; `originalId` links old and new id) and added at the text level. Inside a mode only
+  keys whose value changed are touched (via `toml_edit` on that section's body, keeping the value's
+  trailing comment and the comments above the key); keys set back to a default (`null`, `""`, `[]`, hook
+  defaults 2 fix turns and 120 s) are removed; hook entries are matched exactly or by position and
+  unchanged ones are reused verbatim. Multi-line prompts are written as `"""` strings. CRLF files stay
+  CRLF. A mode whose layout is not the one `rc init` writes (inline tables, dotted keys, interleaved
+  tables) is only touched if edited, and then written out fresh (reported in `rewritten`, comments in
+  that mode are lost). After rendering, the text is parsed again and compared with the requested
+  document; on a mismatch the changed modes are written fresh, and only then does it refuse.
+  Validation errors block `preview` and `apply`. `apply` writes atomically (temp file and rename).
+- **Validation rules** (paths like `modes[2].hooks.post_edit[0].matcher`): errors for no modes, invalid or
+  duplicate ids, a missing default, `next`/`auto_advance_to` naming missing modes, invalid globs
+  (mise tasks, MCP tools, permissions, hook globs), bad permission values, empty hook commands, invalid
+  matcher regexes (Rust `regex`, anchored like the agent), bad `onFailure` and a zero timeout; warnings
+  for unknown tools (the agent ignores them), MCP globs that are not `mcp__...`, self references,
+  auto-advance targets missing from a non-empty `next`, an unconfigured profile, a glob on a non-`post_edit`
+  hook, a matcher on a non-tool hook and `fix_turn` with 0 fix turns.
+- **CLI.** `rc modes get --json`, `rc modes validate --doc-stdin --json`, `rc modes set --doc-stdin
+  [--preview] --json` (single-line JSON, errors `rc: msg` exit 1; shapes in the README).
+- **Tauri.** `modes_get`, `modes_validate`, `modes_preview`, `modes_apply` (`project`, `distro?`, `doc`;
+  permissions `allow-modes-*`). Local runs the core (validation, preview and apply on a blocking thread);
+  WSL runs `rc modes ...` through `setup::via_wsl` with the document on stdin. Rust tests include a
+  stand-in `wsl.exe` + fake `rc` checking the argument shape and the stdin document. Creating the file
+  reuses `init_modes` (full, minimal or a subset of modes).
+- **UI.** A third top-bar view, **Modes** (a Settings tab would be too cramped for the list, form and
+  diagram). `ModesEditor` (`state/modes.svelte.ts`) holds the draft; components are `ModesView` (list,
+  overview, review), `ModeForm`, `HooksEditor`, `PermissionsTable`, `ChipInput`, `FlowDiagram` (layered
+  inline SVG; `modes/flow.ts` does the layout), `UnsavedDialog`. Pure helpers (rename with references,
+  delete, reorder, templates, client-side validation mirroring the Rust rules, glob previews) live in
+  `modes/doc.ts` and `modes/glob.ts`. Client checks show instantly; the host's answer (debounced 250 ms)
+  replaces them while it matches the current draft and a failing host call only shows a note. The flow
+  is a simple layered drawing (columns by distance from the default mode), edges are curves, auto-advance
+  edges are thick and accent coloured, and a text list of transitions is available to screen readers. The
+  unsaved-changes guard covers switching view, connecting another project and closing the window
+  (`beforeunload`). After saving, the app offers to reconnect the agent (running sessions keep the modes
+  they started with).
+- **Mock mode.** `FakeModes` (`host/fake-modes.ts`) is the one in-memory `modes.toml` store, shared with
+  `FakeSetup` (so the wizard's per-mode models and the Project tab see the same file). Its diffs come
+  from a canonical TOML rendering of both documents (the real writer keeps comments and formatting).
+  `?modesdelay=<ms>`, `?modes=broken`; works with `&platform=windows` and WSL hosts
+  (`window.__ruckcodeModesCalls` records `{op, project, distro}`).
+- **Tests.** Rust core: round trips (byte identical for the generated full, minimal and tiny templates,
+  CRLF), targeted edits touching only intended lines (prompt, tools, defaults, permissions, hooks),
+  add/remove/rename/reorder with trailing comments kept, rename updating references and the default,
+  unusual layouts, lookalike headers in prompts, validation rules, get/preview/apply end to end;
+  CLI JSON tests; app crate tests with the stand-in `wsl.exe`. vitest: document operations, glob and
+  matcher checks, flow layout, `ModesEditor` (validation staleness, review/save, init, broken file) and
+  components (chips, permissions, hooks, flow, `ModesView`). Playwright: `e2e/modes.spec.ts`.
+- **Deviations / limits.** MCP tool names are not listed (needs running servers). The client-side glob
+  and regex checks approximate `globset` and Rust `regex` (the host's answer is authoritative). Comments
+  attached to a deleted hook or mode go with it. Reordering modes moves each mode's comments with it,
+  and a comment block separated from a header by a blank line stays with the previous mode.
 
 ## Open items for later
 

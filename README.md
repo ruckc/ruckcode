@@ -107,7 +107,37 @@ rc keys add NAME --api-key-stdin [--description D] --json   # {name, path}
 rc keys remove NAME --json     # {name, stillUsedBy[]}
 rc keys use NAME [--profile P] [--project] --json           # {name, profile, scope, path}
 rc init --json [--minimal] [--modes a,b] [--force]          # {path, tasksDiscovered, modes{...}}
+rc modes get --json                                         # the mode editor's document and catalog (below)
+rc modes validate --doc-stdin --json                        # [{path, message, severity}]
+rc modes set --doc-stdin [--preview] --json                 # {path, changed}, or {diff, changed, rewritten}
 ```
+
+`rc modes` is the machine-readable face of the desktop app's mode/hook editor. The document is JSON
+(camelCase) with one entry per mode covering every `modes.toml` field:
+
+```jsonc
+{ "defaultMode": "explore",
+  "modes": [{ "id": "explore", "originalId": "explore",   // originalId: id in the file; a different id renames
+              "name": "Explore", "description": "...", "prompt": "...",
+              "tools": ["Read", "Grep"],                 // null = all built-in tools
+              "miseTasks": ["docs*"], "mcpTools": ["mcp__github__*"],
+              "next": ["design"], "autoAdvanceTo": [], "profile": null, "model": null,
+              "permissions": { "Bash": "ask" },           // tool or glob -> allow | ask | deny
+              "hooks": { "post_edit": [{ "run": "mise run fmt {files}", "glob": "*.rs", "matcher": null,
+                                          "onFailure": "fix_turn", "maxFixTurns": 2, "timeoutSecs": 120 }] } }] }
+```
+
+`get` returns `{status: "missing"|"broken"|"ready", path, error?, defaultMode?, modes, globalHooks?,
+catalog}`; `globalHooks` is the merged `[hooks]` of `config.toml`, shown read-only. The catalog holds
+`builtinTools[{name, kind, readOnly}]`, discovered `miseTasks[{name, description}]`, `mcpServers`
+(MCP tool names are only known while a server runs, so the editor offers `mcp__<server>__*` and
+free-text globs), `profiles[{name, models}]`, `hookEvents`, `permissionValues` and the lifecycle
+`templates`. `set` validates first (errors are refused with `rc: modes.toml would be invalid: ...`) and
+edits the file with `toml_edit`: comments, ordering and formatting of everything you did not change
+stay, removed keys go back to their defaults, and modes can be added, removed, renamed (headers are
+rewritten, `originalId` ties the old and new id) and reordered. A mode whose layout cannot be edited in
+place (inline tables, dotted keys) is written out fresh only if you change it, and listed in
+`rewritten`.
 
 `/model` lists the profile's `models` and switches the model for the current session (stored in the
 transcript as a `model_change` record; `/model default` clears it).
@@ -434,6 +464,37 @@ tokens per second and token usage with per-turn totals, as inline SVG charts wit
 It works for WSL2 projects through `rc sessions --json` in the distro. In the browser demo
 (`?mock=1`, optionally `&platform=windows`) it shows seeded transcripts covering every record type,
 one with about 2,000 records and one with a corrupt line.
+
+#### Mode editor
+
+The **Modes** button in the top bar opens a graphical editor for `.ruckcode/modes.toml`:
+
+- **Overview**: the default mode and a flow diagram of the `next` transitions (thin arrows; they ask
+  you first) and `auto_advance_to` (thick accent arrows; no confirmation). Click a node to edit that
+  mode. Project-wide hooks from `config.toml` are shown read-only.
+- **Mode list**: reorder with the arrows or by dragging (file order; the first mode is the default
+  unless `default_mode` says otherwise), add a blank mode, a copy, or any of the six lifecycle
+  templates (or plan/build/verify), rename (updates `next`, `auto_advance_to` and the default),
+  delete (warns about the references it will remove).
+- **Mode form**: name, description, prompt (with character count), tools (all, or a checklist with
+  read-only badges), mise tasks (discovered tasks plus glob chips with a live "matches N tasks"
+  preview), MCP tool globs, transitions, profile and model dropdowns, a permissions table
+  (tool or glob to allow/ask/deny) and hooks per event (command, file glob for `post_edit`, tool
+  matcher regex for tool hooks, on-failure, fix turns, timeout; reorderable; `{files}` expands to the
+  edited files).
+- **Checks** run as you type (and again on the host, debounced): unknown tools, bad globs and
+  regexes, dangling references, duplicate or invalid ids, an unknown profile and so on. Errors disable
+  saving; warnings do not.
+- **Review & save** shows the diff of exactly the lines that change, then writes the file. Comments
+  and formatting elsewhere in `modes.toml` are kept. Running sessions keep their modes: the app offers
+  to reconnect the agent so new sessions use the new modes. Leaving the editor (or switching
+  project) with unsaved changes asks first.
+- **No modes.toml**: choose the full template, the minimal one or a subset of the modes (this is
+  `rc init`, including your mise tasks), or start from a blank file.
+
+For WSL2 projects it runs `rc modes ... --json` in the distro, so the distro's own `.ruckcode`
+is edited. In the browser demo (`?mock=1`, `&setup=fresh` for no modes.toml, `&modes=broken` for an
+unreadable one) it edits an in-memory file.
 
 #### Settings: providers, keys and modes
 

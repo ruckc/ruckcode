@@ -1,3 +1,4 @@
+import { FakeModes } from './fake-modes';
 import type {
   InitInput,
   InitResult,
@@ -53,16 +54,6 @@ const PRESETS: PresetInfo[] = [
   }
 ];
 
-const MODES: ModesState = {
-  status: 'ready',
-  defaultMode: 'plan',
-  modes: [
-    { id: 'plan', description: 'Explore and plan, read only', profile: null, model: null },
-    { id: 'build', description: 'Implement changes', profile: null, model: null },
-    { id: 'verify', description: 'Run tests and checks', profile: null, model: 'mock-small' }
-  ]
-};
-
 const ANTHROPIC = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 const OLLAMA = ['llama3.1:8b', 'mistral:7b', 'qwen2.5-coder:7b'];
 const OPENROUTER = [
@@ -78,6 +69,8 @@ export interface FakeSetupOptions {
   /** Start with no usable profile and no modes.toml (first run). */
   fresh?: boolean;
   delayMs?: number;
+  /** The mode editor's store, shared so both views see the same modes.toml. */
+  modes?: FakeModes;
 }
 
 interface Ref {
@@ -104,7 +97,8 @@ export class FakeSetup implements SetupApi {
     OPENAI_API_KEY: false,
     OPENROUTER_API_KEY: true
   };
-  private modes = new Map<string, ModesState>();
+  /** modes.toml per project, shared with the mode editor. */
+  readonly modes: FakeModes;
   private fresh: boolean;
   private delayMs: number;
   /** Every call, for tests (never contains secrets). */
@@ -115,6 +109,9 @@ export class FakeSetup implements SetupApi {
   constructor(opts: FakeSetupOptions = {}) {
     this.fresh = !!opts.fresh;
     this.delayMs = opts.delayMs ?? 150;
+    this.modes =
+      opts.modes ??
+      new FakeModes({ fresh: this.fresh, delayMs: 20, profiles: () => this.profiles });
     if (this.fresh) {
       this.profiles = [];
       this.defaultProfile = 'anthropic';
@@ -139,12 +136,7 @@ export class FakeSetup implements SetupApi {
   }
 
   private modesOf(project: string): ModesState {
-    let m = this.modes.get(project);
-    if (!m) {
-      m = this.fresh ? { status: 'missing' } : structuredClone(MODES);
-      this.modes.set(project, m);
-    }
-    return m;
+    return this.modes.summary(project);
   }
 
   private buildKeys(project: string): KeysList {
@@ -310,10 +302,7 @@ export class FakeSetup implements SetupApi {
     let modesUpdated = 0;
     if (modes.status === 'ready') {
       for (const mm of plan.modeModels) {
-        const m = modes.modes.find((x) => x.id === mm.mode);
-        if (!m) throw new Error(`mode \`${mm.mode}\` is not defined in modes.toml`);
-        m.profile = mm.model ? mm.profile : null;
-        m.model = mm.model;
+        this.modes.setModeModel(t.project, mm.mode, mm.model ? mm.profile : null, mm.model);
         modesUpdated++;
       }
     }
@@ -371,20 +360,6 @@ export class FakeSetup implements SetupApi {
 
   async initModes(t: SetupTarget, opts: InitInput = {}): Promise<InitResult> {
     this.calls.push('initModes');
-    await wait(60);
-    const cur = this.modesOf(t.project);
-    if (cur.status === 'ready' && !opts.force)
-      throw new Error(
-        `${t.project}/.ruckcode/modes.toml already exists; use force to overwrite it`
-      );
-    const next: ModesState = opts.minimal
-      ? {
-          status: 'ready',
-          defaultMode: 'plan',
-          modes: MODES.status === 'ready' ? structuredClone(MODES.modes.slice(0, 2)) : []
-        }
-      : structuredClone(MODES);
-    this.modes.set(t.project, next);
-    return { path: `${t.project}/.ruckcode/modes.toml`, tasksDiscovered: 3, modes: next };
+    return this.modes.initModes(t, opts);
   }
 }
