@@ -117,7 +117,7 @@ describe('Updates settings tab', () => {
         tab: 'updates',
         updates: u,
         onclose: () => {},
-        onreconnect: () => {}
+        onaddprovider: () => {}
       }
     });
     const box = await screen.findByRole('checkbox', { name: 'Automatically download updates' });
@@ -138,7 +138,7 @@ describe('Updates settings tab', () => {
         api: new FakeSetup({ delayMs: 0 }),
         target: { project: '/demo/project' },
         onclose: () => {},
-        onreconnect: () => {}
+        onaddprovider: () => {}
       }
     });
     await screen.findByRole('tab', { name: 'Project' });

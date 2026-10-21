@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { FakeSetup } from '../host/fake-setup';
 import KeysTab from './KeysTab.svelte';
 import SettingsDialog from './SettingsDialog.svelte';
+import SetupWizardDialog from './SetupWizardDialog.svelte';
 
 const target = { project: '/demo/project' };
 
@@ -88,26 +89,33 @@ describe('KeysTab', () => {
 });
 
 describe('SettingsDialog', () => {
-  it('opens on the wizard, switches tabs with the arrow keys and closes on Escape', async () => {
+  it('lists providers, hands off to the wizard, switches tabs with arrows and closes on Escape', async () => {
     const api = new FakeSetup({ delayMs: 0 });
     let closed = false;
+    let added = false;
     render(SettingsDialog, {
-      props: { api, target, onclose: () => (closed = true), onreconnect: () => {} }
+      props: { api, target, onclose: () => (closed = true), onaddprovider: () => (added = true) }
     });
-    const wizardTab = await screen.findByRole('tab', { name: 'Providers & models' });
-    expect(wizardTab).toHaveAttribute('aria-selected', 'true');
-    await screen.findByText('How should ruckcode authenticate?');
-    await fireEvent.keyDown(wizardTab, { key: 'ArrowRight' });
+    const tab = await screen.findByRole('tab', { name: 'Providers' });
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+    await screen.findByRole('table', { name: 'Providers' });
+    expect(screen.queryByText('How should ruckcode authenticate?')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add provider…' }));
+    expect(added).toBe(true);
+    await fireEvent.keyDown(tab, { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: 'API keys' })).toHaveAttribute('aria-selected', 'true');
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect(closed).toBe(true);
   });
+});
 
+describe('SetupWizardDialog', () => {
   it('shows the first-run welcome and walks key -> endpoint with suggestions and validation', async () => {
     const api = new FakeSetup({ fresh: true, delayMs: 0 });
-    render(SettingsDialog, {
+    render(SetupWizardDialog, {
       props: { api, target, firstRun: true, onclose: () => {}, onreconnect: () => {} }
     });
+    await screen.findByRole('dialog', { name: 'Set up ruckcode' });
     await screen.findByText(/No model provider is configured/);
     const next = await screen.findByRole('button', { name: 'Next' });
     expect(next).toBeDisabled();

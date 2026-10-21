@@ -4,13 +4,22 @@ const fresh = (page: Page, extra = '') =>
   page.goto(`/?mock=1&delay=2&setup=fresh&setupdelay=40${extra}`);
 const normal = (page: Page, extra = '') => page.goto(`/?mock=1&delay=2&setupdelay=40${extra}`);
 
-const dialog = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
+const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
+const dialog = (page: Page) => page.getByRole('dialog', { name: /Set up ruckcode|Add a provider/ });
 const next = (page: Page) => dialog(page).getByRole('button', { name: 'Next', exact: true });
+
+/** Settings > Providers > Add provider opens the wizard in its own dialog. */
+async function openWizard(page: Page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settings(page).getByRole('button', { name: 'Add provider…' }).click();
+  await expect(settings(page)).toHaveCount(0);
+  await expect(dialog(page)).toBeVisible();
+}
 
 async function openSettings(page: Page, tab?: string) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(dialog(page)).toBeVisible();
-  if (tab) await dialog(page).getByRole('tab', { name: tab }).click();
+  await expect(settings(page)).toBeVisible();
+  if (tab) await settings(page).getByRole('tab', { name: tab }).click();
 }
 
 test('first run: paste a key, pick the URL, check compatibility, then save a profile', async ({
@@ -88,7 +97,7 @@ test('a local server needs no key: pick the Ollama suggestion', async ({ page })
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
-  await openSettings(page);
+  await openWizard(page);
   await dialog(page).getByLabel('No key').check();
   await next(page).click();
   await expect(dialog(page).getByLabel('Endpoint URL')).toHaveValue('');
@@ -118,7 +127,7 @@ test('check errors: invalid key (401), wrong path (404), override, manual model 
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
-  await openSettings(page);
+  await openWizard(page);
   await dialog(page).getByRole('textbox', { name: 'API key' }).fill('bad');
   await next(page).click();
   await dialog(page).getByLabel('Endpoint URL').fill('https://openrouter.ai/api/v1');
@@ -166,7 +175,7 @@ test('add and remove a named key; the secret never appears on the page', async (
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
   await openSettings(page, 'API keys');
-  const add = dialog(page).getByRole('form', { name: 'Add key' });
+  const add = settings(page).getByRole('form', { name: 'Add key' });
   await add.getByLabel('Name').fill('work');
   await add.getByLabel('Description (optional)').fill('Team key');
   const secret = add.getByLabel('API key');
@@ -174,17 +183,17 @@ test('add and remove a named key; the secret never appears on the page', async (
   await secret.fill('sk-live-very-secret-4242');
   await add.getByRole('button', { name: 'Save key' }).click();
 
-  const table = dialog(page).getByRole('table', { name: 'API keys' });
+  const table = settings(page).getByRole('table', { name: 'API keys' });
   await expect(table).toContainText('work');
   await expect(table).toContainText('Team key');
   await expect(table).toContainText('…4242');
   await expect(secret).toHaveValue('');
   expect(await page.content()).not.toContain('very-secret');
 
-  await dialog(page).getByRole('button', { name: 'Remove work' }).click();
+  await settings(page).getByRole('button', { name: 'Remove work' }).click();
   await expect(table).toContainText('work'); // not yet: needs confirmation
-  await dialog(page).getByRole('button', { name: 'Confirm remove' }).click();
-  await expect(dialog(page)).toContainText('No saved keys');
+  await settings(page).getByRole('button', { name: 'Confirm remove' }).click();
+  await expect(settings(page)).toContainText('No saved keys');
 });
 
 test('use a key for a profile in this project only', async ({ page }) => {
@@ -192,16 +201,16 @@ test('use a key for a profile in this project only', async ({ page }) => {
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
   await openSettings(page, 'API keys');
-  const add = dialog(page).getByRole('form', { name: 'Add key' });
+  const add = settings(page).getByRole('form', { name: 'Add key' });
   await add.getByLabel('Name').fill('client-acme');
   await add.getByLabel('API key').fill('sk-acme-12345678');
   await add.getByRole('button', { name: 'Save key' }).click();
-  await expect(dialog(page).getByRole('table', { name: 'API keys' })).toContainText('unused');
+  await expect(settings(page).getByRole('table', { name: 'API keys' })).toContainText('unused');
 
-  await dialog(page).getByRole('button', { name: 'Use for profile' }).click();
-  await dialog(page).getByLabel('This project only').check();
-  await dialog(page).getByRole('button', { name: 'Apply' }).click();
-  await expect(dialog(page).getByRole('table', { name: 'API keys' })).toContainText(
+  await settings(page).getByRole('button', { name: 'Use for profile' }).click();
+  await settings(page).getByLabel('This project only').check();
+  await settings(page).getByRole('button', { name: 'Apply' }).click();
+  await expect(settings(page).getByRole('table', { name: 'API keys' })).toContainText(
     'profile `mock` (this project)'
   );
 });
@@ -215,10 +224,10 @@ test('creates modes.toml from the Project tab', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
 
   await openSettings(page, 'Project');
-  await expect(dialog(page)).toContainText('No modes.toml');
-  await dialog(page).getByRole('button', { name: 'Create modes.toml' }).click();
-  await expect(dialog(page)).toContainText('3 mise tasks discovered');
-  await expect(dialog(page).getByRole('list', { name: 'Modes' })).toContainText('verify');
+  await expect(settings(page)).toContainText('No modes.toml');
+  await settings(page).getByRole('button', { name: 'Create modes.toml' }).click();
+  await expect(settings(page)).toContainText('3 mise tasks discovered');
+  await expect(settings(page).getByRole('list', { name: 'Modes' })).toContainText('verify');
 });
 
 test('the whole flow works against a WSL host in mock mode', async ({ page }) => {
@@ -229,10 +238,10 @@ test('the whole flow works against a WSL host in mock mode', async ({ page }) =>
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
   await openSettings(page, 'API keys');
-  await expect(dialog(page)).toContainText('/home/dev/proj (WSL: Ubuntu-24.04)');
-  const add = dialog(page).getByRole('form', { name: 'Add key' });
+  await expect(settings(page)).toContainText('/home/dev/proj (WSL: Ubuntu-24.04)');
+  const add = settings(page).getByRole('form', { name: 'Add key' });
   await add.getByLabel('Name').fill('wslkey');
   await add.getByLabel('API key').fill('sk-wsl-00009999');
   await add.getByRole('button', { name: 'Save key' }).click();
-  await expect(dialog(page).getByRole('table', { name: 'API keys' })).toContainText('…9999');
+  await expect(settings(page).getByRole('table', { name: 'API keys' })).toContainText('…9999');
 });

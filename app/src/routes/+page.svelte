@@ -26,6 +26,7 @@
   import type { TranscriptsApi, TranscriptTarget } from '../lib/host/transcripts';
   import type { SettingsTab } from '../lib/state/wizard.svelte';
   import SettingsDialog from '../lib/components/SettingsDialog.svelte';
+  import SetupWizardDialog from '../lib/components/SetupWizardDialog.svelte';
   import type { SetupApi, SetupTarget } from '../lib/host/setup';
   import { ChatController } from '../lib/state/chat.svelte';
   import {
@@ -63,8 +64,9 @@
     api: SetupApi;
     target: SetupTarget;
     tab: SettingsTab;
-    firstRun: boolean;
   } | null>(null);
+  /** The setup wizard, a dialog of its own (first run, or "Add provider" from Settings). */
+  let setup = $state<{ api: SetupApi; target: SetupTarget; firstRun: boolean } | null>(null);
   /** A project whose connection waits for the first-run dialog to close. */
   let pendingConnect: Project | null = null;
 
@@ -148,7 +150,7 @@
       const api = await getSetup();
       const target = targetOf(p);
       if (!(await api.state(target)).needsOnboarding) return false;
-      settings = { api, target, tab: 'providers', firstRun: true };
+      setup = { api, target, firstRun: true };
       return true;
     } catch {
       return false; // cannot tell (e.g. no rc yet): just connect
@@ -170,7 +172,7 @@
 
   async function openSettings(tab: SettingsTab = 'providers') {
     const p = await resolveProject();
-    settings = { api: await getSetup(), target: targetOf(p), tab, firstRun: false };
+    settings = { api: await getSetup(), target: targetOf(p), tab };
   }
 
   /** Run `action`, first asking what to do with unsaved mode edits. */
@@ -233,8 +235,15 @@
     if (chat.connected) await chat.openSession(id);
   }
 
+  function addProvider() {
+    if (!settings) return;
+    setup = { api: settings.api, target: settings.target, firstRun: false };
+    settings = null;
+  }
+
   function closeSettings() {
     settings = null;
+    setup = null;
     const p = pendingConnect;
     pendingConnect = null;
     if (p) void connectProject(p, true);
@@ -242,6 +251,7 @@
 
   function reconnectAfterSetup() {
     settings = null;
+    setup = null;
     const p = pendingConnect;
     pendingConnect = null;
     if (p) void connectProject(p, true);
@@ -425,8 +435,17 @@
     api={settings.api}
     target={settings.target}
     bind:tab={settings.tab}
-    firstRun={settings.firstRun}
     {updates}
+    onclose={closeSettings}
+    onaddprovider={addProvider}
+  />
+{/if}
+
+{#if setup}
+  <SetupWizardDialog
+    api={setup.api}
+    target={setup.target}
+    firstRun={setup.firstRun}
     onclose={closeSettings}
     onreconnect={reconnectAfterSetup}
   />

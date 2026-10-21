@@ -1,52 +1,45 @@
 <script lang="ts">
   import { focusTrap } from '../a11y';
-  import type { EndpointSuggestion, SetupApi, SetupState, SetupTarget } from '../host/setup';
-  import { SetupWizard, type SettingsTab } from '../state/wizard.svelte';
+  import type { SetupApi, SetupState, SetupTarget } from '../host/setup';
+  import type { SettingsTab } from '../state/wizard.svelte';
   import KeysTab from './KeysTab.svelte';
   import type { UpdateController } from '../state/updates.svelte';
   import ProjectTab from './ProjectTab.svelte';
   import UpdatesTab from './UpdatesTab.svelte';
-  import SetupWizardView from './SetupWizardView.svelte';
+  import ProvidersTab from './ProvidersTab.svelte';
 
   let {
     api,
     target,
     tab = $bindable('providers'),
-    firstRun = false,
     updates = null,
     onclose,
-    onreconnect
+    onaddprovider
   }: {
     api: SetupApi;
     target: SetupTarget;
     tab?: SettingsTab;
-    /** Opened automatically because there is no usable profile. */
-    firstRun?: boolean;
     /** The app's update controller; adds the Updates tab. */
     updates?: UpdateController | null;
     onclose: () => void;
-    onreconnect: () => void;
+    /** Open the setup wizard (a separate dialog) to add a provider. */
+    onaddprovider: () => void;
   } = $props();
 
   const TABS: { id: SettingsTab; label: string }[] = $derived([
-    { id: 'providers', label: 'Providers & models' },
+    { id: 'providers', label: 'Providers' },
     { id: 'keys', label: 'API keys' },
     { id: 'project', label: 'Project' },
     ...(updates ? [{ id: 'updates' as const, label: 'Updates' }] : [])
   ]);
 
   let info = $state<SetupState | null>(null);
-  let presets = $state<EndpointSuggestion[]>([]);
   let loadError = $state<string | null>(null);
-  let wizard = $state<SetupWizard | null>(null);
 
   async function load() {
     loadError = null;
     try {
-      const [p, s] = await Promise.all([api.presets(), api.state(target)]);
-      presets = p;
-      info = s;
-      wizard = new SetupWizard(api, target, p, s);
+      info = await api.state(target);
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
     }
@@ -55,14 +48,9 @@
 
   function changed(s: SetupState) {
     info = s;
-    // An untouched wizard follows changes made in other tabs (new keys, new modes.toml).
-    if (wizard && wizard.step === 'key' && !wizard.newKeySecret && !wizard.endpointTouched) {
-      wizard = new SetupWizard(api, target, presets, s);
-    }
   }
 
   function close() {
-    wizard?.clearSecrets();
     onclose();
   }
 
@@ -103,12 +91,6 @@
       >
     </header>
 
-    {#if firstRun && tab === 'providers' && wizard?.step !== 'done'}
-      <p class="welcome" role="note">
-        Welcome! No model provider is configured yet. Pick one below to get started.
-      </p>
-    {/if}
-
     <div class="tabs" role="tablist" aria-label="Settings" tabindex="-1" onkeydown={tabKey}>
       {#each TABS as t (t.id)}
         <button
@@ -129,12 +111,10 @@
       {:else if loadError}
         <p class="err" role="alert">{loadError}</p>
         <button type="button" onclick={() => load()}>Retry</button>
-      {:else if !info || !wizard}
+      {:else if !info}
         <p class="muted" role="status">Loading...</p>
       {:else if tab === 'providers'}
-        {#key wizard}
-          <SetupWizardView {wizard} onclose={close} {onreconnect} />
-        {/key}
+        <ProvidersTab {info} onadd={onaddprovider} />
       {:else if tab === 'keys'}
         <KeysTab {api} {target} {info} onchange={changed} />
       {:else}
@@ -166,12 +146,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 12px;
-  }
-  .welcome {
-    margin: 8px 0 0;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: var(--code-bg);
   }
   .tabs {
     display: flex;

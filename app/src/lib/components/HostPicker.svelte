@@ -161,12 +161,19 @@
     if (!api || !distro || installing || checking) return;
     installing = true;
     installError = '';
+    checkError = '';
     progress = [];
     const d = distro;
     try {
       const r = await api.installBundledRc(d, (line) => (progress = [...progress, line]));
       if (d === distro) rc = r;
     } catch (e) {
+      // Show the reinstall failure, but keep reporting a usable rc if one is there.
+      try {
+        if (d === distro) rc = await api!.checkRc(d);
+      } catch {
+        // nothing more to report
+      }
       installError = e instanceof Error ? e.message : String(e);
     } finally {
       installing = false;

@@ -189,7 +189,7 @@ test('without a modes.toml it offers rc init (and a blank file)', async ({ page 
   await goto(page, '&setup=fresh');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   // The first-run wizard opens asynchronously; wait for it before dismissing it.
-  const wizard = page.getByRole('dialog', { name: /settings/i });
+  const wizard = page.getByRole('dialog', { name: 'Set up ruckcode' });
   await expect(wizard).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(wizard).toHaveCount(0);
