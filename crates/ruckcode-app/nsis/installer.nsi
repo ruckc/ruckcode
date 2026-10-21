@@ -540,6 +540,23 @@ Function .onInit
 
   !if "${INSTALLMODE}" == "both"
     !insertmacro MULTIUSER_INIT
+    ; ruckcode: MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER would make a plain `/UPDATE` (what the
+    ; updater runs) install a second, per-user copy next to an existing per-machine install.
+    ; Without an explicit /ALLUSERS or /CURRENTUSER, follow the existing install's scope: if it
+    ; is registered only under HKLM, switch to all-users mode.
+    ClearErrors
+    ${GetOptions} $CMDLINE "/ALLUSERS" $R9
+    IfErrors 0 ruckcode_scope_done
+    ClearErrors
+    ${GetOptions} $CMDLINE "/CURRENTUSER" $R9
+    IfErrors 0 ruckcode_scope_done
+    ReadRegStr $R9 HKCU "${UNINSTKEY}" "DisplayName"
+    StrCmp $R9 "" 0 ruckcode_scope_done
+    ReadRegStr $R9 HKLM "${UNINSTKEY}" "DisplayName"
+    StrCmp $R9 "" ruckcode_scope_done 0
+    Call MultiUser.InstallMode.AllUsers
+    ruckcode_scope_done:
+    ClearErrors
   !endif
 
   ; Abort downgrades if they are disabled, in the modes that skip the reinstall page choice:

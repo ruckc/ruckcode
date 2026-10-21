@@ -188,7 +188,11 @@ test('reorders modes with the move buttons and warns before leaving with unsaved
 test('without a modes.toml it offers rc init (and a blank file)', async ({ page }) => {
   await goto(page, '&setup=fresh');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await page.keyboard.press('Escape'); // skip the first-run wizard
+  // The first-run wizard opens asynchronously; wait for it before dismissing it.
+  const wizard = page.getByRole('dialog', { name: /settings/i });
+  await expect(wizard).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(wizard).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
   await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Modes' }).click();
   await expect(editor(page)).toContainText('No modes.toml');
