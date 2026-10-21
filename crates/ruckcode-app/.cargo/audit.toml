@@ -1,0 +1,12 @@
+# cargo-audit configuration for the Tauri app workspace.
+[advisories]
+ignore = [
+  # glib 0.18: unsound `VariantStrIter` Iterator impls. Fixed only in glib >= 0.20, but the GTK 3
+  # stack Tauri/wry use on Linux (gtk, gdk, webkit2gtk 2.x) is pinned to glib ^0.18 and gtk-rs no
+  # longer releases GTK 3 bindings, so it cannot be upgraded until Tauri moves off GTK 3. Neither
+  # this crate nor any dependency calls `VariantStrIter` (checked when the ignore was added), so
+  # the unsound code is not reachable. Revisit on every Tauri/wry upgrade.
+  "RUSTSEC-2024-0429",
+  # proc-macro-error: unmaintained (build-time proc macro via the GTK 3 stack); not a vulnerability.
+  "RUSTSEC-2024-0370",
+]

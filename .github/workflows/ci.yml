@@ -167,6 +167,36 @@ jobs:
 
   # Release site tooling (update manifests, download page, install.sh): Python standard library and
   # POSIX sh only.
+  audit:
+    # RustSec advisories for both Cargo workspaces. Ignores are documented in
+    # .cargo/audit.toml files next to each lockfile.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore cargo-audit
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-0.22
+      - name: Install cargo-audit
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version "^0.22"
+      - name: Save cargo-audit
+        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-0.22
+      - name: Audit rc workspace
+        run: cargo audit
+      - name: Audit desktop app workspace
+        working-directory: crates/ruckcode-app
+        run: cargo audit
+
   site:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
