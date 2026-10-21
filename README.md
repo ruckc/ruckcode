@@ -402,7 +402,7 @@ crate (ACP v1, stable surface only) and the JSON-RPC transport from the official
 `session/close` and the `model` config option), notifications and the `_ruckcode/*` extensions are
 documented in [docs/ACP.md](docs/ACP.md).
 
-## Desktop app (preview)
+## Desktop app
 
 A Tauri v2 + SvelteKit desktop app that is another ACP client, like the TUI and editors; see
 [docs/APP_PLAN.md](docs/APP_PLAN.md). Pick a project folder (recent projects are remembered), connect,
@@ -425,6 +425,35 @@ libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-ess
 `rc` never needs webkit. Build it with
 `cargo check --manifest-path crates/ruckcode-app/Cargo.toml` (or `mise run app:lint:rust`,
 `app:test:rust`).
+
+### Install the desktop app
+
+Each GitHub Release also carries the desktop app (`ruckcode-app-<version>-<target>.<ext>`, each with a
+`.sha256`, all listed in `SHA256SUMS`):
+
+| OS | File | Notes |
+|----|------|-------|
+| macOS (Apple Silicon) | `...-aarch64-apple-darwin.dmg` (or `.app.tar.gz`) | open the dmg, drag to Applications |
+| macOS (Intel) | `...-x86_64-apple-darwin.dmg` | same |
+| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc-setup.exe` (per-user) or `.msi` | |
+| Linux x86_64 | `...-x86_64-unknown-linux-gnu.AppImage` or `.deb` | built on Ubuntu 22.04 (glibc 2.35, webkit2gtk 4.1) |
+
+Release builds are **unsigned** until signing secrets are configured. macOS Gatekeeper says the app
+"cannot be opened": right-click the app, choose Open (or run `xattr -dr com.apple.quarantine
+/Applications/ruckcode.app`). Windows SmartScreen shows "Windows protected your PC": More info, then
+Run anyway. On Linux, `chmod +x ruckcode-app-*.AppImage && ./ruckcode-app-*.AppImage` (needs `libfuse2`,
+or run with `--appimage-extract-and-run`), or `sudo apt install ./ruckcode-app-*.deb`. Verify downloads
+with `sha256sum -c SHA256SUMS --ignore-missing`.
+
+On Windows, install the app on Windows itself (not inside WSL2) and choose the WSL2 host to run the
+agent in a distribution; the app installs a matching `rc` there. Linux GUI apps inside WSL2 (WSLg)
+also work with the AppImage or `.deb`, but then the Local host is the distro itself.
+
+Build from source: `mise run app:install && mise run app:build` (bundles land in
+`crates/ruckcode-app/target/release/bundle/`; pass extra Tauri flags with
+`pnpm -C app tauri build --bundles deb`). The icons in `crates/ruckcode-app/icons` are placeholders;
+replace them with `pnpm -C app tauri icon path/to/1024x1024.png` (run from `crates/ruckcode-app`
+output defaults to its `icons/`).
 
 #### WSL2 (Windows)
 
@@ -559,12 +588,13 @@ GitHub Release `vX.Y.Z` with:
 
 - `rc-<version>-<target>.tar.gz` (`.zip` on Windows) containing `rc`, `LICENSE`, `README.md`
 - per-archive `.sha256` files and a combined `SHA256SUMS`
+- desktop app bundles: `ruckcode-app-<version>-<target>` with `.dmg`, `.app.tar.gz` (macOS), `.msi`, `-setup.exe` (Windows), `.AppImage`, `.deb` (Linux x86_64)
 - `CHANGELOG.md` and release notes generated from the commits
 
 Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 `x86_64-unknown-linux-musl` (static), `aarch64-apple-darwin`,
 `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`. The first release is `v0.1.0`.
 Commits containing only `docs`/`ci`/`chore`/`test`/`style`/`build`/`revert` do not
-trigger a release. The version is embedded at build time (`RUCKCODE_VERSION`), so
+trigger a release. The same run also builds the desktop app bundles (below `Desktop app`) and a failed app build blocks the whole release. The version is embedded at build time (`RUCKCODE_VERSION`), so
 `Cargo.toml` is never bumped and no changelog commit lands on `main`; local
 builds report `<pkg version>-dev+<sha>`. See `CONTRIBUTING.md` for the commit convention.

@@ -97,7 +97,7 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
    plus the JSON outputs for the CLI subcommands. See "Milestone 4 notes" below.
 5. **Transcript browser. Done.** List, search, timeline, metrics, resume and export. See "Milestone 5 notes" below.
 6. **Mode/hook editor. Done.** Graphical `modes.toml` editor with comment-preserving saves, plus the new `rc modes` subcommand. See "Milestone 6 notes" below.
-7. **Release bundles** in CI, and documentation.
+7. **Release bundles. Done.** Tauri bundles in the release workflow, app metadata, and docs. See "Milestone 7 notes" below.
 
 ## Milestone 1 notes
 
@@ -385,8 +385,38 @@ Built as planned, with these deviations and details:
   attached to a deleted hook or mode go with it. Reordering modes moves each mode's comments with it,
   and a comment block separated from a header by a blank line stays with the previous mode.
 
+## Milestone 7 notes
+
+- **`app` job in `release.yml`.** Matrix: macOS aarch64 and x86_64 (both on macos-14, the latter
+  cross-built via rustup target), Windows x86_64 (windows-2022), Linux x86_64 (ubuntu-22.04: older
+  glibc 2.35 means the AppImage and deb run on more distributions; webkit2gtk-4.1 exists there). Uses
+  only `actions/*` (checkout, setup-node, cache, upload-artifact) and `pnpm -C app tauri build`.
+- **Version.** `--config '{"version":"X.Y.Z"}'` overrides the bundle version at build time and
+  `RUCKCODE_VERSION` feeds `app_version` (falls back to `CARGO_PKG_VERSION` locally). Nothing is committed.
+- **Artifacts.** `ruckcode-app-<version>-<target>.{dmg,app.tar.gz,msi,-setup.exe,AppImage,deb}` plus
+  `.sha256`; `publish` waits for `app`, folds them into `SHA256SUMS` and the release. A failed app
+  build blocks the release (the CLI and app stay in lockstep, and `rc` install from the app relies on
+  matching versions).
+- **Signing is optional** (secrets listed in CONTRIBUTING.md): macOS via Tauri's `APPLE_*` env vars
+  (exported only if present), Windows by importing the pfx and merging a `certificateThumbprint`
+  config. Unsigned otherwise; `.app.tar.gz` is made with `tar` since Tauri only emits it with updater artifacts.
+- **Checks.** The deb version, macOS Info.plist version and architecture are verified; GUI binaries are
+  never launched, and the cross-built x86_64 macOS app is not run.
+- **Metadata.** category DeveloperTool, descriptions, copyright, MIT, homepage, NSIS per-user install,
+  macOS minimum 11.0. Icons remain placeholders.
+- **Local check.** `tauri build --bundles deb` produced `ruckcode_0.0.0-test_amd64.deb` with the right
+  metadata. The macOS and Windows jobs have not run yet; expect first-run fixes (paths under
+  `target/<triple>/release/bundle`).
+
+## v1 complete
+
+All seven milestones are done: chat, tools and permissions, WSL2 host, setup and keys, transcript
+browser, mode/hook editor, and installable bundles.
+
 ## Open items for later
 
 - Mobile and remote access (`rc serve`, ACP over WebSocket with token auth).
-- Auto-update (Tauri updater; needs signing keys).
+- Auto-update (Tauri updater; needs updater signing keys and `createUpdaterArtifacts`).
+- Configure code-signing secrets (Apple, Windows) so releases stop being flagged; replace placeholder icons.
+- Linux aarch64 and ARM Windows bundles.
 - Branch protection ruleset still needs applying (see CONTRIBUTING.md).

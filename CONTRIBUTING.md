@@ -27,6 +27,21 @@ or edit a changelog by hand: the version is injected at build time through
 `RUCKCODE_VERSION`, and `CHANGELOG.md` is attached to each GitHub Release
 rather than committed.
 
+The same workflow's `app` matrix job builds the Tauri desktop bundles with the Tauri CLI from
+`app/` (no third-party action), only when a release is being made. The version is passed as
+`--config '{"version":"X.Y.Z"}'` plus `RUCKCODE_VERSION`, so `tauri.conf.json` and `Cargo.toml`
+stay at `0.1.0`. Artifacts: `ruckcode-app-<version>-<target>.{dmg,app.tar.gz}` (macOS aarch64 and
+x86_64, the latter cross-built on macos-14), `.msi` and `-setup.exe` (Windows x86_64),
+`.AppImage` and `.deb` (Linux x86_64, built on ubuntu-22.04 for glibc 2.35 compatibility), each with
+a `.sha256`. `publish` needs `build` and `app`, so any failed bundle blocks the release.
+
+Signing is optional and only active when repository secrets exist: macOS `APPLE_CERTIFICATE`
+(base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, plus `APPLE_ID`,
+`APPLE_PASSWORD` (app-specific password), `APPLE_TEAM_ID` for notarization; Windows
+`WINDOWS_CERTIFICATE` (base64 .pfx) and `WINDOWS_CERTIFICATE_PASSWORD`. Without them, bundles are
+unsigned (Gatekeeper/SmartScreen warnings). To replace the placeholder icons run
+`pnpm -C app tauri icon <1024px.png>`.
+
 ## CI notes
 
 - Every GitHub Action is pinned to a full commit SHA with a `# vX.Y.Z` comment;

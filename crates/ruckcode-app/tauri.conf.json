@@ -6,12 +6,25 @@
   "build": {
     "frontendDist": "../../app/build",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": { "script": "pnpm dev", "cwd": "../../app" },
-    "beforeBuildCommand": { "script": "pnpm build", "cwd": "../../app" }
+    "beforeDevCommand": {
+      "script": "pnpm dev",
+      "cwd": "../../app"
+    },
+    "beforeBuildCommand": {
+      "script": "pnpm build",
+      "cwd": "../../app"
+    }
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "ruckcode", "width": 1100, "height": 760, "minWidth": 640, "minHeight": 420 }
+      {
+        "label": "main",
+        "title": "ruckcode",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 640,
+        "minHeight": 420
+      }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
@@ -20,6 +33,36 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Desktop client for the ruckcode coding agent",
+    "longDescription": "ruckcode is a desktop client for the ruckcode coding agent (rc). Chat with the agent, review diffs and permissions, edit modes and hooks, and browse session transcripts, locally or inside WSL2.",
+    "copyright": "Copyright (c) 2026 Curtis Ruck",
+    "license": "MIT",
+    "homepage": "https://github.com/ruckc/ruckcode",
+    "publisher": "Curtis Ruck",
+    "linux": {
+      "deb": {
+        "depends": [],
+        "section": "devel"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "wix": {
+        "upgradeCode": "6a1f3c52-5d8e-4b0f-9c47-2e7d9a31b8c4"
+      }
+    }
   }
 }
