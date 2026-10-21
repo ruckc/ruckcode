@@ -15,10 +15,16 @@ Releases are fully automatic and derived from commit messages, so every commit
 | `feat!:` / `fix!:` / a `BREAKING CHANGE:` footer | major bump (minor while version < 1.0.0) |
 | `docs`, `style`, `test`, `build`, `ci`, `chore`, `revert` | no release |
 
-Releases are the last stage of the CI workflow: on a push to `main`, `ci.yml` calls
-`release.yml` only after every check has passed, so each push builds once and a red commit
-never releases. If the commits since the last `v*` tag are all non-releasing types,
-no tag or release is created. The `Conventional Commits` workflow checks the PR
+The release pipeline lives in `ci.yml` as the `release-*` jobs and runs on pushes to `main` only.
+`release-version` decides whether there is anything to release (git-cliff); if so,
+`release-rc (target)` and `release-app (target)` build in parallel with the checks instead of
+after them, and `release-site` signs and assembles the Pages site (it publishes nothing). The two
+jobs with side effects, `release-publish` (tag and GitHub Release) and `release-pages` (Pages
+deploy), need every check (`fmt`, `clippy`, `test`, `check`, `audit`, `site`, `app`) and every
+build to have succeeded, so a red commit never releases. Both share the `release` concurrency
+group, so releases are serialized across runs. If the commits since the last `v*` tag are all
+non-releasing types, no release job except `release-version` runs. `app-windows` runs on pull
+requests only; on `main` the Windows `release-app` job compiles the same crate. The `Conventional Commits` workflow checks the PR
 title and each commit subject on every pull request; prefer squash-merging so
 the (validated) PR title is the commit on `main`.
 
@@ -29,16 +35,17 @@ or edit a changelog by hand: the version is injected at build time through
 `RUCKCODE_VERSION`, and `CHANGELOG.md` is attached to each GitHub Release
 rather than committed.
 
-The same workflow's `site` job signs the `rc` archives, builds the Pages site and checks its size,
-`publish` creates the GitHub Release (it needs `build`, `app` and `site`), and only then `pages`
-deploys. The same workflow's `app` matrix job builds the Tauri desktop bundles with the Tauri CLI from
+`release-site` signs the `rc` archives, builds the Pages site and checks its size,
+`release-publish` creates the GitHub Release, and only then `release-pages` deploys. The
+`release-app` matrix job in `ci.yml` builds the Tauri desktop bundles with the Tauri CLI from
 `app/` (no third-party action), only when a release is being made. The version is passed as
 `--config '{"version":"X.Y.Z"}'` plus `RUCKCODE_VERSION`, so `tauri.conf.json` and `Cargo.toml`
 stay at `0.1.0`. Artifacts: `ruckcode-app-<version>-<target>.{dmg,app.tar.gz}` (macOS aarch64 and
 x86_64, the latter cross-built on macos-14), `.msi` and `-setup.exe` (Windows x86_64),
 `.AppImage` and `.deb` (Linux x86_64, built on ubuntu-22.04 for glibc 2.35 compatibility), each with
-a `.sha256` (plus a `.sig` for the updater bundles when signing is configured). `publish` needs
-`build`, `app` and `site`, so any failed bundle blocks the release.
+a `.sha256` (plus a `.sig` for the updater bundles when signing is configured). `release-publish`
+needs all builds, so any failed bundle blocks the release. `release.yml` is only the manual
+"redeploy Pages" workflow.
 
 Signing is optional and only active when repository secrets exist: macOS `APPLE_CERTIFICATE`
 (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, plus `APPLE_ID`,

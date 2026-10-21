@@ -6,6 +6,9 @@ name: CI
 #   actions/setup-node         v7.1.0  949feb2413d6458794dcd2491c4babbbce0c15c1
 #   actions/upload-artifact    v7.0.2  cf430e030ddbb5b0abf93d22962f4752f3646cd9
 #   actions/download-artifact  v8.0.2  9000827ccba6bdab643e8b6fd33ac0654aef8333
+#   actions/configure-pages    v6.0.0  45bfe0192ca1faeb007ade9deae92b16b8254a0d
+#   actions/upload-pages-artifact v5.0.0 fc324d3547104276b827a68afc52ff2a11cc49c9
+#   actions/deploy-pages       v5.0.1  368f82528645a54fb793d4d04e342629a3f51346
 # Rust comes from the runner's preinstalled rustup; the GitHub Release is created with `gh`.
 
 on:
@@ -53,9 +56,13 @@ jobs:
       - name: Free disk space
         # Hosted Ubuntu images ship large SDKs we never use; the debug target dir plus the
         # Tauri crate otherwise exhausts the runner disk.
+        # Deleted in the background (largest first) so compilation starts immediately; the
+        # target dir only grows well after the first minutes of the build.
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          for d in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost; do
+            sudo nohup rm -rf "$d" >/dev/null 2>&1 &
+          done
           df -h /
       - name: Install Rust
         shell: bash
@@ -97,9 +104,13 @@ jobs:
       - name: Free disk space
         # Hosted Ubuntu images ship large SDKs we never use; the debug target dir plus the
         # Tauri crate otherwise exhausts the runner disk.
+        # Deleted in the background (largest first) so compilation starts immediately; the
+        # target dir only grows well after the first minutes of the build.
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          for d in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost; do
+            sudo nohup rm -rf "$d" >/dev/null 2>&1 &
+          done
           df -h /
       - name: Install Rust
         shell: bash
@@ -237,9 +248,13 @@ jobs:
       - name: Free disk space
         # Hosted Ubuntu images ship large SDKs we never use; the debug target dir plus the
         # Tauri crate otherwise exhausts the runner disk.
+        # Deleted in the background (largest first) so compilation starts immediately; the
+        # target dir only grows well after the first minutes of the build.
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          for d in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost; do
+            sudo nohup rm -rf "$d" >/dev/null 2>&1 &
+          done
           df -h /
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -319,6 +334,8 @@ jobs:
   # The WSL2 host only runs on Windows: type-check (and run the platform-independent tests of)
   # the Tauri shell there. WebView2 is preinstalled on GitHub's Windows runners.
   app-windows:
+    # On main the release-app (windows) job compiles the same crate, so skip the duplicate.
+    if: github.event_name == 'pull_request'
     runs-on: windows-2022
     timeout-minutes: 45
     env:
@@ -370,17 +387,757 @@ jobs:
             crates/ruckcode-app/target
           key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
 
-  # Final stage on main: cut the release (version, binaries, installers, Pages) only after
-  # every check above passed. Pull requests stop before this.
-  release:
-    needs: [fmt, clippy, test, check, audit, site, app, app-windows]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  # ---------------------------------------------------------------------------------------
+  # Release pipeline (push to main only). Everything up to release-site runs in PARALLEL with
+  # the checks above and publishes nothing; release-publish / release-pages are gated on every
+  # check AND every build, so a red check never tags, releases or deploys.
+  # ---------------------------------------------------------------------------------------
+
+  release-version:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        # Windows runners default to PowerShell, which does not expand "$VAR".
+        shell: bash
+    outputs:
+      release: ${{ steps.calc.outputs.release }}
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Install git-cliff
+        env:
+          CLIFF_VERSION: 2.14.2
+          CLIFF_SHA512: 26d1f7c8ea2400f2ccb0b2e7f321635f600b583bf4cd1f7afaa5e8c24068ad1088a2504e0a4d9f4333d4bb20a80329327d9462634343ee3af91e1a7fbdc6f18a
+        run: |
+          set -euo pipefail
+          archive="git-cliff-${CLIFF_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSLO --retry 3 "https://github.com/orhun/git-cliff/releases/download/v${CLIFF_VERSION}/${archive}"
+          echo "${CLIFF_SHA512}  ${archive}" | sha512sum -c -
+          tar -xzf "$archive"
+          install -D -m 0755 "git-cliff-${CLIFF_VERSION}/git-cliff" "$HOME/.local/bin/git-cliff"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Compute next version and notes
+        id: calc
+        run: |
+          set -euo pipefail
+          mkdir -p notes
+          release=false
+          next="$(git cliff --bumped-version)"   # e.g. v0.2.0 (initial_tag v0.1.0 when no tag exists)
+          # Commits that git-cliff does not skip (see cliff.toml); empty => no release-worthy change.
+          git cliff --unreleased --tag "$next" --strip all > notes/release-notes.md
+          if [ -n "$(git tag --points-at HEAD --list 'v[0-9]*')" ]; then
+            echo "HEAD is already tagged; nothing to do."
+          elif [ ! -s notes/release-notes.md ]; then
+            echo "No release-worthy commits since the last tag; skipping release."
+          elif git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "Tag $next already exists; skipping."
+          else
+            release=true
+            git cliff --tag "$next" --output notes/CHANGELOG.md
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $next (release=$release)"
+          cat notes/release-notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.calc.outputs.release == 'true'
+        with:
+          name: notes
+          path: notes/
+          if-no-files-found: error
+
+  release-rc:
+    name: release-rc (${{ matrix.target }})
+    needs: release-version
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-version.outputs.release == 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        # Windows runners default to PowerShell, which does not expand "$VAR".
+        shell: bash
+    strategy:
+      # Build every target even if one fails; publish still requires all of them.
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
+          # Apple Silicon runner; the x86_64 build is cross-compiled (Apple clang
+          # targets both) so it does not depend on scarce Intel runners.
+          - { target: aarch64-apple-darwin,      os: macos-14 }
+          - { target: x86_64-apple-darwin,       os: macos-14 }
+          - { target: x86_64-pc-windows-msvc,    os: windows-2022 }
+    env:
+      VERSION: ${{ needs.release-version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      RUCKCODE_VERSION: ${{ needs.release-version.outputs.version }}
+      # Embedded in rc for `rc self-update` (empty/unset: rc refuses to update itself).
+      RUCKCODE_UPDATER_PUBKEY: ${{ vars.RUCKCODE_UPDATER_PUBKEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.target }}
+          rustup default stable
+          echo "RUSTC_VERSION=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_ENV"
+      # aws-lc-sys (rustls crypto via rmcp/reqwest): needs only a C compiler (+ cmake, preinstalled
+      # on all runners); musl needs musl-gcc, Windows needs NASM (preinstalled; safety net below).
+      - name: Install musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Ensure NASM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) { choco install nasm -y --no-progress }
+      - name: Restore cargo cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
+      - name: Build
+        run: cargo build --release --locked -p ruckcode-cli --target "$TARGET"
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="rc-${VERSION}-${TARGET}"
+          mkdir -p "$name" dist
+          exe=rc; [[ "$TARGET" == *windows* ]] && exe=rc.exe
+          cp "target/${TARGET}/release/${exe}" LICENSE README.md "$name/"
+          if [[ "$TARGET" == *windows* ]]; then
+            archive="${name}.zip"; 7z a -tzip "dist/${archive}" "$name" >/dev/null
+          else
+            archive="${name}.tar.gz"; tar -czf "dist/${archive}" "$name"
+          fi
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum "$archive" > "${archive}.sha256"
+          else shasum -a 256 "$archive" > "${archive}.sha256"; fi
+          cat "${archive}.sha256"
+      - name: Smoke test version string
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          exe="target/${TARGET}/release/rc"; [[ "$TARGET" == *windows* ]] && exe+=.exe
+          out="$("$exe" --version)"; echo "$out"
+          [[ "$out" == *"$VERSION"* ]]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Save cargo cache
+        if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-release-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+  # Desktop app bundles (Tauri v2 CLI from app/ devDependencies; no third-party actions).
+  # Linux builds on ubuntu-22.04 on purpose: bundles link against that image's glibc (2.35) and
+  # webkit2gtk-4.1, so they run on older distributions than a 24.04 build would. Unsigned unless
+  # the optional signing secrets exist (see "Signing" steps and CONTRIBUTING.md).
+  release-app:
+    name: release-app (${{ matrix.target }})
+    needs: release-version
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-version.outputs.release == 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        # Windows runners default to PowerShell, which does not expand "$VAR".
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, bundles: "appimage,deb" }
+          - { target: aarch64-apple-darwin,     os: macos-14,     bundles: "app,dmg" }
+          - { target: x86_64-apple-darwin,      os: macos-14,     bundles: "app,dmg" }
+          - { target: x86_64-pc-windows-msvc,   os: windows-2022, bundles: "msi,nsis" }
+    env:
+      VERSION: ${{ needs.release-version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      RUCKCODE_VERSION: ${{ needs.release-version.outputs.version }}
+      PNPM_VERSION: "10.28.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install pnpm
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          pnpm --version
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --target "$TARGET"
+          rustup default stable
+          echo "RUSTC_VERSION=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_ENV"
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev libayatana-appindicator3-dev libxdo-dev libssl-dev \
+            libfuse2 xdg-utils file patchelf
+      - name: Ensure NASM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) { choco install nasm -y --no-progress }
+      - name: Locate pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Restore pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+      - name: Restore cargo cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/ruckcode-app/target
+          key: cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          restore-keys: |
+            cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
+      - run: pnpm -C app install --frozen-lockfile
+
+      # Signing is optional: each step only exports credentials when its secrets are set, so
+      # forks and unconfigured repositories produce unsigned bundles. Secrets cannot be used in
+      # `if:`, hence the env-and-check pattern.
+      - name: Signing (macOS, optional)
+        if: runner.os == 'macOS'
+        env:
+          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          S_APPLE_ID: ${{ secrets.APPLE_ID }}
+          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          S_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "$S_APPLE_CERTIFICATE" ] && [ -n "$S_APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$S_APPLE_SIGNING_IDENTITY" ]; then
+            echo "Developer ID signing enabled."
+            {
+              echo "APPLE_CERTIFICATE<<EOF_CERT"; echo "$S_APPLE_CERTIFICATE"; echo "EOF_CERT"
+              echo "APPLE_CERTIFICATE_PASSWORD=$S_APPLE_CERTIFICATE_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$S_APPLE_SIGNING_IDENTITY"
+            } >> "$GITHUB_ENV"
+            if [ -n "$S_APPLE_ID" ] && [ -n "$S_APPLE_PASSWORD" ] && [ -n "$S_APPLE_TEAM_ID" ]; then
+              echo "Notarization enabled."
+              {
+                echo "APPLE_ID=$S_APPLE_ID"
+                echo "APPLE_PASSWORD=$S_APPLE_PASSWORD"
+                echo "APPLE_TEAM_ID=$S_APPLE_TEAM_ID"
+              } >> "$GITHUB_ENV"
+            else
+              echo "Notarization secrets missing; signed but not notarized."
+            fi
+          else
+            echo "No Apple signing secrets; building an unsigned (Gatekeeper-flagged) app."
+          fi
+      - name: Signing (Windows, optional)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ($env:WINDOWS_CERTIFICATE -and $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $pw = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+            Remove-Item $pfx
+            $cfg = @{ bundle = @{ windows = @{
+              certificateThumbprint = $cert.Thumbprint
+              digestAlgorithm = 'sha256'
+              timestampUrl = 'http://timestamp.digicert.com' } } } | ConvertTo-Json -Depth 5
+            Set-Content -Path (Join-Path $env:RUNNER_TEMP 'sign.json') -Value $cfg
+            "SIGN_CONFIG=$(Join-Path $env:RUNNER_TEMP 'sign.json')" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host 'Authenticode signing enabled.'
+          } else {
+            Write-Host 'No Windows signing secrets; building unsigned installers (SmartScreen will warn).'
+          }
+
+      # Updater signing is optional too: Tauri's updater needs a minisign key pair. Only with both
+      # the private key (secret) and the public key (variable) do we ask Tauri for updater
+      # artifacts (+ .sig) and bake the public key into the app. Otherwise the app builds
+      # exactly as before and reports "updates not configured".
+      - name: Updater signing (optional)
+        env:
+          S_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          S_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          S_PUBKEY: ${{ vars.RUCKCODE_UPDATER_PUBKEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "$S_KEY" ] && [ -n "$S_PUBKEY" ]; then
+            [[ "$S_PUBKEY" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo "::error::RUCKCODE_UPDATER_PUBKEY must be the base64 text of the .key.pub file"; exit 1; }
+            echo "Updater signing enabled."
+            {
+              echo "UPDATER_SIGNED=true"
+              echo "RUCKCODE_UPDATER_PUBKEY=$S_PUBKEY"
+              echo "UPDATER_CONFIG={\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"pubkey\":\"$S_PUBKEY\"}}}"
+              echo "TAURI_SIGNING_PRIVATE_KEY<<EOF_TAURI_KEY"; echo "$S_KEY"; echo "EOF_TAURI_KEY"
+              echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$S_PASSWORD"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::notice::Updater signing is not configured (TAURI_SIGNING_PRIVATE_KEY secret and RUCKCODE_UPDATER_PUBKEY variable); building without updater artifacts."
+          fi
+
+      - name: Build bundles
+        run: |
+          set -euo pipefail
+          # The release version is injected here and never committed: Tauri takes the bundle
+          # version from the merged config, RUCKCODE_VERSION feeds the app's reported version.
+          # The restored cargo cache can contain the previous release's installers; start from an
+          # empty bundle dir so the collect step only ever sees this version's files.
+          rm -rf "crates/ruckcode-app/target/${TARGET}/release/bundle"
+          extra=()
+          if [ -n "${SIGN_CONFIG:-}" ]; then extra+=(--config "$SIGN_CONFIG"); fi
+          if [ -n "${UPDATER_CONFIG:-}" ]; then extra+=(--config "$UPDATER_CONFIG"); fi
+          export NO_STRIP=true   # linuxdeploy's bundled strip chokes on newer ELF sections
+          pnpm -C app tauri build --ci --target "$TARGET" --bundles "${{ matrix.bundles }}" \
+            --config "{\"version\":\"${VERSION}\"}" ${extra[@]+"${extra[@]}"}
+      - name: Collect and checksum
+        run: |
+          set -euo pipefail
+          bundle="crates/ruckcode-app/target/${TARGET}/release/bundle"
+          find "$bundle" -maxdepth 2 | sort
+          mkdir -p dist
+          prefix="ruckcode-app-${VERSION}-${TARGET}"
+          signed="${UPDATER_SIGNED:-false}"
+          # Updater bundles (+ .sig) exist only when signing is configured. Per platform: the
+          # macOS .app.tar.gz, the Windows MSI and NSIS installers, the Linux AppImage.
+          with_sig() { cp "$1" "$2"; if [ "$signed" = true ]; then cp "$1.sig" "$2.sig"; fi; }
+          case "$TARGET" in
+            *apple-darwin)
+              cp "$bundle"/dmg/*.dmg "dist/${prefix}.dmg"
+              if [ "$signed" = true ]; then
+                with_sig "$(ls "$bundle"/macos/*.app.tar.gz)" "dist/${prefix}.app.tar.gz"
+              else
+                tar -C "$bundle/macos" -czf "dist/${prefix}.app.tar.gz" ruckcode.app
+              fi ;;
+            *windows*)
+              # Both Windows installers are updater bundles: the updater picks the one matching
+              # how the running copy was installed (windows-x86_64-msi / -nsis in latest.json).
+              with_sig "$(ls "$bundle"/msi/*.msi)" "dist/${prefix}.msi"
+              with_sig "$(ls "$bundle"/nsis/*-setup.exe)" "dist/${prefix}-setup.exe" ;;
+            *linux*)
+              with_sig "$(ls "$bundle"/appimage/*.AppImage)" "dist/${prefix}.AppImage"
+              cp "$bundle"/deb/*.deb "dist/${prefix}.deb" ;;
+          esac
+          cd dist
+          for f in *; do
+            case "$f" in *.sig) continue ;; esac
+            if command -v sha256sum >/dev/null; then sha256sum "$f" > "${f}.sha256"
+            else shasum -a 256 "$f" > "${f}.sha256"; fi
+            cat "${f}.sha256"
+          done
+          ls -l
+      - name: Verify bundle version
+        run: |
+          set -euo pipefail
+          prefix="dist/ruckcode-app-${VERSION}-${TARGET}"
+          case "$TARGET" in
+            *linux*)
+              dpkg-deb -f "${prefix}.deb" Version | grep -qx "$VERSION"
+              chmod +x "${prefix}.AppImage"; file "${prefix}.AppImage" ;;
+            *apple-darwin)
+              tar -xzf "${prefix}.app.tar.gz" -C "$RUNNER_TEMP"
+              plist="$RUNNER_TEMP/ruckcode.app/Contents/Info.plist"
+              [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "$VERSION" ]
+              # A GUI app has no --version; check the architecture instead. The x86_64 build is
+              # cross-compiled on Apple Silicon, so it is never executed here.
+              lipo -archs "$RUNNER_TEMP"/ruckcode.app/Contents/MacOS/* ;;
+            *windows*)
+              test -s "${prefix}.msi"; test -s "${prefix}-setup.exe" ;;
+          esac
+      # Both installers default to a per-user install (no UAC) and offer a per-machine one. The
+      # runner is an administrator, so "no elevation needed" cannot be observed directly; check
+      # the package metadata (MSI), the resulting scope (location + uninstall key hive) and that
+      # an in-place update (`/UPDATE`, what the updater runs) keeps the scope and never creates a
+      # second copy. Windows Installer / NSIS scope behavior cannot be checked on other systems.
+      - name: Verify installers are per-user by default (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = "dist/ruckcode-app-$env:VERSION-$env:TARGET"
+          $msi = (Resolve-Path "$prefix.msi").Path
+          $nsis = (Resolve-Path "$prefix-setup.exe").Path
+          $userPrograms = Join-Path $env:LOCALAPPDATA 'Programs'
+          $uninst = 'Software\Microsoft\Windows\CurrentVersion\Uninstall'
+
+          function Get-Install([string]$hive) {
+            Get-ChildItem "${hive}:\$uninst" -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ItemProperty $_.PSPath } |
+              Where-Object { $_.DisplayName -eq 'ruckcode' }
+          }
+          function Assert-Scope([string]$what, [string]$scope) {
+            $u = Get-Install 'HKCU'; $m = Get-Install 'HKLM'
+            if ($scope -eq 'user') {
+              if (-not $u) { throw "$what : no HKCU uninstall entry" }
+              if ($m) { throw "$what : unexpected HKLM uninstall entry" }
+              $loc = ($u.InstallLocation -replace '"','').TrimEnd('\')
+              if (-not $loc.StartsWith($userPrograms, [StringComparison]::OrdinalIgnoreCase)) { throw "$what : installed to '$loc', expected under $userPrograms" }
+            } else {
+              if (-not $m) { throw "$what : no HKLM uninstall entry" }
+              if ($u) { throw "$what : unexpected HKCU uninstall entry" }
+              $loc = ($m.InstallLocation -replace '"','').TrimEnd('\')
+              if (-not $loc.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)) { throw "$what : installed to '$loc', expected under $env:ProgramFiles" }
+            }
+            if (-not (Test-Path (Join-Path $loc 'ruckcode.exe'))) { throw "$what : ruckcode.exe missing in $loc" }
+            Write-Host "ok $what -> $scope scope at $loc"
+            return $loc
+          }
+          function Run([string]$exe, [string[]]$arguments) {
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "$exe $arguments exited with $($p.ExitCode)" }
+          }
+          function Msi-Prop([string]$path, [string]$name) {
+            $inst = New-Object -ComObject WindowsInstaller.Installer
+            $db = $inst.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $inst, @($path, 0))
+            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='$name'"))
+            $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+            $rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            if ($null -eq $rec) { return $null }
+            return $rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, @(1))
+          }
+          function Msi-WordCount([string]$path) {
+            $inst = New-Object -ComObject WindowsInstaller.Installer
+            $si = $inst.GetType().InvokeMember('SummaryInformation', 'GetProperty', $null, $inst, @($path, 0))
+            return [int]$si.GetType().InvokeMember('Property', 'GetProperty', $null, $si, @(15))
+          }
+
+          # Windows Installer does not write HKCU/HKLM ...\Uninstall keys for MSI products (it keeps
+          # them in its own UserData store), so MSI installs are checked through the Installer API:
+          # context 1/2 = per-user (managed/unmanaged), 4 = per-machine.
+          function Get-MsiInstall {
+            $inst = New-Object -ComObject WindowsInstaller.Installer
+            $products = $inst.GetType().InvokeMember('ProductsEx', 'GetProperty', $null, $inst, @('', '', 7))
+            foreach ($p in $products) {
+              $name = $p.GetType().InvokeMember('InstallProperty', 'GetProperty', $null, $p, @('ProductName'))
+              if ($name -eq 'ruckcode') {
+                return [pscustomobject]@{
+                  Context = [int]$p.GetType().InvokeMember('Context', 'GetProperty', $null, $p, $null)
+                  Code = $p.GetType().InvokeMember('ProductCode', 'GetProperty', $null, $p, $null)
+                }
+              }
+            }
+            return $null
+          }
+          function Show-MsiLog([string]$log) {
+            if (Test-Path $log) {
+              Write-Host "--- $log (scope-related lines) ---"
+              Select-String -Path $log -Pattern 'ALLUSERS|MSIINSTALLPERUSER|INSTALLDIR|ProgramFiles64Folder|Context|per-user|Return value 3' |
+                Select-Object -First 60 | ForEach-Object { Write-Host $_.Line }
+            }
+          }
+          function Assert-MsiScope([string]$what, [string]$scope, [string]$log) {
+            $p = Get-MsiInstall
+            $userExe = Join-Path $userPrograms 'ruckcode\ruckcode.exe'
+            $machineExe = Join-Path $env:ProgramFiles 'ruckcode\ruckcode.exe'
+            $ok = $false
+            if ($p) {
+              if ($scope -eq 'user') { $ok = ($p.Context -band 3) -and (Test-Path $userExe) }
+              else { $ok = ($p.Context -eq 4) -and (Test-Path $machineExe) }
+            }
+            if (-not $ok) {
+              Write-Host "MSI product: $(if ($p) { "context=$($p.Context) code=$($p.Code)" } else { 'not registered' })"
+              Write-Host "user exe present: $(Test-Path $userExe); machine exe present: $(Test-Path $machineExe)"
+              Show-MsiLog $log
+              throw "$what : expected a $scope install"
+            }
+            Write-Host "ok $what -> $scope scope (context $($p.Context))"
+          }
+
+          # --- MSI: package metadata, then a plain install (per-user) and an ALLUSERS=1 install ---
+          if ((Msi-Prop $msi 'ALLUSERS') -ne '2') { throw 'MSI: ALLUSERS must be 2 (per-user or per-machine)' }
+          if ((Msi-Prop $msi 'MSIINSTALLPERUSER') -ne '1') { throw 'MSI: MSIINSTALLPERUSER must be 1 (default to per-user)' }
+          $wc = Msi-WordCount $msi
+          if (($wc -band 8) -ne 8) { throw "MSI: Word Count summary is $wc; bit 8 (no elevation required) is not set" }
+          Write-Host "ok MSI properties: ALLUSERS=2 MSIINSTALLPERUSER=1 WordCount=$wc"
+
+          Run msiexec.exe @('/i', "`"$msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-user.log`"")
+          Assert-MsiScope 'msi default' 'user' "$env:RUNNER_TEMP\msi-user.log"
+          # What the updater runs for an MSI update: same package again, passive/quiet.
+          Run msiexec.exe @('/i', "`"$msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-user-update.log`"")
+          Assert-MsiScope 'msi update' 'user' "$env:RUNNER_TEMP\msi-user-update.log"
+          Run msiexec.exe @('/x', "`"$msi`"", '/qn')
+          if (Get-MsiInstall) { throw 'msi: per-user uninstall left the product registered' }
+
+          Run msiexec.exe @('/i', "`"$msi`"", '/qn', 'ALLUSERS=1', '/l*v', "`"$env:RUNNER_TEMP\msi-machine.log`"")
+          Assert-MsiScope 'msi ALLUSERS=1' 'machine' "$env:RUNNER_TEMP\msi-machine.log"
+          Run msiexec.exe @('/x', "`"$msi`"", '/qn')
+          if (Get-MsiInstall) { throw 'msi: per-machine uninstall left the product registered' }
+
+          # --- NSIS: /S is per-user; /ALLUSERS is per-machine; /UPDATE keeps whichever scope ---
+          Run $nsis @('/S')
+          $loc = Assert-Scope 'nsis /S' 'user'
+          Run $nsis @('/S', '/UPDATE')
+          $loc2 = Assert-Scope 'nsis /S /UPDATE' 'user'
+          if ($loc -ne $loc2) { throw "nsis update moved the install: $loc -> $loc2" }
+          Run (Join-Path $loc 'uninstall.exe') @('/S', "_?=$loc")
+          Remove-Item -Recurse -Force $loc -ErrorAction SilentlyContinue
+          if (Get-Install 'HKCU') { throw 'nsis: per-user uninstall left the entry behind' }
+
+          Run $nsis @('/S', '/ALLUSERS')
+          $loc = Assert-Scope 'nsis /S /ALLUSERS' 'machine'
+          Run $nsis @('/S', '/UPDATE')
+          $loc2 = Assert-Scope 'nsis /S /UPDATE (per-machine)' 'machine'
+          if ($loc -ne $loc2) { throw "nsis update moved the install: $loc -> $loc2" }
+          Run (Join-Path $loc 'uninstall.exe') @('/S', "_?=$loc")
+          Remove-Item -Recurse -Force $loc -ErrorAction SilentlyContinue
+          if (Get-Install 'HKLM') { throw 'nsis: per-machine uninstall left the entry behind' }
+      - name: Upload installer logs (Windows, on failure)
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-logs-${{ matrix.target }}
+          path: ${{ runner.temp }}/msi-*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-app-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Save cargo cache
+        if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/ruckcode-app/target
+          key: cargo-release-app-${{ matrix.target }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+      - name: Save pnpm store
+        if: always() && github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+  # Signs the rc archives, checks every updater signature against the public key and assembles
+  # the GitHub Pages site (latest version only). Publishes nothing: that is `publish` and `pages`.
+  release-site:
+    needs: [release-version, release-rc, release-app]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        # Windows runners default to PowerShell, which does not expand "$VAR".
+        shell: bash
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.release-version.outputs.version }}
+      PNPM_VERSION: "10.28.0"
+      UPDATE_BASE_URL: https://ruckc.github.io/ruckcode
+      PUBKEY: ${{ vars.RUCKCODE_UPDATER_PUBKEY }}
+    outputs:
+      signed: ${{ steps.mode.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+          path: notes
+      - name: Is updater signing configured?
+        id: mode
+        env:
+          S_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "$S_KEY" ] && [ -n "$PUBKEY" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Updater signing is not configured (secret TAURI_SIGNING_PRIVATE_KEY, variable RUCKCODE_UPDATER_PUBKEY): the Pages site gets no updater manifests, signatures or install-time signature checks."
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.mode.outputs.signed == 'true'
+        with:
+          node-version: "22"
+      - name: Install the Tauri CLI (signer)
+        if: steps.mode.outputs.signed == 'true'
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          pnpm -C app install --frozen-lockfile
+      - name: Sign the rc archives
+        if: steps.mode.outputs.signed == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Same minisign key and format as the app's updater bundles; --app-version binds the
+          # version into the signed trusted comment (rc rejects a signature for another version).
+          # The script runs inside crates/ruckcode-app, hence absolute paths.
+          for f in dist/rc-*.tar.gz dist/rc-*.zip; do
+            pnpm -C app tauri signer sign --app-version "$VERSION" "$PWD/$f" >/dev/null
+            test -s "$f.sig"
+          done
+          ls -l dist/*.sig
+      - name: Verify every signature against the public key
+        if: steps.mode.outputs.signed == 'true'
+        run: |
+          set -euo pipefail
+          # Catches a key pair that does not match RUCKCODE_UPDATER_PUBKEY, which would make every
+          # update fail on users' machines. Same decoding as site/install.sh.
+          sudo apt-get install -y --no-install-recommends minisign >/dev/null
+          printf '%s' "$PUBKEY" | base64 -d > "$RUNNER_TEMP/updater.pub"
+          for sig in dist/*.sig; do
+            base64 -d < "$sig" > "$RUNNER_TEMP/check.minisig"
+            minisign -V -q -p "$RUNNER_TEMP/updater.pub" -x "$RUNNER_TEMP/check.minisig" -m "${sig%.sig}" \
+              || { echo "::error::signature check failed for ${sig%.sig}: the signing key does not match RUCKCODE_UPDATER_PUBKEY"; exit 1; }
+            echo "ok ${sig%.sig}"
+          done
+      - name: Build the Pages site
+        run: |
+          set -euo pipefail
+          args=(--dist dist --out site-out --version "$VERSION" --base-url "$UPDATE_BASE_URL" --notes notes/release-notes.md)
+          if [ "${{ steps.mode.outputs.signed }}" = true ]; then args+=(--signed --pubkey "$PUBKEY"); fi
+          python3 scripts/build_site.py "${args[@]}"
+      - name: Check Pages size limits
+        run: scripts/check_site_limits.sh site-out
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site-out
+      # The release carries the signatures too; the app jobs already uploaded theirs.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.mode.outputs.signed == 'true'
+        with:
+          name: dist-rc-signatures
+          path: dist/rc-*.sig
+          if-no-files-found: error
+
+  # Tag + GitHub Release. Builds started in parallel with the checks, so this is the gate: every
+  # check job AND every build/site job must have succeeded. app-windows is deliberately absent
+  # (pull requests only; release-app covers Windows on main). Any failed app bundle blocks the
+  # release so CLI and app versions stay consistent.
+  release-publish:
+    needs:
+      [fmt, clippy, test, check, audit, site, app, release-version, release-rc, release-app, release-site]
+    if: ${{
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.release-version.outputs.release == 'true' &&
+      needs.fmt.result == 'success' &&
+      needs.clippy.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.check.result == 'success' &&
+      needs.audit.result == 'success' &&
+      needs.site.result == 'success' &&
+      needs.app.result == 'success' &&
+      needs.release-rc.result == 'success' &&
+      needs.release-app.result == 'success' &&
+      needs.release-site.result == 'success' }}
+    # Serialize releases across runs (also with the manual Pages redeploy in release.yml).
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        # Windows runners default to PowerShell, which does not expand "$VAR".
+        shell: bash
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-version.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+          path: notes
+      - name: Create tag and GitHub Release
+        run: |
+          set -euo pipefail
+          cd dist
+          cat ./*.sha256 | sort -k2 > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          cd ..
+          # .sig files exist only when updater signing is configured.
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.zip dist/*.dmg dist/*.msi dist/*.exe dist/*.AppImage dist/*.deb dist/*.sha256 dist/*.sig dist/SHA256SUMS notes/CHANGELOG.md)
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file notes/release-notes.md \
+            "${assets[@]}"
+
+  # Deploys the site built by release-site, after the release is published.
+  release-pages:
+    needs: release-publish
+    if: ${{ !cancelled() && needs.release-publish.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     concurrency:
       group: release
       cancel-in-progress: false
     permissions:
-      contents: write
       pages: write
       id-token: write
-    uses: ./.github/workflows/release.yml
-    secrets: inherit
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

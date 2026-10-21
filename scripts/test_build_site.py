@@ -200,14 +200,15 @@ class Consistency(unittest.TestCase):
             m = re.search(r'DEFAULT_BASE_URL: &str = "([^"]+)"', text)
             self.assertIsNotNone(m, rel)
             self.assertEqual(m.group(1), expected, rel)
-        wf = (self.ROOT / ".github/workflows/release.yml").read_text()
-        self.assertIn(f"UPDATE_BASE_URL: {expected}\n", wf)
+        for name in ("ci.yml", "release.yml"):
+            wf = (self.ROOT / ".github/workflows" / name).read_text()
+            self.assertIn(f"UPDATE_BASE_URL: {expected}", wf, name)
         conf = json.loads((self.ROOT / "crates/ruckcode-app/tauri.conf.json").read_text())
         self.assertEqual(conf["plugins"]["updater"]["endpoints"], [f"{expected}/latest.json"])
         self.assertIn(expected, (self.ROOT / "site/install.sh").read_text())
 
     def test_rc_targets_match_the_release_matrix(self):
-        wf = (self.ROOT / ".github/workflows/release.yml").read_text()
+        wf = (self.ROOT / ".github/workflows/ci.yml").read_text()
         for triple, _label, _ext in build_site.RC_TARGETS:
             self.assertIn(f"target: {triple}", wf, triple)
         for _key, (triple, _suffix) in build_site.UPDATER_PLATFORMS.items():

@@ -653,7 +653,7 @@ MIT — see [LICENSE](LICENSE).
 Every push to `main` is examined by [git-cliff](https://git-cliff.org) (config
 in `cliff.toml`). When it finds release-worthy Conventional Commits since the
 last `v*` tag (`feat` = minor, `fix`/`perf`/`refactor` = patch, breaking = major,
-or minor while below 1.0.0), the release workflow builds `rc` and publishes a
+or minor while below 1.0.0), the CI workflow (release jobs, running in parallel with the checks and publishing only when all of them pass) builds `rc` and publishes a
 GitHub Release `vX.Y.Z` with:
 
 - `rc-<version>-<target>.tar.gz` (`.zip` on Windows) containing `rc`, `LICENSE`, `README.md`
@@ -662,12 +662,12 @@ GitHub Release `vX.Y.Z` with:
 - `.sig` minisign signatures for the `rc` archives and the updater bundles (`.app.tar.gz`, `-setup.exe`, `.AppImage`), when updater signing is configured
 - `CHANGELOG.md` and release notes generated from the commits
 
-After the release is published, a `pages` job deploys the latest version to GitHub Pages
+After the release is published, a `release-pages` job deploys the latest version to GitHub Pages
 (`https://ruckc.github.io/ruckcode/`): `index.html` (download page), `install.sh`,
 `latest.json` (Tauri updater manifest), `rc/latest.json` (manifest for `rc self-update`) and every
 artifact under `download/v<version>/`. The manifests exist only when signing is configured. To
 redeploy Pages from an existing release (for example after editing release notes, which the "Edit
-release notes" workflow does automatically for the latest release), run the Release workflow
+release notes" workflow does automatically for the latest release), run the Release workflow (`release.yml`)
 manually with `redeploy_pages` ticked.
 
 Manifest formats:
