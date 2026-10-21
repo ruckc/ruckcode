@@ -8,8 +8,13 @@ export interface LineTransport {
   send(line: string): void;
   /** Subscribe to lines from the agent. Returns an unsubscribe function. */
   onLine(cb: (line: string) => void): () => void;
-  /** Subscribe to the connection ending unexpectedly (agent exit, broken pipe). Optional. */
-  onClose?(cb: () => void): () => void;
+  /**
+   * Subscribe to the connection ending unexpectedly (agent exit, broken pipe). Optional. `reason`
+   * is a human-readable explanation when the host knows one (exit code, stderr tail).
+   */
+  onClose?(cb: (reason?: string) => void): () => void;
+  /** Why the connection ended, once it has (set before `onClose` callbacks run). */
+  closeReason?: string;
   /** Tear down the underlying connection (optional). */
   close?(): void | Promise<void>;
 }

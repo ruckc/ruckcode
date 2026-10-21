@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissions for the main window: the agent relay commands and the folder picker.",
   "windows": ["main"],
-  "permissions": ["allow-agent-connect", "allow-agent-send", "allow-agent-disconnect", "dialog:allow-open"]
+  "permissions": ["allow-agent-connect", "allow-agent-send", "allow-agent-disconnect", "allow-platform", "allow-app-version", "allow-wsl-list-distros", "allow-wsl-check-rc", "allow-wsl-install-rc", "allow-wsl-translate-path", "allow-wsl-to-windows-path", "dialog:allow-open"]
 }

@@ -114,7 +114,7 @@ export class FakeStore {
  * question), `mock:askmulti` (three questions), `mock:mode <id>` (SwitchMode permission),
  * `mock:edit` (diff without permission), `mock:bash` (long output), `mock:md` (markdown),
  * `mock:notice`, `mock:slow` (long stream, for cancel and queueing), `mock:error`,
- * `mock:crash`. Anything else is echoed back as streamed text.
+ * `mock:crash`, `mock:exit <code> <stderr>`. Anything else is echoed back as streamed text.
  */
 export class FakeAgent implements LineTransport {
   /** Every line received from the client, parsed. */
@@ -122,7 +122,8 @@ export class FakeAgent implements LineTransport {
   clientCapabilities: Json | undefined;
   readonly store: FakeStore;
   private listeners = new Set<(line: string) => void>();
-  private closers = new Set<() => void>();
+  private closers = new Set<(reason?: string) => void>();
+  closeReason?: string;
   private nextId = 1000;
   private pendingReplies = new Map<number, (msg: Json) => void>();
   private cancelled = false;
@@ -139,7 +140,7 @@ export class FakeAgent implements LineTransport {
     return () => this.listeners.delete(cb);
   }
 
-  onClose(cb: () => void): () => void {
+  onClose(cb: (reason?: string) => void): () => void {
     this.closers.add(cb);
     return () => this.closers.delete(cb);
   }
@@ -158,12 +159,13 @@ export class FakeAgent implements LineTransport {
   }
 
   /** Simulate the agent process dying. */
-  crash(): void {
+  crash(reason?: string): void {
     this.dead = true;
+    this.closeReason = reason;
     this.listeners.clear();
     const closers = [...this.closers];
     this.closers.clear();
-    queueMicrotask(() => closers.forEach((c) => c()));
+    queueMicrotask(() => closers.forEach((c) => c(reason)));
   }
 
   private emit(msg: Json): void {
@@ -364,6 +366,12 @@ export class FakeAgent implements LineTransport {
     s.history.push(chunk('user_message_chunk', input));
     s.updatedAt = new Date().toISOString();
 
+    if (input.startsWith('mock:exit')) {
+      const [, code = '1', ...msg] = input.split(' ');
+      return this.crash(
+        `\`rc acp\` exited with code ${code}${msg.length ? `: ${msg.join(' ')}` : ''}`
+      );
+    }
     if (input.startsWith('mock:crash')) return this.crash();
     if (input.startsWith('mock:error')) return this.fail(id, -32000, 'mock agent failure');
 

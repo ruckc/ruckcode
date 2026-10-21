@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wsl-translate-path"
+description = "Enables the wsl_translate_path command without any pre-configured scope."
+commands.allow = ["wsl_translate_path"]
+
+[[permission]]
+identifier = "deny-wsl-translate-path"
+description = "Denies the wsl_translate_path command without any pre-configured scope."
+commands.deny = ["wsl_translate_path"]

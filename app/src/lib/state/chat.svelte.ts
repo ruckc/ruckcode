@@ -160,7 +160,7 @@ export class ChatController {
           })
       });
       this.client = client;
-      void client.closed.then(() => this.onClosed(client));
+      void client.closed.then(() => this.onClosed(client, transport.closeReason));
       const init = await client.initialize();
       this.agentName = init.agentInfo?.name ?? 'agent';
       this.canLoad = init.agentCapabilities?.loadSession ?? false;
@@ -204,11 +204,13 @@ export class ChatController {
     await c?.close().catch(() => {});
   }
 
-  private onClosed(client: AcpClient): void {
+  private onClosed(client: AcpClient, reason?: string): void {
     if (this.client !== client) return; // closed on purpose
     this.client = null;
     this.status = 'lost';
-    this.error = 'Lost connection to the agent. It may have crashed or exited.';
+    this.error = reason
+      ? `Lost connection to the agent: ${reason}`
+      : 'Lost connection to the agent. It may have crashed or exited.';
     this.cancelDialogs();
     for (const v of Object.values(this.sessions)) {
       v.running = false;

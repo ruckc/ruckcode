@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wsl-to-windows-path"
+description = "Enables the wsl_to_windows_path command without any pre-configured scope."
+commands.allow = ["wsl_to_windows_path"]
+
+[[permission]]
+identifier = "deny-wsl-to-windows-path"
+description = "Denies the wsl_to_windows_path command without any pre-configured scope."
+commands.deny = ["wsl_to_windows_path"]

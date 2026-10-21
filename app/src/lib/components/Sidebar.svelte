@@ -1,10 +1,22 @@
 <script lang="ts">
-  import { baseName } from '../state/projects';
+  import {
+    baseName,
+    hostLabel,
+    projectKey,
+    type Project,
+    type ProjectHost
+  } from '../state/projects';
+  import HostPicker from './HostPicker.svelte';
   import { relativeTime } from '../format';
   import type { SessionSummary } from '../state/chat.svelte';
 
   let {
     cwd = $bindable(),
+    host = $bindable('local'),
+    distro = $bindable(''),
+    rcPath = $bindable(''),
+    platform = 'linux',
+    current = null,
     connected,
     connecting,
     canBrowse,
@@ -21,17 +33,23 @@
     onclose
   }: {
     cwd: string;
+    host?: ProjectHost;
+    distro?: string;
+    rcPath?: string;
+    platform?: string;
+    /** The project the open connection belongs to. */
+    current?: Project | null;
     connected: boolean;
     connecting: boolean;
     canBrowse: boolean;
     noHost: boolean;
-    recent: string[];
+    recent: Project[];
     sessions: (SessionSummary & { open: boolean })[];
     activeId: string | null;
-    onconnect: (path: string) => void;
+    onconnect: (project: Project) => void;
     ondisconnect: () => void;
     onbrowse: () => void;
-    onforget: (path: string) => void;
+    onforget: (project: Project) => void;
     onnew: () => void;
     onopen: (id: string) => void;
     onclose: (id: string) => void;
@@ -39,12 +57,21 @@
 
   let picking = $state(false);
   const showPicker = $derived(picking || !connected);
+  let hostReady = $state(true);
+  const here = $derived<Project>({
+    path: cwd,
+    host,
+    ...(host === 'wsl' ? { distro } : {}),
+    ...(host === 'subprocess' ? { rcPath } : {})
+  });
 </script>
 
 <nav class="sidebar" aria-label="Projects and sessions">
   <section class="project">
     <div class="phead">
-      <strong class="pname" title={cwd}>{cwd ? baseName(cwd) : 'No project'}</strong>
+      <strong class="pname" title={current?.path ?? cwd}
+        >{(current?.path ?? cwd) ? baseName(current?.path ?? cwd) : 'No project'}</strong
+      >
       {#if connected}
         <button
           type="button"
@@ -54,48 +81,72 @@
         >
       {/if}
     </div>
-    {#if cwd && connected}<div class="ppath muted" title={cwd}>{cwd}</div>{/if}
+    {#if current && connected}
+      <div class="ppath muted" title={current.path}>
+        {#if hostLabel(current)}<span class="badge">{hostLabel(current)}</span>{/if}
+        {current.path}
+      </div>
+    {/if}
     {#if showPicker}
       <form
         class="picker"
         onsubmit={(e) => {
           e.preventDefault();
           picking = false;
-          onconnect(cwd);
+          onconnect(here);
         }}
       >
+        <HostPicker
+          bind:host
+          bind:distro
+          bind:rcPath
+          onready={(r) => (hostReady = r)}
+          {cwd}
+          {platform}
+          disabled={connecting}
+        />
         <input
           type="text"
-          placeholder="Project folder"
+          placeholder={host === 'wsl' ? 'Project folder (Windows or Linux path)' : 'Project folder'}
           aria-label="Project folder"
           bind:value={cwd}
         />
         <div class="row">
           {#if canBrowse}<button type="button" onclick={onbrowse}>Browse…</button>{/if}
-          <button class="primary" type="submit" disabled={!cwd.trim() || connecting || noHost}>
+          <button
+            class="primary"
+            type="submit"
+            disabled={!cwd.trim() || connecting || noHost || !hostReady}
+          >
             {connecting ? 'Connecting…' : connected ? 'Open' : 'Connect'}
           </button>
         </div>
         {#if recent.length}
           <h3>Recent projects</h3>
           <ul class="recent">
-            {#each recent as r (r)}
+            {#each recent as r (projectKey(r))}
               <li>
                 <button
                   type="button"
                   class="link"
-                  title={r}
+                  title={r.path}
                   disabled={connecting || noHost}
                   onclick={() => {
                     picking = false;
-                    cwd = r;
+                    cwd = r.path;
+                    host = r.host;
+                    distro = r.distro ?? '';
+                    rcPath = r.rcPath ?? '';
                     onconnect(r);
-                  }}>{baseName(r)} <span class="muted">{r}</span></button
+                  }}
+                  >{baseName(r.path)}
+                  <span class="muted">{hostLabel(r) ? `${hostLabel(r)} · ` : ''}{r.path}</span
+                  ></button
                 >
                 <button
                   type="button"
                   class="x"
-                  aria-label={`Forget ${r}`}
+                  aria-label={`Forget ${r.path}`}
                   onclick={() => onforget(r)}>&times;</button
                 >
               </li>
@@ -183,6 +234,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .badge {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    margin-right: 4px;
   }
   .picker {
     display: grid;

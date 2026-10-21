@@ -358,6 +358,27 @@ libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-ess
 `cargo check --manifest-path crates/ruckcode-app/Cargo.toml` (or `mise run app:lint:rust`,
 `app:test:rust`).
 
+#### WSL2 (Windows)
+
+On Windows the project header has a host selector: **Local** (embedded agent), **WSL2** and
+**Custom rc** (a specific `rc` binary as a child process). Choose WSL2 to run the agent inside a
+WSL2 distribution:
+
+1. Pick a distribution (the default one is preselected; WSL1 and Docker Desktop's internal distros
+   are shown but cannot be chosen).
+2. If `rc` is missing in the distro, click **Install rc**. The app downloads the release archive
+   matching its own version (x86_64 musl or aarch64) from GitHub inside the distro, verifies the
+   SHA-256 and installs `~/.local/bin/rc`. A different installed version shows a warning and an
+   **Update rc** button.
+3. Enter the project folder as a Windows path (`C:\Users\me\proj`, `\\wsl.localhost\Ubuntu\home\me\proj`,
+   `\\wsl$\Ubuntu\...`) or a Linux path (`/home/me/proj`), or use Browse. The translated Linux path
+   is shown under the field; a path in another distro is rejected. Then **Connect**.
+
+The app runs `wsl.exe -d <distro> --cd <path> -- sh -lc 'exec rc acp'` and relays its stdio like
+any other host. The chosen host is remembered per recent project. If the agent exits, the app
+shows its exit code and last stderr lines and offers Reconnect. Try the UI in a browser with
+`?mock=1&platform=windows`.
+
 The frontend can also run in a plain browser against a scripted fake agent:
 `pnpm -C app dev` then open `http://localhost:5173/?mock=1` (add `&delay=0` for instant
 streaming). Prompts such as `mock:write a.txt hi`, `mock:askmulti`, `mock:mode explore`,

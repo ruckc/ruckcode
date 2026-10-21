@@ -25,7 +25,7 @@ Agent connection ("agent host"), chosen per window and project:
 | Host | How |
 |------|-----|
 | Local (default) | The Tauri backend embeds `ruckcode_core::Agent` behind `ruckcode_acp` over an in-process pipe. ACP JSON-RPC lines are relayed to the webview through a Tauri `Channel`, and outgoing lines go back through a Tauri command. |
-| WSL2 (Windows) | The Tauri backend spawns `wsl.exe -d <distro> --cd <linux path> -- rc acp` and relays its stdio the same way. The app lists distros (`wsl.exe -l -q`), checks for `rc` inside the distro (and offers to install it from the release archive), and translates `\\wsl$\...` paths to Linux paths. |
+| WSL2 (Windows) | The Tauri backend spawns `wsl.exe -d <distro> --cd <linux path> -- rc acp` and relays its stdio the same way. The app lists distros (`wsl.exe -l -v`, falling back to `-l -q`), checks for `rc` inside the distro (and offers to install it from the release archive), and translates `\\wsl$\...` paths to Linux paths. |
 | Subprocess (any OS, optional) | `rc acp` as a child process. Useful for running against a specific `rc` binary. |
 
 The frontend has one transport interface (`send(line)` and `onLine(cb)`) for all three hosts,
@@ -91,8 +91,8 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
    that relays ACP, plus a minimal chat with the mock model. See "Milestone 1 notes" below.
 2. **Core chat and tools. Done.** Full UI, permissions, AskUserQuestion, modes, model picker and
    sessions. See "Milestone 2 notes" below.
-3. **WSL2 host.** Distro discovery, `rc` provisioning inside WSL, path translation, and a stdio
-   relay.
+3. **WSL2 host. Done.** Distro discovery, `rc` provisioning inside WSL, path translation, and a
+   stdio relay. See "Milestone 3 notes" below.
 4. **Setup and keys UI**, including the JSON outputs for the CLI subcommands.
 5. **Transcript browser.**
 6. **Mode/hook editor**, including the new `rc modes` subcommand.
@@ -157,8 +157,7 @@ Built as planned, with these deviations and details:
   `?mock=1&delay=<ms>` sets the streaming delay.
 - **Connection loss.** `LineTransport` gained an optional `onClose`; when it fires (or the SDK
   connection closes) the app shows a Reconnect banner. The Tauri transport raises it when
-  `agent_send` fails; the Rust shell does not yet emit an explicit "agent exited" event, so a
-  silently dead agent is only noticed on the next send.
+  `agent_send` fails; the Rust shell did not yet emit an explicit "agent exited" event (added in milestone 3).
 - **Tests.** vitest: reducer, diff, format, projects, markdown, controller (against the fake
   agent), and component tests with `@testing-library/svelte` in jsdom (jsdom pinned to 26
   because 30 needs a newer Node patch than the pinned 22.22.0). Playwright (`@playwright/test`
@@ -167,6 +166,64 @@ Built as planned, with these deviations and details:
   installing chromium with `playwright install --with-deps chromium`.
 - **Not done.** Model change to "default" (`_ruckcode/set_model` with null), image/resource
   prompt content, terminal content blocks (shown as a placeholder), slash commands.
+
+## Milestone 3 notes
+
+- **Agent-exit event (carry-over from M2).** `agent_connect` now takes `distro` and an `onEvent`
+  `Channel<AgentEvent>` (replacing `onLine`). Events are `{event:"line", line}` and one final
+  `{event:"exit", code, message}`, on the same channel so the exit always follows the last line. The
+  Rust relay emits it when the agent's output ends: a subprocess/WSL child (code plus the last 20
+  stderr lines in `message`), or the in-process agent task finishing or panicking (`code: null`).
+  An explicit `agent_disconnect` stays silent. The Tauri transport turns it into `onClose(reason)`
+  and `transport.closeReason`, so the lost-connection banner appears at once with the reason
+  ("Lost connection to the agent: `rc acp (Ubuntu)` exited with code 3: ...").
+- **Backend** (`crates/ruckcode-app/src/wsl.rs`, host kind `wsl` in `host.rs`). Pure, tested on any
+  OS: `decode_wsl_output` (UTF-16LE with or without BOM, or UTF-8; strips CR/NUL),
+  `parse_distro_list` (`-l -v`; rows are recognised structurally so localized headers and states
+  work; only WSL2 distros that are not `docker-desktop*` are selectable), `parse_distro_names`
+  (`-l -q` fallback), `parse_rc_check`, `windows_to_linux` / `linux_to_windows`, `agent_args` and
+  `build_install_script`. Commands: `platform`, `app_version`, `wsl_list_distros`,
+  `wsl_check_rc(distro)`, `wsl_install_rc(distro, onProgress)`, `wsl_translate_path(distro, path)`,
+  `wsl_to_windows_path`. Off Windows the `wsl_*` commands return "WSL2 is only available on
+  Windows". All `wsl.exe` launches use `CREATE_NO_WINDOW`.
+- **Starting the agent:** `wsl.exe -d <distro> --cd <linux cwd> -- sh -lc 'PATH=$HOME/.local/bin:$PATH;
+  exec rc acp'` through the same stdio relay as the subprocess host (`spawn_command`, shared). The
+  PATH prefix makes a freshly installed `rc` visible to login shells that predate `~/.local/bin`.
+  `--` makes `wsl.exe` hand the rest of the command line to the distro's shell, which is why the
+  install script is shipped as `echo <base64> | base64 -d | sh` (no quoting or newline problems).
+- **Install script.** Detects the arch (`uname -m`: x86_64 gets the musl static build, aarch64 the gnu
+  one), downloads `rc-<ver>-<target>.tar.gz` and `.sha256` from the `v<ver>` release (`<ver>` is the
+  app version; if that tag has no asset it asks the GitHub API for the latest release), verifies
+  the checksum (exit 4 on mismatch), and installs atomically to `~/.local/bin/rc`. Progress is the
+  script's `[rc-install] ...` stdout lines, streamed to the UI. The Rust tests run the real script
+  against a fake `curl` (good, tampered and fallback cases), so no network is needed.
+- **Paths.** `\\wsl$\<d>\...` and `\\wsl.localhost\<d>\...` map to `/...` (distro compared
+  case-insensitively; another distro or a network share is rejected with a message),
+  `C:\Users\x` maps to `/mnt/c/Users/x`, Linux and `~` paths pass through. For drive paths the
+  backend prefers `wslpath -u` inside the distro (custom automount roots) and falls back to the
+  pure function. The UI shows "Linux path: ..." under the project field as you type, and the
+  project is stored in recents under its translated Linux path. A TypeScript twin
+  (`host/wsl-paths.ts`) serves browser mock mode; both sides share the same test cases.
+- **UI.** `HostPicker` in the project header: Local | WSL2 (only when `platform()` is `windows`) |
+  Custom rc (path to a binary, subprocess host). WSL2 shows the distro dropdown (default, state,
+  WSL version; WSL1 and Docker Desktop distros are listed but disabled), Refresh, the `rc` status
+  (installed version, "not installed" with Install, or a version-mismatch warning with Update) with
+  live install output, and Connect stays disabled until a WSL2 distro has `rc`. A version mismatch
+  only warns. Browse opens the native dialog at `\\wsl.localhost\<distro>\` and the result is
+  translated. Recents are now objects `{path, host, distro?, rcPath?}` (old string lists migrate)
+  and show a host badge; WSL entries are hidden on other platforms.
+- **Mock mode.** `?mock=1&platform=windows` pretends to be Windows and swaps in `FakeWsl`:
+  Ubuntu-24.04 (default, no rc yet), Debian (older rc 0.0.9), Alpine (WSL1) and docker-desktop
+  (not selectable). `mock:exit <code> <stderr>` ends the fake agent with an exit message. Every
+  mock connect is recorded in `window.__ruckcodeConnects` for tests.
+- **Tests.** Rust: parsers with UTF-16 fixtures, path translation, script builder and execution,
+  exit events (code, stderr tail, signal, ordering, silent disconnect) and a stand-in `wsl.exe` that
+  checks the argument shape end to end. vitest: Tauri transport (mocked IPC), exit reason in the
+  controller, HostPicker, path twin, recents migration. Playwright: `e2e/wsl.spec.ts`.
+- **CI.** New `app-windows` job (`windows-2022`): build the frontend, `cargo check --all-targets
+  --locked` and `cargo test` for the shell, so the `cfg(windows)` code is compiled for real.
+- **Not verifiable without Windows.** Real `wsl.exe` output and quoting, `CREATE_NO_WINDOW`,
+  the dialog on `\\wsl.localhost`, and WebView2 behaviour. See the README for a manual checklist.
 
 ## Open items for later
 

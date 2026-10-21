@@ -7,23 +7,48 @@
   import PlanPanel from '../lib/components/PlanPanel.svelte';
   import Sidebar from '../lib/components/Sidebar.svelte';
   import TopBar from '../lib/components/TopBar.svelte';
-  import { hostMode } from '../lib/host';
-  import { pickFolder } from '../lib/host/tauri';
+  import { browseFolder, getPlatform, getWsl, hostMode } from '../lib/host';
   import { ChatController } from '../lib/state/chat.svelte';
-  import { loadRecent, pushRecent, removeRecent, saveRecent } from '../lib/state/projects';
+  import {
+    loadRecent,
+    pushRecent,
+    removeRecent,
+    saveRecent,
+    type Project,
+    type ProjectHost
+  } from '../lib/state/projects';
 
   const chat = new ChatController();
   const mode = hostMode();
 
-  let recent = $state<string[]>([]);
+  let recent = $state<Project[]>([]);
   let cwd = $state('');
+  let host = $state<ProjectHost>('local');
+  let distro = $state('');
+  let rcPath = $state('');
+  let platform = $state('linux');
+  let current = $state<Project | null>(null);
   let sidebarOpen = $state(true);
   let planOpen = $state(true);
   let composer: { focus(): void } | undefined = $state();
 
   onMount(() => {
+    void getPlatform().then((p) => {
+      platform = p;
+      // A remembered WSL project only makes sense on Windows.
+      if (p !== 'windows') recent = recent.filter((r) => r.host !== 'wsl');
+      if (p !== 'windows' && host === 'wsl') host = 'local';
+    });
     recent = loadRecent();
-    cwd = recent[0] ?? (mode === 'mock' ? '/demo/project' : '');
+    const last = recent[0];
+    if (last) {
+      cwd = last.path;
+      host = last.host;
+      distro = last.distro ?? '';
+      rcPath = last.rcPath ?? '';
+    } else if (mode === 'mock') {
+      cwd = '/demo/project';
+    }
     if (window.innerWidth < 900) {
       sidebarOpen = false;
       planOpen = false;
@@ -33,22 +58,51 @@
   const active = $derived(chat.active);
   const dialogOpen = $derived(!!chat.permission || !!chat.question);
 
-  async function connectProject(path: string) {
-    const p = path.trim();
-    if (!p) return;
-    cwd = p;
+  async function connectProject(project: Project) {
+    const path = project.path.trim();
+    if (!path) return;
+    let p: Project = { ...project, path };
+    cwd = path;
+    host = p.host;
+    // WSL: remember the Linux path so reopening it needs no translation, and fail early with a
+    // clear message for paths in another distro.
+    if (p.host === 'wsl' && p.distro) {
+      try {
+        const wsl = await getWsl();
+        p = { ...p, path: await wsl.translatePath(p.distro, path) };
+        cwd = p.path;
+      } catch (e) {
+        chat.error = e instanceof Error ? e.message : String(e);
+        return;
+      }
+    }
+    current = p;
     recent = pushRecent(recent, p);
     saveRecent(recent);
-    await chat.connect({ cwd: p });
+    await chat.connect({
+      cwd: p.path,
+      host: p.host,
+      rcPath: p.host === 'subprocess' ? p.rcPath : undefined,
+      distro: p.host === 'wsl' ? p.distro : undefined
+    });
   }
 
   async function browse() {
-    const dir = await pickFolder().catch(() => null);
-    if (dir) cwd = dir;
+    const dir = await browseFolder({ host, distro }).catch(() => null);
+    if (!dir) return;
+    cwd = dir;
+    if (host === 'wsl' && distro) {
+      // Show the Linux path the picked folder maps to (e.g. \\wsl.localhost\Ubuntu\home\x).
+      try {
+        cwd = await (await getWsl()).translatePath(distro, dir);
+      } catch {
+        // keep the raw path; the host picker shows why it cannot be used
+      }
+    }
   }
 
-  function forget(path: string) {
-    recent = removeRecent(recent, path);
+  function forget(project: Project) {
+    recent = removeRecent(recent, project);
     saveRecent(recent);
   }
 
@@ -81,9 +135,14 @@
     <div class="side">
       <Sidebar
         bind:cwd
+        bind:host
+        bind:distro
+        bind:rcPath
+        {platform}
+        {current}
         connected={chat.connected}
         connecting={chat.status === 'connecting'}
-        canBrowse={mode === 'tauri'}
+        canBrowse={mode === 'tauri' || (mode === 'mock' && platform === 'windows')}
         noHost={mode === 'none'}
         {recent}
         sessions={chat.sidebar}

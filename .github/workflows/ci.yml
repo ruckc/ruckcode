@@ -250,3 +250,57 @@ jobs:
             ~/.cargo/git/db
             crates/ruckcode-app/target
           key: cargo-app-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+
+  # The WSL2 host only runs on Windows: type-check (and run the platform-independent tests of)
+  # the Tauri shell there. WebView2 is preinstalled on GitHub's Windows runners.
+  app-windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      PNPM_VERSION: "10.28.0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install pnpm
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+      # The Tauri build embeds the built frontend (app/build).
+      - run: pnpm -C app install --frozen-lockfile
+      - run: pnpm -C app build
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          echo "RUSTC_VERSION=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_ENV"
+      - name: Restore cargo cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/ruckcode-app/target
+          key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}
+          restore-keys: |
+            cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
+      - run: cargo check --manifest-path crates/ruckcode-app/Cargo.toml --all-targets --locked
+      - run: cargo test --manifest-path crates/ruckcode-app/Cargo.toml --locked
+      - name: Save cargo cache
+        if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/ruckcode-app/target
+          key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock') }}

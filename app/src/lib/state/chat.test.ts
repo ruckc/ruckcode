@@ -222,6 +222,15 @@ describe('ChatController', () => {
     expect(chat.active!.model.items.at(-1)).toMatchObject({ kind: 'turn_end' });
   });
 
+  it('shows the exit reason of an agent that ended', async () => {
+    const { chat } = await ready();
+    void chat.send('mock:exit 7 permission denied');
+    await vi.waitFor(() => expect(chat.status).toBe('lost'));
+    expect(chat.error).toBe(
+      'Lost connection to the agent: `rc acp` exited with code 7: permission denied'
+    );
+  });
+
   it('disconnect clears sessions without flagging a lost connection', async () => {
     const { chat } = await ready();
     await chat.disconnect();

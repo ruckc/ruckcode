@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wsl-check-rc"
+description = "Enables the wsl_check_rc command without any pre-configured scope."
+commands.allow = ["wsl_check_rc"]
+
+[[permission]]
+identifier = "deny-wsl-check-rc"
+description = "Denies the wsl_check_rc command without any pre-configured scope."
+commands.deny = ["wsl_check_rc"]
