@@ -90,6 +90,25 @@ provider), `--models a,b` (required), `--default-model`, `--api-key-env NAME`, `
 (+ `--api-key-stdin` to store the secret), `--project-key` (see below), `--no-default`, and repeated
 `--mode-model MODE=MODEL` (`MODE=default` clears; the model belongs to the profile being set up).
 
+Machine-readable modes (used by the desktop app, stable shapes, camelCase JSON on one stdout line;
+errors go to stderr as `rc: message` with exit code 1; secrets are only ever read from stdin):
+
+```sh
+rc setup --json-state          # {needsOnboarding, project, defaultProfile, profiles[], keys{keys[],missing[]},
+                               #  env{NAME:bool}, modes{status:"ready"|"missing"|"broken", ...}}
+rc setup --non-interactive ... --json            # apply; prints {configPath, projectConfigPath,
+                                                 #  credentialsPath, modesPath, modesUpdated}
+rc setup --non-interactive ... --preview [--json]  # print the diff (or {diff}) and write nothing
+rc setup --plan-stdin [--preview] --json         # the whole plan as JSON on stdin (incl. newKey.secret)
+rc models --provider anthropic|openai [--base-url U] [--api-key-env N | --api-key-name N | --api-key-stdin] [--json]
+                                                 # {models:[{id, displayName}]}
+rc keys list --json            # {keys:[{name, description, createdAt, masked, usedBy[]}], missing[]}
+rc keys add NAME --api-key-stdin [--description D] --json   # {name, path}
+rc keys remove NAME --json     # {name, stillUsedBy[]}
+rc keys use NAME [--profile P] [--project] --json           # {name, profile, scope, path}
+rc init --json [--minimal] [--modes a,b] [--force]          # {path, tasksDiscovered, modes{...}}
+```
+
 `/model` lists the profile's `models` and switches the model for the current session (stored in the
 transcript as a `model_change` record; `/model default` clears it).
 
@@ -378,6 +397,20 @@ The app runs `wsl.exe -d <distro> --cd <path> -- sh -lc 'exec rc acp'` and relay
 any other host. The chosen host is remembered per recent project. If the agent exits, the app
 shows its exit code and last stderr lines and offers Reconnect. Try the UI in a browser with
 `?mock=1&platform=windows`.
+
+#### Settings: providers, keys and modes
+
+The **Settings** button (top bar) opens the graphical `rc setup`: **Providers & models** is the
+wizard (provider, endpoint, authentication with an env-var set/unset indicator, a saved key or a new
+masked one saved for your profile or this project only, profile name with an overwrite warning, live
+model list with filter, select all and manual entry when the fetch fails, a model per mode, and a
+diff of exactly what will be written), **API keys** lists, adds, removes (with confirmation) and
+applies named keys to a profile (secrets are never shown, only the last four characters), and
+**Project** creates `.ruckcode/modes.toml` (like `rc init`, including mise tasks). With no usable
+profile the wizard opens by itself on Connect. After saving you can reconnect the agent so the new
+configuration takes effect. For WSL2 projects all of this runs inside the distro through the `rc`
+JSON commands above, so the distro's own `~/.config/ruckcode` is edited. In the browser demo,
+`?mock=1&setup=fresh` starts with nothing configured.
 
 The frontend can also run in a plain browser against a scripted fake agent:
 `pnpm -C app dev` then open `http://localhost:5173/?mock=1` (add `&delay=0` for instant

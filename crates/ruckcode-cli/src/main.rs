@@ -5,6 +5,7 @@ mod headless;
 mod init_cmd;
 mod keys_cmd;
 mod mcp_cmd;
+mod models_cmd;
 mod setup_cmd;
 mod tui;
 
@@ -91,6 +92,9 @@ pub enum Command {
         /// Overwrite an existing modes.toml.
         #[arg(long)]
         force: bool,
+        /// Print the result as JSON (`path`, `tasksDiscovered`, `modes`).
+        #[arg(long)]
+        json: bool,
     },
     /// Interactive setup wizard: provider, endpoint, key, models and per-mode models.
     Setup(setup_cmd::SetupArgs),
@@ -99,6 +103,8 @@ pub enum Command {
         #[command(subcommand)]
         action: keys_cmd::KeysAction,
     },
+    /// List the models an endpoint offers (JSON with --json).
+    Models(models_cmd::ModelsArgs),
     /// List sessions of this project.
     Sessions,
     /// Inspect configured MCP servers.
@@ -199,7 +205,7 @@ fn init_logging(to_file: bool) {
 async fn main() -> ExitCode {
     let cli = Cli::parse().normalize();
     let interactive = (cli.command.is_none() && !cli.print)
-        || matches!(&cli.command, Some(Command::Setup(a)) if !a.non_interactive);
+        || matches!(&cli.command, Some(Command::Setup(a)) if a.interactive());
     init_logging(interactive);
     let result: Result<u8> = match &cli.command {
         Some(Command::Acp) => run_acp(&cli).await.map(|_| 0),
@@ -208,10 +214,12 @@ async fn main() -> ExitCode {
             modes,
             diff,
             force,
-        }) => init_cmd::run(&cli, *minimal, modes, *diff, *force)
+            json,
+        }) => init_cmd::run(&cli, *minimal, modes, *diff, *force, *json)
             .await
             .map(|_| 0),
         Some(Command::Setup(args)) => setup_cmd::run(&cli, args).await.map(|_| 0),
+        Some(Command::Models(args)) => models_cmd::run(args).await.map(|_| 0),
         Some(Command::Keys { action }) => keys_cmd::run(&cli, action).await.map(|_| 0),
         Some(Command::Sessions) => run_sessions(&cli).await.map(|_| 0),
         Some(Command::Mcp {

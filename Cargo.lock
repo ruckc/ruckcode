@@ -2400,6 +2400,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]
@@ -2427,6 +2428,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

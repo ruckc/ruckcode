@@ -7,6 +7,7 @@ pub mod keys;
 pub mod modes;
 pub mod permissions;
 pub mod setup;
+pub mod setup_api;
 pub mod transcript;
 
 mod prompt;

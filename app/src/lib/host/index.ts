@@ -1,11 +1,21 @@
 import type { LineTransport } from '../acp/transport';
-import { connectTauri, inTauri, pickFolder, tauriPlatform, tauriWsl, type HostKind } from './tauri';
+import {
+  connectTauri,
+  inTauri,
+  pickFolder,
+  tauriPlatform,
+  tauriSetup,
+  tauriWsl,
+  type HostKind
+} from './tauri';
+import type { SetupApi } from './setup';
 import type { WslApi } from './wsl';
 
 export type { HostKind };
 
 let mockStore: import('./fake-agent').FakeStore | undefined;
 let mockWsl: WslApi | undefined;
+let mockSetup: SetupApi | undefined;
 
 export type HostMode = 'tauri' | 'mock' | 'none';
 
@@ -77,4 +87,22 @@ export async function browseFolder(opts: {
   const start =
     opts.host === 'wsl' && opts.distro ? `\\\\wsl.localhost\\${opts.distro}\\` : undefined;
   return pickFolder(start);
+}
+
+/**
+ * The setup/keys API (a fake with in-memory state in mock mode). `?setup=fresh` starts with no
+ * profile and no modes.toml so the first-run wizard opens.
+ */
+export async function getSetup(): Promise<SetupApi> {
+  if (hostMode() === 'mock') {
+    const { FakeSetup } = await import('./fake-setup');
+    const q = new URLSearchParams(location.search);
+    const delay = Number(q.get('setupdelay') ?? 150);
+    mockSetup ??= new FakeSetup({
+      fresh: q.get('setup') === 'fresh',
+      delayMs: Number.isFinite(delay) ? delay : 150
+    });
+    return mockSetup;
+  }
+  return tauriSetup;
 }

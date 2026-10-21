@@ -1,0 +1,365 @@
+//! The machine-readable (`--json`) modes the desktop app uses inside WSL: shapes must stay stable.
+
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::process::{Command, Output, Stdio};
+
+use serde_json::Value;
+
+struct Env {
+    proj: tempfile::TempDir,
+    cfg: tempfile::TempDir,
+    home: tempfile::TempDir,
+}
+
+impl Env {
+    fn new() -> Self {
+        Self {
+            proj: tempfile::tempdir().unwrap(),
+            cfg: tempfile::tempdir().unwrap(),
+            home: tempfile::tempdir().unwrap(),
+        }
+    }
+
+    fn rc(&self, args: &[&str], stdin: &str) -> Output {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_rc"));
+        c.args(args)
+            .current_dir(self.proj.path())
+            .env("HOME", self.home.path())
+            .env("XDG_CONFIG_HOME", self.home.path().join("xdg"))
+            .env("RUCKCODE_CONFIG_DIR", self.cfg.path())
+            .env("RC_TEST_PRESENT", "1")
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .env_remove("OPENROUTER_API_KEY")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = c.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
+
+    fn json(&self, args: &[&str], stdin: &str) -> Value {
+        let o = self.rc(args, stdin);
+        assert!(
+            o.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let out = String::from_utf8(o.stdout).unwrap();
+        assert_eq!(
+            out.trim().lines().count(),
+            1,
+            "one JSON line expected: {out}"
+        );
+        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"))
+    }
+}
+
+const PLAN: &str = r#"{"profileName":"or","provider":"openai","baseUrl":"https://openrouter.ai/api/v1",
+ "model":"a/one","models":["a/one","b/two"],"newKey":{"name":"work","secret":"sk-secret-0042","description":"w"},
+ "keyScope":"user","setDefault":true,"modeModels":[{"mode":"explore","profile":"or","model":"b/two"},{"mode":"test"}]}"#;
+
+const MODES: &str = "default_mode = \"explore\"\n[modes.explore]\ndescription = \"x\"\n[modes.test]\ndescription = \"y\"\nmodel = \"old\"\n";
+
+#[test]
+fn state_shape_and_onboarding() {
+    let e = Env::new();
+    let s = e.json(&["setup", "--json-state"], "");
+    assert_eq!(s["needsOnboarding"], true);
+    assert_eq!(s["defaultProfile"], "anthropic");
+    assert_eq!(s["profiles"], serde_json::json!([]));
+    assert_eq!(s["keys"], serde_json::json!({"keys": [], "missing": []}));
+    assert_eq!(s["env"]["ANTHROPIC_API_KEY"], false);
+    assert_eq!(s["modes"], serde_json::json!({"status": "missing"}));
+    assert!(s["project"].is_string());
+}
+
+#[test]
+fn plan_stdin_preview_then_apply_then_state() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.proj.path().join(".ruckcode")).unwrap();
+    std::fs::write(e.proj.path().join(".ruckcode/modes.toml"), MODES).unwrap();
+
+    let p = e.json(&["setup", "--plan-stdin", "--preview", "--json"], PLAN);
+    let diff = p["diff"].as_str().unwrap();
+    assert!(
+        diff.contains("+[profiles.or]") || diff.contains("+provider"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("modes.toml") && !diff.contains("sk-secret"),
+        "{diff}"
+    );
+    assert!(
+        !e.cfg.path().join("config.toml").exists(),
+        "preview must not write"
+    );
+
+    let r = e.json(&["setup", "--plan-stdin", "--json"], PLAN);
+    for k in [
+        "configPath",
+        "projectConfigPath",
+        "credentialsPath",
+        "modesPath",
+        "modesUpdated",
+    ] {
+        assert!(r.get(k).is_some(), "missing {k}: {r}");
+    }
+    assert!(r["credentialsPath"]
+        .as_str()
+        .unwrap()
+        .ends_with("credentials.toml"));
+    assert_eq!(r["projectConfigPath"], Value::Null);
+    assert_eq!(r["modesUpdated"], 2);
+    assert!(!r.to_string().contains("sk-secret"));
+
+    let s = e.json(&["setup", "--json-state"], "");
+    assert_eq!(s["needsOnboarding"], false);
+    assert_eq!(s["defaultProfile"], "or");
+    assert_eq!(s["profiles"][0]["apiKeyName"], "work");
+    assert_eq!(
+        s["profiles"][0]["models"],
+        serde_json::json!(["a/one", "b/two"])
+    );
+    assert_eq!(s["keys"]["keys"][0]["masked"], "…0042");
+    assert_eq!(s["keys"]["keys"][0]["usedBy"][0], "profile `or` (user)");
+    assert_eq!(s["modes"]["status"], "ready");
+    assert_eq!(s["modes"]["modes"][0]["model"], "b/two");
+    assert!(!s.to_string().contains("sk-secret"));
+    assert!(e.read_cfg("credentials.toml").contains("sk-secret-0042"));
+}
+
+impl Env {
+    fn read_cfg(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.cfg.path().join(rel)).unwrap()
+    }
+}
+
+#[test]
+fn non_interactive_flags_json_and_preview() {
+    let e = Env::new();
+    let args = [
+        "setup",
+        "--non-interactive",
+        "--provider",
+        "ollama",
+        "--models",
+        "llama3",
+        "--json",
+    ];
+    let mut with_preview = args.to_vec();
+    with_preview.push("--preview");
+    assert!(e.json(&with_preview, "")["diff"].is_string());
+    assert!(!e.cfg.path().join("config.toml").exists());
+    let r = e.json(&args, "");
+    assert!(r["configPath"].as_str().unwrap().ends_with("config.toml"));
+    assert!(e.read_cfg("config.toml").contains("llama3"));
+}
+
+#[test]
+fn bad_plan_fails_with_message_on_stderr() {
+    let e = Env::new();
+    let o = e.rc(&["setup", "--plan-stdin", "--json"], "{not json");
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("invalid plan JSON"));
+    let o = e.rc(
+        &["setup", "--plan-stdin", "--json"],
+        r#"{"profileName":"a b","provider":"openai","model":"m"}"#,
+    );
+    assert!(!o.status.success());
+    assert!(o.stdout.is_empty());
+}
+
+#[test]
+fn keys_json_roundtrip() {
+    let e = Env::new();
+    let a = e.json(
+        &[
+            "keys",
+            "add",
+            "work",
+            "--api-key-stdin",
+            "--description",
+            "d",
+            "--json",
+        ],
+        "sk-abcdefgh-9999\n",
+    );
+    assert_eq!(a["name"], "work");
+    assert!(a["path"].as_str().unwrap().ends_with("credentials.toml"));
+    assert!(!a.to_string().contains("9999") || !a.to_string().contains("sk-abcdefgh"));
+
+    let u = e.json(
+        &[
+            "keys",
+            "use",
+            "work",
+            "--profile",
+            "p",
+            "--project",
+            "--json",
+        ],
+        "",
+    );
+    assert_eq!(u["scope"], "project");
+    assert_eq!(u["profile"], "p");
+    assert_eq!(u["name"], "work");
+
+    let l = e.json(&["keys", "list", "--json"], "");
+    let k = &l["keys"][0];
+    assert_eq!(k["name"], "work");
+    assert_eq!(k["description"], "d");
+    assert_eq!(k["masked"], "…9999");
+    assert!(k["createdAt"].is_string());
+    assert_eq!(k["usedBy"][0], "profile `p` (this project)");
+    assert!(!l.to_string().contains("abcdefgh"));
+
+    let r = e.json(&["keys", "remove", "work", "--json"], "");
+    assert_eq!(r["stillUsedBy"].as_array().unwrap().len(), 1);
+    let l = e.json(&["keys", "list", "--json"], "");
+    assert_eq!(l["keys"], serde_json::json!([]));
+    assert_eq!(l["missing"][0]["name"], "work");
+    assert!(!e
+        .rc(&["keys", "remove", "work", "--json"], "")
+        .status
+        .success());
+}
+
+#[test]
+fn init_json() {
+    let e = Env::new();
+    let r = e.json(&["init", "--minimal", "--json"], "");
+    assert!(r["path"].as_str().unwrap().ends_with("modes.toml"));
+    assert!(r["tasksDiscovered"].is_u64());
+    assert_eq!(r["modes"]["status"], "ready");
+    assert!(r["modes"]["modes"].as_array().unwrap().len() >= 2);
+    // refuses to overwrite without --force
+    assert!(!e.rc(&["init", "--json"], "").status.success());
+    assert_eq!(
+        e.json(&["init", "--json", "--force"], "")["modes"]["status"],
+        "ready"
+    );
+}
+
+/// Serve one canned HTTP response; the request head is sent back on the channel.
+fn serve_once(status: &str, body: &str) -> (String, std::sync::mpsc::Receiver<String>) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1", l.local_addr().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (status, body) = (status.to_string(), body.to_string());
+    std::thread::spawn(move || {
+        let (mut s, _) = l.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let n = s.read(&mut buf).unwrap();
+        tx.send(String::from_utf8_lossy(&buf[..n]).to_string())
+            .unwrap();
+        let _ = write!(
+            s,
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    });
+    (url, rx)
+}
+
+#[test]
+fn models_json_sorted_with_stdin_key() {
+    let e = Env::new();
+    let (url, rx) = serve_once("200 OK", r#"{"data":[{"id":"zeta"},{"id":"alpha"}]}"#);
+    let v = e.json(
+        &[
+            "models",
+            "--provider",
+            "openai",
+            "--base-url",
+            &url,
+            "--api-key-stdin",
+            "--json",
+        ],
+        "sk-live-1\n",
+    );
+    assert_eq!(
+        v,
+        serde_json::json!({"models":[{"id":"alpha","displayName":null},{"id":"zeta","displayName":null}]})
+    );
+    let head = rx.recv().unwrap().to_lowercase();
+    assert!(head.contains("authorization: bearer sk-live-1"), "{head}");
+    // the key is never stored
+    assert!(!e.cfg.path().join("credentials.toml").exists());
+}
+
+#[test]
+fn models_by_env_and_name_and_errors() {
+    let e = Env::new();
+    let (url, rx) = serve_once("200 OK", r#"{"data":[{"id":"m"}]}"#);
+    let v = e.json(
+        &[
+            "models",
+            "--provider",
+            "openai",
+            "--base-url",
+            &url,
+            "--api-key-env",
+            "RC_TEST_PRESENT",
+            "--json",
+        ],
+        "",
+    );
+    assert_eq!(v["models"][0]["id"], "m");
+    assert!(rx.recv().unwrap().to_lowercase().contains("bearer 1"));
+
+    e.json(
+        &["keys", "add", "k", "--api-key-stdin", "--json"],
+        "named-secret\n",
+    );
+    let (url, rx) = serve_once("200 OK", r#"{"data":[]}"#);
+    let v = e.json(
+        &[
+            "models",
+            "--provider",
+            "openai",
+            "--base-url",
+            &url,
+            "--api-key-name",
+            "k",
+            "--json",
+        ],
+        "",
+    );
+    assert_eq!(v["models"], serde_json::json!([]));
+    assert!(rx.recv().unwrap().contains("named-secret"));
+
+    let (url, _rx) = serve_once("401 Unauthorized", r#"{"error":{"message":"bad key"}}"#);
+    let o = e.rc(
+        &[
+            "models",
+            "--provider",
+            "openai",
+            "--base-url",
+            &url,
+            "--json",
+        ],
+        "",
+    );
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("bad key"));
+    let o = e.rc(
+        &[
+            "models",
+            "--provider",
+            "openai",
+            "--api-key-env",
+            "RC_UNSET_VAR",
+            "--json",
+        ],
+        "",
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("RC_UNSET_VAR is not set"));
+}

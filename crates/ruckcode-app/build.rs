@@ -15,6 +15,16 @@ fn main() {
             "wsl_install_rc",
             "wsl_translate_path",
             "wsl_to_windows_path",
+            "setup_presets",
+            "setup_state",
+            "list_models",
+            "setup_preview",
+            "setup_apply",
+            "keys_list",
+            "keys_add",
+            "keys_remove",
+            "keys_use",
+            "init_modes",
         ])),
     )
     .expect("failed to run tauri-build");

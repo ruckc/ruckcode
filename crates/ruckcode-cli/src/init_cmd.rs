@@ -11,8 +11,22 @@ pub async fn run(
     modes: &[String],
     diff: bool,
     force: bool,
+    json: bool,
 ) -> Result<()> {
     let dir = cli.project_dir()?;
+    if json && !diff {
+        let r = ruckcode_core::setup_api::init_modes(
+            &dir,
+            &ruckcode_core::setup_api::InitInput {
+                minimal,
+                modes: modes.to_vec(),
+                force,
+            },
+        )
+        .await?;
+        println!("{}", serde_json::to_string(&r)?);
+        return Ok(());
+    }
     let tasks = ruckcode_mise::discover(&dir).await;
     let opts = InitOptions {
         minimal,

@@ -8,7 +8,8 @@
     planOpen = $bindable(),
     sidebarOpen = $bindable(),
     onmode,
-    onconfig
+    onconfig,
+    onsettings
   }: {
     model: ChatModel | null;
     title: string;
@@ -17,6 +18,7 @@
     sidebarOpen: boolean;
     onmode: (id: string) => void;
     onconfig: (id: string, value: string) => void;
+    onsettings: () => void;
   } = $props();
 
   const modelOpt = $derived(
@@ -92,6 +94,7 @@
       </div>
     {/if}
   {/if}
+  <button type="button" class="small toggle" onclick={onsettings}>Settings</button>
   <button
     type="button"
     class="small toggle"

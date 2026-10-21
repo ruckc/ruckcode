@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { LineTransport } from '../acp/transport';
+import type { SetupApi } from './setup';
 import type { RcStatus, WslApi, WslDistro } from './wsl';
 
 /** True when running inside the Tauri webview (as opposed to a plain browser). */
@@ -93,4 +94,49 @@ export const tauriWsl: WslApi = {
     return invoke<RcStatus>('wsl_install_rc', { distro, onProgress: onProgressChannel });
   },
   translatePath: (distro, path) => invoke<string>('wsl_translate_path', { distro, path })
+};
+
+/** Setup and keys through the Tauri backend (local core, or `rc --json` inside WSL). */
+export const tauriSetup: SetupApi = {
+  presets: () => invoke('setup_presets'),
+  state: (t) => invoke('setup_state', { project: t.project, distro: t.distro ?? null }),
+  listModels: async (t, req) => {
+    const r = await invoke<{ models: { id: string; displayName: string | null }[] }>(
+      'list_models',
+      {
+        project: t.project,
+        distro: t.distro ?? null,
+        kind: req.kind,
+        baseUrl: req.baseUrl,
+        auth: req.auth ?? null
+      }
+    );
+    return r.models;
+  },
+  preview: (t, plan) =>
+    invoke('setup_preview', { project: t.project, distro: t.distro ?? null, plan }),
+  apply: (t, plan) => invoke('setup_apply', { project: t.project, distro: t.distro ?? null, plan }),
+  keysList: (t) => invoke('keys_list', { project: t.project, distro: t.distro ?? null }),
+  keysAdd: async (t, name, secret, description) => {
+    await invoke('keys_add', {
+      project: t.project,
+      distro: t.distro ?? null,
+      name,
+      secret,
+      description: description ?? null
+    });
+  },
+  keysRemove: (t, name) =>
+    invoke('keys_remove', { project: t.project, distro: t.distro ?? null, name }),
+  keysUse: async (t, name, profile, projectScope) => {
+    await invoke('keys_use', {
+      project: t.project,
+      distro: t.distro ?? null,
+      name,
+      profile,
+      projectScope
+    });
+  },
+  initModes: (t, opts) =>
+    invoke('init_modes', { project: t.project, distro: t.distro ?? null, opts: opts ?? null })
 };

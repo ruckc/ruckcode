@@ -12,15 +12,30 @@ use crate::Cli;
 #[derive(Subcommand, Debug)]
 pub enum KeysAction {
     /// List named keys (masked) and which profiles reference them.
-    List,
+    List {
+        /// JSON: `{"keys":[{name,description,createdAt,masked,usedBy}],"missing":[{name,usedBy}]}`.
+        #[arg(long)]
+        json: bool,
+    },
     /// Add or replace a named key; the secret is read from stdin or a masked prompt.
     Add {
         name: String,
         #[arg(long)]
         description: Option<String>,
+        /// Read the secret from stdin (the default when stdin is not a terminal).
+        #[arg(long)]
+        api_key_stdin: bool,
+        /// JSON result: `{"name","path"}`.
+        #[arg(long)]
+        json: bool,
     },
     /// Remove a named key.
-    Remove { name: String },
+    Remove {
+        name: String,
+        /// JSON result: `{"name","stillUsedBy":[...]}`.
+        #[arg(long)]
+        json: bool,
+    },
     /// Point a profile at a named key (in your config, or this project's with --project).
     Use {
         name: String,
@@ -30,14 +45,17 @@ pub enum KeysAction {
         /// Save in .ruckcode/config.toml (this project only).
         #[arg(long)]
         project: bool,
+        /// JSON result: `{"name","profile","scope","path"}`.
+        #[arg(long)]
+        json: bool,
     },
 }
 
 /// Read a secret without echo when stdin is a terminal, else from the piped stdin.
-fn read_secret(prompt: &str) -> Result<String> {
+fn read_secret(prompt: &str, force_stdin: bool) -> Result<String> {
     use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    if !std::io::stdin().is_terminal() {
+    if force_stdin || !std::io::stdin().is_terminal() {
         let mut s = String::new();
         std::io::stdin().read_to_string(&mut s)?;
         return Ok(s.trim().to_string());
@@ -71,7 +89,11 @@ fn read_secret(prompt: &str) -> Result<String> {
 pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
     let project = cli.project_dir()?;
     match action {
-        KeysAction::List => {
+        KeysAction::List { json: true } => {
+            let l = ruckcode_core::setup_api::keys_list(None, &project)?;
+            println!("{}", serde_json::to_string(&l)?);
+        }
+        KeysAction::List { json: false } => {
             let list = keys::list_keys(None)?;
             let refs = keys::key_references(None, &project);
             if list.is_empty() {
@@ -106,16 +128,47 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
                 }
             }
         }
-        KeysAction::Add { name, description } => {
+        KeysAction::Add {
+            name,
+            description,
+            api_key_stdin,
+            json,
+        } => {
             keys::validate_key_name(name)?;
-            let secret = read_secret(&format!("API key for `{name}` (hidden): "))?;
+            let mut secret =
+                read_secret(&format!("API key for `{name}` (hidden): "), *api_key_stdin)?;
             if secret.is_empty() {
                 bail!("no key entered");
             }
-            let p = keys::add_key(None, name, &secret, description.as_deref())?;
-            println!("saved key `{name}` to {}", p.display());
+            let r = ruckcode_core::setup_api::keys_add(None, name, &secret, description.as_deref());
+            zeroize::Zeroize::zeroize(&mut secret);
+            let r = r?;
+            if *json {
+                println!("{}", serde_json::to_string(&r)?);
+            } else {
+                println!("saved key `{name}` to {}", r.path);
+            }
         }
-        KeysAction::Remove { name } => {
+        KeysAction::Remove { name, json: true } => {
+            let r = ruckcode_core::setup_api::keys_remove(None, &project, name)?;
+            println!("{}", serde_json::to_string(&r)?);
+        }
+        KeysAction::Use {
+            name,
+            profile,
+            project: in_project,
+            json: true,
+        } => {
+            let r = ruckcode_core::setup_api::keys_use(
+                None,
+                &project,
+                name,
+                profile.as_deref(),
+                *in_project,
+            )?;
+            println!("{}", serde_json::to_string(&r)?);
+        }
+        KeysAction::Remove { name, json: false } => {
             let refs: Vec<String> = keys::key_references(None, &project)
                 .into_iter()
                 .filter(|(n, _)| n == name)
@@ -133,6 +186,7 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
             name,
             profile,
             project: in_project,
+            json: false,
         } => {
             if !keys::list_keys(None)?.iter().any(|k| k.name == *name) {
                 bail!("no key named `{name}`; add it with `rc keys add {name}`");

@@ -7,7 +7,10 @@
   import PlanPanel from '../lib/components/PlanPanel.svelte';
   import Sidebar from '../lib/components/Sidebar.svelte';
   import TopBar from '../lib/components/TopBar.svelte';
-  import { browseFolder, getPlatform, getWsl, hostMode } from '../lib/host';
+  import { browseFolder, getPlatform, getSetup, getWsl, hostMode } from '../lib/host';
+  import type { SettingsTab } from '../lib/state/wizard.svelte';
+  import SettingsDialog from '../lib/components/SettingsDialog.svelte';
+  import type { SetupApi, SetupTarget } from '../lib/host/setup';
   import { ChatController } from '../lib/state/chat.svelte';
   import {
     loadRecent,
@@ -31,6 +34,14 @@
   let sidebarOpen = $state(true);
   let planOpen = $state(true);
   let composer: { focus(): void } | undefined = $state();
+  let settings = $state<{
+    api: SetupApi;
+    target: SetupTarget;
+    tab: SettingsTab;
+    firstRun: boolean;
+  } | null>(null);
+  /** A project whose connection waits for the first-run dialog to close. */
+  let pendingConnect: Project | null = null;
 
   onMount(() => {
     void getPlatform().then((p) => {
@@ -58,7 +69,7 @@
   const active = $derived(chat.active);
   const dialogOpen = $derived(!!chat.permission || !!chat.question);
 
-  async function connectProject(project: Project) {
+  async function connectProject(project: Project, skipOnboarding = false) {
     const path = project.path.trim();
     if (!path) return;
     let p: Project = { ...project, path };
@@ -79,12 +90,64 @@
     current = p;
     recent = pushRecent(recent, p);
     saveRecent(recent);
+    if (!skipOnboarding && (await firstRunCheck(p))) {
+      pendingConnect = p;
+      return;
+    }
     await chat.connect({
       cwd: p.path,
       host: p.host,
       rcPath: p.host === 'subprocess' ? p.rcPath : undefined,
       distro: p.host === 'wsl' ? p.distro : undefined
     });
+  }
+
+  const targetOf = (p: { path: string; host: ProjectHost; distro?: string }): SetupTarget => ({
+    project: p.path,
+    distro: p.host === 'wsl' ? p.distro : undefined
+  });
+
+  /** Opens the setup wizard when the project's host has no usable profile. */
+  async function firstRunCheck(p: Project): Promise<boolean> {
+    if (mode === 'none') return false;
+    try {
+      const api = await getSetup();
+      const target = targetOf(p);
+      if (!(await api.state(target)).needsOnboarding) return false;
+      settings = { api, target, tab: 'providers', firstRun: true };
+      return true;
+    } catch {
+      return false; // cannot tell (e.g. no rc yet): just connect
+    }
+  }
+
+  async function openSettings(tab: SettingsTab = 'providers') {
+    const p: Project = current ?? { path: cwd.trim(), host, distro: distro || undefined };
+    let path = p.path;
+    if (!current && p.host === 'wsl' && p.distro) {
+      try {
+        path = await (await getWsl()).translatePath(p.distro, path);
+      } catch {
+        // keep as typed
+      }
+    }
+    settings = { api: await getSetup(), target: targetOf({ ...p, path }), tab, firstRun: false };
+  }
+
+  function closeSettings() {
+    settings = null;
+    const p = pendingConnect;
+    pendingConnect = null;
+    if (p) void connectProject(p, true);
+  }
+
+  function reconnectAfterSetup() {
+    settings = null;
+    const p = pendingConnect;
+    pendingConnect = null;
+    if (p) void connectProject(p, true);
+    else if (chat.status === 'connected' || chat.status === 'lost') void chat.reconnect();
+    else if (current) void connectProject(current, true);
   }
 
   async function browse() {
@@ -168,6 +231,7 @@
       bind:sidebarOpen
       onmode={(id) => chat.setMode(id)}
       onconfig={(id, v) => chat.setConfig(id, v)}
+      onsettings={() => openSettings()}
     />
 
     {#if mode === 'none'}
@@ -221,6 +285,17 @@
     <div class="planp"><PlanPanel plan={active?.model.plan ?? []} /></div>
   {/if}
 </div>
+
+{#if settings}
+  <SettingsDialog
+    api={settings.api}
+    target={settings.target}
+    bind:tab={settings.tab}
+    firstRun={settings.firstRun}
+    onclose={closeSettings}
+    onreconnect={reconnectAfterSetup}
+  />
+{/if}
 
 {#if chat.permission}
   {#key chat.permission}

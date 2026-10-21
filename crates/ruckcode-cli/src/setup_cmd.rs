@@ -5,6 +5,8 @@ use clap::Args;
 use ruckcode_core::config::Profile;
 use ruckcode_core::keys::{self, KeyScope};
 use ruckcode_core::setup::{self, NewKey, SetupPlan, PRESETS};
+use ruckcode_core::setup_api;
+use zeroize::Zeroize;
 
 use crate::Cli;
 
@@ -46,20 +48,82 @@ pub struct SetupArgs {
     /// Do not make this the default profile.
     #[arg(long)]
     pub no_default: bool,
+    /// Print the current setup state as JSON (profiles, named keys, env var presence, modes) and
+    /// exit. Never contains a secret.
+    #[arg(long)]
+    pub json_state: bool,
+    /// Read the whole plan as JSON from stdin (see docs: `PlanInput`), including a new key's
+    /// secret, and apply it. Implies --non-interactive.
+    #[arg(long)]
+    pub plan_stdin: bool,
+    /// With --non-interactive/--plan-stdin: print the diff of what would be written and write
+    /// nothing.
+    #[arg(long)]
+    pub preview: bool,
+    /// With --non-interactive/--plan-stdin: print the report (or, with --preview, the diff) as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl SetupArgs {
+    /// True when `rc setup` opens the terminal wizard.
+    pub fn interactive(&self) -> bool {
+        !(self.non_interactive || self.json_state || self.plan_stdin)
+    }
 }
 
 pub async fn run(cli: &Cli, args: &SetupArgs) -> Result<()> {
-    if !args.non_interactive {
+    if args.interactive() {
         return crate::tui::setup::runner::standalone(cli).await;
     }
     let project = cli.project_dir()?;
-    let plan = build_plan(args, || {
+    if args.json_state {
+        let st = setup_api::state(&project, None, &setup::process_env);
+        println!("{}", serde_json::to_string(&st)?);
+        return Ok(());
+    }
+    let read_stdin = || {
         let mut s = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)?;
         Ok(s)
-    })?;
-    let report = setup::apply(&plan, None, &project)?;
-    println!("{}", crate::tui::setup::runner::summary(&report));
+    };
+    let mut plan = if args.plan_stdin {
+        let mut text = read_stdin()?;
+        let parsed = serde_json::from_str::<setup_api::PlanInput>(&text);
+        text.zeroize();
+        parsed
+            .context("--plan-stdin: invalid plan JSON")?
+            .into_plan()?
+    } else {
+        build_plan(args, read_stdin)?
+    };
+    let result = run_plan(args, &plan, &project);
+    setup_api::wipe_plan(&mut plan);
+    result
+}
+
+fn run_plan(args: &SetupArgs, plan: &SetupPlan, project: &std::path::Path) -> Result<()> {
+    if args.preview {
+        let diff = setup::preview(plan, None, project)?;
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string(&setup_api::PreviewView { diff })?
+            );
+        } else {
+            print!("{diff}");
+        }
+        return Ok(());
+    }
+    let report = setup::apply(plan, None, project)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string(&setup_api::ReportView::from(&report))?
+        );
+    } else {
+        println!("{}", crate::tui::setup::runner::summary(&report));
+    }
     Ok(())
 }
 

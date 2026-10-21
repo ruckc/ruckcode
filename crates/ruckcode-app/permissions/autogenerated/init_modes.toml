@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-init-modes"
+description = "Enables the init_modes command without any pre-configured scope."
+commands.allow = ["init_modes"]
+
+[[permission]]
+identifier = "deny-init-modes"
+description = "Denies the init_modes command without any pre-configured scope."
+commands.deny = ["init_modes"]

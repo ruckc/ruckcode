@@ -2,11 +2,16 @@
 //! the SvelteKit UI (the ACP client lives in TypeScript, see `app/`).
 
 mod host;
+mod setup;
 mod wsl;
 
 use host::{AgentEvent, ConnectParams, HostKind, Hosts};
+use ruckcode_core::setup_api::{InitInput, ModelsAuth, PlanInput};
+use serde_json::Value;
+use setup::Target;
 use tauri::ipc::Channel;
 use tauri::State;
+use zeroize::Zeroizing;
 
 /// Start an agent for `cwd` and stream its events to `on_event`: every ACP line, then a final
 /// `exit` event when the agent ends. Returns the connection id.
@@ -94,6 +99,123 @@ fn wsl_to_windows_path(distro: String, path: String) -> Result<String, String> {
     wsl::linux_to_windows(&path, &distro)
 }
 
+// ---- setup and keys -------------------------------------------------------------------------
+//
+// `project` is a local path or (with `distro`) a Linux path inside that WSL2 distro, where the same
+// features then run through `rc ... --json`. Secrets are accepted only by `list_models`
+// (`auth.secret`), `setup_preview`/`setup_apply` (`plan.newKey.secret`) and `keys_add`; they are
+// zeroized when dropped and are never logged or returned.
+
+#[tauri::command]
+fn setup_presets() -> Result<Value, String> {
+    setup::presets()
+}
+
+#[tauri::command]
+async fn setup_state(project: String, distro: Option<String>) -> Result<Value, String> {
+    setup::state(&Target::from_distro(distro), &project).await
+}
+
+#[tauri::command]
+async fn list_models(
+    project: String,
+    distro: Option<String>,
+    kind: String,
+    base_url: String,
+    auth: Option<ModelsAuth>,
+) -> Result<Value, String> {
+    setup::list_models(
+        &Target::from_distro(distro),
+        &project,
+        &kind,
+        &base_url,
+        auth,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn setup_preview(
+    project: String,
+    distro: Option<String>,
+    plan: PlanInput,
+) -> Result<Value, String> {
+    setup::setup_plan(&Target::from_distro(distro), &project, plan, true).await
+}
+
+#[tauri::command]
+async fn setup_apply(
+    project: String,
+    distro: Option<String>,
+    plan: PlanInput,
+) -> Result<Value, String> {
+    setup::setup_plan(&Target::from_distro(distro), &project, plan, false).await
+}
+
+#[tauri::command]
+async fn keys_list(project: String, distro: Option<String>) -> Result<Value, String> {
+    setup::keys_list(&Target::from_distro(distro), &project).await
+}
+
+#[tauri::command]
+async fn keys_add(
+    project: String,
+    distro: Option<String>,
+    name: String,
+    secret: String,
+    description: Option<String>,
+) -> Result<Value, String> {
+    setup::keys_add(
+        &Target::from_distro(distro),
+        &project,
+        &name,
+        Zeroizing::new(secret),
+        description.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn keys_remove(
+    project: String,
+    distro: Option<String>,
+    name: String,
+) -> Result<Value, String> {
+    setup::keys_remove(&Target::from_distro(distro), &project, &name).await
+}
+
+#[tauri::command]
+async fn keys_use(
+    project: String,
+    distro: Option<String>,
+    name: String,
+    profile: Option<String>,
+    project_scope: bool,
+) -> Result<Value, String> {
+    setup::keys_use(
+        &Target::from_distro(distro),
+        &project,
+        &name,
+        profile.as_deref(),
+        project_scope,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn init_modes(
+    project: String,
+    distro: Option<String>,
+    opts: Option<InitInput>,
+) -> Result<Value, String> {
+    setup::init_modes(
+        &Target::from_distro(distro),
+        &project,
+        opts.unwrap_or_default(),
+    )
+    .await
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -108,7 +230,17 @@ pub fn run() {
             wsl_check_rc,
             wsl_install_rc,
             wsl_translate_path,
-            wsl_to_windows_path
+            wsl_to_windows_path,
+            setup_presets,
+            setup_state,
+            list_models,
+            setup_preview,
+            setup_apply,
+            keys_list,
+            keys_add,
+            keys_remove,
+            keys_use,
+            init_modes
         ])
         .run(tauri::generate_context!())
         .expect("error while running ruckcode app");

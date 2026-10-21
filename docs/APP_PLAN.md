@@ -93,7 +93,8 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
    sessions. See "Milestone 2 notes" below.
 3. **WSL2 host. Done.** Distro discovery, `rc` provisioning inside WSL, path translation, and a
    stdio relay. See "Milestone 3 notes" below.
-4. **Setup and keys UI**, including the JSON outputs for the CLI subcommands.
+4. **Setup and keys UI. Done.** Settings dialog with the setup wizard, keys manager and project tab,
+   plus the JSON outputs for the CLI subcommands. See "Milestone 4 notes" below.
 5. **Transcript browser.**
 6. **Mode/hook editor**, including the new `rc modes` subcommand.
 7. **Release bundles** in CI, and documentation.
@@ -224,6 +225,51 @@ Built as planned, with these deviations and details:
   --locked` and `cargo test` for the shell, so the `cfg(windows)` code is compiled for real.
 - **Not verifiable without Windows.** Real `wsl.exe` output and quoting, `CREATE_NO_WINDOW`,
   the dialog on `\\wsl.localhost`, and WebView2 behaviour. See the README for a manual checklist.
+
+## Milestone 4 notes
+
+- **Shared backend.** `ruckcode_core::setup_api` (new) holds every JSON shape (camelCase) and the
+  logic behind them: `presets`, `state`, `keys_list/add/remove/use`, `PlanInput` -> `SetupPlan`,
+  `preview`/`apply`, `list_models` (auth `env` | `keyName` | `secret`), `init_modes` (mise discovery
+  included). The `rc` CLI and the Tauri commands both call it, so local and WSL answers are identical.
+  Input secrets (`NewKeyInput`, `ModelsAuth::Secret`) are zeroized on drop, redacted in `Debug`, and
+  no output type contains one; the plan is wiped after `apply`.
+- **Tauri commands** (each has an `allow-*` permission in the capability): `setup_presets`,
+  `setup_state`, `list_models`, `setup_preview`, `setup_apply`, `keys_list`, `keys_add`, `keys_remove`,
+  `keys_use`, `init_modes`. All but `setup_presets` take `project` and `distro?`. With a distro they run
+  `wsl.exe -d D --cd <project> -- sh -lc 'PATH=$HOME/.local/bin:$PATH; exec rc <args>'` (same shape as
+  the agent start; `crates/ruckcode-app/src/setup.rs`), read the JSON from stdout (last line starting
+  with `{`; a failure uses the `rc: ...` line of stderr), and pass secrets and the plan on stdin only.
+  The subprocess host uses the local core (it has no distro).
+- **New CLI surface** (see README): `rc setup --json-state`, `--plan-stdin` (whole plan as JSON on
+  stdin), `--preview`, `--json` (also with the existing `--non-interactive` flags), `rc models`,
+  `rc keys list|add|remove|use --json`, `rc keys add --api-key-stdin`, `rc init --json`.
+  Deviation from the plan text: the app uses `--plan-stdin` rather than the flag form because a new
+  key's secret and the per-mode choices are easier to pass as one JSON document on stdin.
+- **UI.** Settings button in the top bar opens a modal with tabs Providers & models (wizard), API keys
+  and Project (arrow keys switch tabs, Esc closes). The wizard is a state machine
+  (`state/wizard.svelte.ts`) with the TUI's steps: provider, endpoint, auth (env var with set/unset
+  indicator, saved key, new masked key with user/project scope, none), profile (overwrite
+  confirmation), models (spinner, retry, manual entry, filter, select all, default), per-mode models
+  (dropdowns over every profile's models plus "Profile default"; only changed modes are written; offers
+  `rc init` when modes.toml is missing), review (diff) and save, then offers to reconnect the agent.
+  The new key's secret is wiped from state once saved (kept on a failed save so it can be retried) and
+  the keys form clears its field on submit, success or not.
+- **First run.** On Connect the app asks `setup_state`; `needsOnboarding` (no user config and no
+  `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, the TUI's rule) opens the wizard instead of connecting. Closing
+  it still connects, so users with another setup are never blocked; "Reconnect the agent now" connects
+  (or reconnects, resuming sessions) with the new config.
+- **Mock mode.** `FakeSetup` (`host/fake-setup.ts`) implements everything in memory. `?setup=fresh`
+  starts with no profile and no modes.toml (first run); `?setupdelay=<ms>` sets the latency. Model lists:
+  Anthropic, OpenAI, Ollama and OpenRouter URLs answer; a URL containing `broken` or `fail`, or the
+  secret `bad`, returns HTTP 401; an unset env var or unknown key name fails too. It works with
+  `&platform=windows` and a WSL host (the distro is passed through as the target).
+- **Tests.** Rust: `setup_api` unit tests, `setup.rs` (argv/stdin construction, output parsing, local
+  commands, a stand-in `wsl.exe` + fake `rc` proving secrets reach `rc` only on stdin), CLI JSON
+  integration tests (`crates/ruckcode-cli/tests/json_cli.rs`, with a tiny local HTTP server for
+  `rc models`). vitest: wizard state machine, keys form and dialog. Playwright: `e2e/setup.spec.ts`.
+- **Not verifiable without Windows.** The real `wsl.exe` quoting for these calls (same helper shape as
+  the agent start).
 
 ## Open items for later
 
