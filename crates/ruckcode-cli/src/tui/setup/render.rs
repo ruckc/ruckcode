@@ -129,7 +129,7 @@ pub fn render(w: &SetupWizard, f: &mut Frame) {
 fn hint(w: &SetupWizard) -> String {
     let base = "ctrl+c abort · esc back";
     match w.step {
-        Step::Endpoint => format!("tab cycle suggestions · enter check · {base}"),
+        Step::Endpoint => format!("enter check · {base}"),
         Step::ProfileName => format!("enter continue · {base}"),
         Step::ApiKey => format!("↑/↓ option · type/paste the key · ←/→ choose saved key · enter continue · {base}"),
         Step::Check => match &w.check {
@@ -156,17 +156,7 @@ fn endpoint_lines(w: &SetupWizard) -> (Vec<Line<'static>>, Option<(usize, usize)
         ),
         Line::default(),
         f,
-        Line::default(),
-        Line::from(Span::styled("Suggestions (tab to fill):", dim())),
     ];
-    let current = setup::suggestion_for_url(w.endpoint.trimmed());
-    for s in setup::ENDPOINT_SUGGESTIONS {
-        let on = current == Some(s);
-        l.push(Line::from(vec![
-            Span::styled(format!("{}{:<11}", marker(on), s.label), sel(on)),
-            Span::styled(s.url.to_string(), dim()),
-        ]));
-    }
     l.extend(err_line(w));
     if w.error.is_none() && !w.endpoint.trimmed().is_empty() {
         if let Err(e) = setup::validate_endpoint(w.endpoint.trimmed()) {

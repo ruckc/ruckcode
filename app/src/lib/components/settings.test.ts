@@ -110,7 +110,7 @@ describe('SettingsDialog', () => {
 });
 
 describe('SetupWizardDialog', () => {
-  it('shows the first-run welcome and walks key -> endpoint with suggestions and validation', async () => {
+  it('shows the first-run welcome and walks key -> endpoint with validation and no suggestions', async () => {
     const api = new FakeSetup({ fresh: true, delayMs: 0 });
     render(SetupWizardDialog, {
       props: { api, target, firstRun: true, onclose: () => {}, onreconnect: () => {} }
@@ -127,18 +127,15 @@ describe('SetupWizardDialog', () => {
     expect(next).toBeEnabled();
     await fireEvent.click(next);
     const url = await screen.findByLabelText('Endpoint URL');
-    expect(url).toHaveValue('https://openrouter.ai/api/v1');
-    // The URL is required and validated inline; chips fill it.
-    await fireEvent.input(url, { target: { value: '' } });
+    expect(url).toHaveValue(''); // never pre-filled, no suggestions
     expect(next).toBeDisabled();
+    for (const label of ['Anthropic', 'OpenAI', 'OpenRouter', 'Ollama', 'LM Studio', 'vLLM'])
+      expect(screen.queryByRole('button', { name: label })).toBeNull();
     await fireEvent.input(url, { target: { value: 'localhost:11434' } });
     expect(screen.getByTestId('endpoint-error')).toHaveTextContent(/http/);
     expect(next).toBeDisabled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Ollama' }));
-    expect(url).toHaveValue('http://localhost:11434/v1');
+    await fireEvent.input(url, { target: { value: 'http://localhost:11434/v1' } });
     expect(screen.getByTestId('endpoint-error')).toHaveTextContent('');
     expect(next).toBeEnabled();
-    for (const label of ['Anthropic', 'OpenAI', 'OpenRouter', 'LM Studio', 'vLLM'])
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   });
 });

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { STEPS, STEP_LABEL, choiceValue, type SetupWizard } from '../state/wizard.svelte';
-  import { suggestionForUrl } from '../host/setup';
   import DiffText from './DiffText.svelte';
 
   let {
@@ -16,8 +15,6 @@
     e.preventDefault();
     void w.next();
   }
-
-  const currentSuggestion = $derived(suggestionForUrl(w.suggestions, w.endpoint));
 
   const missingNames = $derived(w.state.keys.missing.map((m) => m.name));
 </script>
@@ -152,39 +149,19 @@
             data-autofocus
             value={w.endpoint}
             oninput={(e) => w.setEndpoint(e.currentTarget.value)}
-            placeholder="https://api.example.com/v1"
+            placeholder="https://"
             spellcheck="false"
             autocomplete="off"
             aria-required="true"
             aria-invalid={w.endpointError ? 'true' : undefined}
             aria-describedby="endpoint-msg"
-            list="endpoint-suggestions"
           />
         </label>
-        <datalist id="endpoint-suggestions">
-          {#each w.suggestions as s (s.id)}
-            <option value={s.url}>{s.label}</option>
-          {/each}
-        </datalist>
         <p id="endpoint-msg" class="problem" role="status" data-testid="endpoint-error">
           {w.endpointError ?? ''}
         </p>
-        <div class="chips" role="group" aria-label="Endpoint suggestions">
-          {#each w.suggestions as s (s.id)}
-            <button
-              type="button"
-              class="chip"
-              class:on={currentSuggestion?.id === s.id}
-              title={s.url}
-              onclick={() => w.setEndpoint(s.url)}
-            >
-              {s.label}
-            </button>
-          {/each}
-        </div>
         <p class="muted">
-          Anthropic or any OpenAI-compatible server (OpenAI, OpenRouter, Ollama, LM Studio, vLLM,
-          ...). The next step checks which API answers.
+          Anthropic or any OpenAI-compatible server. The next step checks which API answers.
         </p>
       {:else if w.step === 'check'}
         <p class="muted">Checking <code>{w.endpoint}</code></p>
@@ -542,20 +519,6 @@
     border-color: var(--err);
     display: grid;
     gap: 4px;
-  }
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .chip {
-    border-radius: 999px;
-    padding: 2px 10px;
-    font-size: 12px;
-  }
-  .chip.on {
-    border-color: var(--accent);
-    color: var(--accent);
   }
   .ok {
     color: var(--ok);

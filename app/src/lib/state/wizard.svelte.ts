@@ -2,7 +2,6 @@ import {
   PROFILE_NAME_RE,
   isLocalEndpoint,
   suggestedProfileName,
-  suggestionForKey,
   suggestionForUrl,
   validateEndpoint,
   type ApiKind,
@@ -249,13 +248,9 @@ export class SetupWizard {
     this.invalidateCheck();
   }
 
-  /** The pasted key changed: re-check before moving on, and hint the endpoint from its shape. */
+  /** The pasted key changed: re-check before moving on. */
   keyEdited() {
     this.invalidateCheck();
-    if (!this.endpointTouched) {
-      const s = suggestionForKey(this.suggestions, this.newKeySecret.trim());
-      this.endpoint = s?.url ?? '';
-    }
   }
 
   setEndpoint(url: string) {

@@ -39,18 +39,16 @@ test('first run: paste a key, pick the URL, check compatibility, then save a pro
   await expect(next(page)).toBeEnabled();
   await next(page).click();
 
-  // 2. Endpoint URL: hinted from the key shape, required, validated inline, chips fill it.
+  // 2. Endpoint URL: empty, required, validated inline; no suggestions.
   const url = dialog(page).getByLabel('Endpoint URL');
-  await expect(url).toHaveValue('https://openrouter.ai/api/v1');
-  await url.fill('');
+  await expect(url).toHaveValue('');
   await expect(next(page)).toBeDisabled();
   await url.fill('openrouter.ai/api/v1');
   await expect(dialog(page).getByTestId('endpoint-error')).toContainText('http://');
   await expect(next(page)).toBeDisabled();
   for (const label of ['Anthropic', 'OpenAI', 'OpenRouter', 'Ollama', 'LM Studio', 'vLLM'])
-    await expect(dialog(page).getByRole('button', { name: label, exact: true })).toBeVisible();
-  await dialog(page).getByRole('button', { name: 'OpenRouter', exact: true }).click();
-  await expect(url).toHaveValue('https://openrouter.ai/api/v1');
+    await expect(dialog(page).getByRole('button', { name: label, exact: true })).toHaveCount(0);
+  await url.fill('https://openrouter.ai/api/v1');
   await next(page).click();
 
   // 3. Compatibility check detects the API flavor.
@@ -93,7 +91,7 @@ test('first run: paste a key, pick the URL, check compatibility, then save a pro
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
 });
 
-test('a local server needs no key: pick the Ollama suggestion', async ({ page }) => {
+test('a local server needs no key: type the Ollama URL', async ({ page }) => {
   await normal(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
@@ -102,7 +100,7 @@ test('a local server needs no key: pick the Ollama suggestion', async ({ page })
   await next(page).click();
   await expect(dialog(page).getByLabel('Endpoint URL')).toHaveValue('');
   await expect(next(page)).toBeDisabled();
-  await dialog(page).getByRole('button', { name: 'Ollama', exact: true }).click();
+  await dialog(page).getByLabel('Endpoint URL').fill('http://localhost:11434/v1');
   await next(page).click();
   await expect(dialog(page).getByTestId('check-status')).toContainText(
     'OpenAI-compatible API ✓ (3 models)'

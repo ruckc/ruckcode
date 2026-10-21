@@ -236,8 +236,6 @@ pub struct SetupWizard {
     // 2 endpoint
     pub endpoint: TextInput,
     pub endpoint_touched: bool,
-    /// Index into [`setup::ENDPOINT_SUGGESTIONS`] last filled with Tab.
-    pub suggestion_cursor: usize,
     // 3 check
     pub check: CheckPhase,
     pub generation: u64,
@@ -312,7 +310,6 @@ impl SetupWizard {
             new_key_secret: TextInput::default(),
             endpoint: TextInput::default(),
             endpoint_touched: false,
-            suggestion_cursor: 0,
             check: CheckPhase::Checking,
             generation: 0,
             detected: None,
@@ -447,36 +444,12 @@ impl SetupWizard {
             }
             _ => {}
         }
-        // Hint the endpoint from the shape of the key, unless the user already chose one.
-        if !self.endpoint_touched {
-            if let Some(s) = self
-                .fetch_key()
-                .as_deref()
-                .and_then(setup::suggestion_for_key)
-            {
-                self.endpoint.set(s.url);
-            }
-        }
         self.step = Step::Endpoint;
     }
 
     fn key_endpoint(&mut self, key: KeyEvent) -> Effect {
         match key.code {
             KeyCode::Esc => self.back(),
-            KeyCode::Tab | KeyCode::BackTab => {
-                let n = setup::ENDPOINT_SUGGESTIONS.len();
-                let at = setup::suggestion_for_url(self.endpoint.trimmed())
-                    .and_then(|s| setup::ENDPOINT_SUGGESTIONS.iter().position(|x| x == s));
-                self.suggestion_cursor = match (key.code, at) {
-                    (KeyCode::Tab, Some(i)) => (i + 1) % n,
-                    (KeyCode::Tab, None) => 0,
-                    (_, Some(i)) => (i + n - 1) % n,
-                    (_, None) => n - 1,
-                };
-                self.endpoint
-                    .set(setup::ENDPOINT_SUGGESTIONS[self.suggestion_cursor].url);
-                self.endpoint_touched = true;
-            }
             KeyCode::Enter => match setup::validate_endpoint(self.endpoint.trimmed()) {
                 Err(e) => self.error = Some(e),
                 Ok(u) => {

@@ -26,8 +26,12 @@ async function settle(w: SetupWizard) {
     await new Promise((r) => setTimeout(r, 0));
 }
 
-/** Walk key -> models: paste an OpenRouter key (the URL is hinted), check, land on models. */
-async function toModels(w: SetupWizard, key = 'sk-or-v1-abcdef', url?: string) {
+/** Walk key -> models: paste an OpenRouter key, type its URL, check, land on models. */
+async function toModels(
+  w: SetupWizard,
+  key = 'sk-or-v1-abcdef',
+  url = key ? 'https://openrouter.ai/api/v1' : undefined
+) {
   if (key) {
     w.setAuth('new');
     w.newKeySecret = key;
@@ -87,7 +91,7 @@ describe('endpoint helpers (mirror the Rust core)', () => {
 });
 
 describe('SetupWizard state machine', () => {
-  it('key first: paste a key, the URL is hinted, validated, and checked before models', async () => {
+  it('key first: paste a key, then a required, validated URL, and checked before models', async () => {
     const { w } = await make();
     expect(w.step).toBe('key');
     expect(w.authKind).toBe('new');
@@ -95,7 +99,7 @@ describe('SetupWizard state machine', () => {
     expect(w.problem).toMatch(/Paste your API key/);
     w.newKeySecret = 'sk-ant-api03-zzz';
     w.keyEdited();
-    expect(w.endpoint).toBe('https://api.anthropic.com'); // hinted from the key shape
+    expect(w.endpoint).toBe(''); // never pre-filled
     await w.next();
     expect(w.step).toBe('endpoint');
     // The URL is required and validated inline.

@@ -90,8 +90,9 @@ fn to_check(w: &mut SetupWizard) -> ProbeRequest {
     typ(w, "sk-or-v1-secret-1234");
     press(w, &[KeyCode::Enter]);
     assert_eq!(w.step, Step::Endpoint);
-    // The key shape pre-fills the URL (editable).
-    assert_eq!(w.endpoint.value, "https://openrouter.ai/api/v1");
+    // The URL is never pre-filled: the user types it.
+    assert_eq!(w.endpoint.value, "");
+    typ(w, "https://openrouter.ai/api/v1");
     match press(w, &[KeyCode::Enter]) {
         Effect::Probe(r) => r,
         e => panic!("expected probe, got {e:?}"),
@@ -179,17 +180,13 @@ fn full_walk_key_first_then_url_check_models_name_modes_apply() {
 }
 
 #[test]
-fn key_shape_hints_the_endpoint_but_never_overrides_the_users_choice() {
+fn the_endpoint_is_never_prefilled_and_is_required() {
     let env = Env::new(false);
-    for (key, url) in [
-        ("sk-ant-api03-x", "https://api.anthropic.com"),
-        ("sk-proj-abc", "https://api.openai.com/v1"),
-        ("sk-or-v1-x", "https://openrouter.ai/api/v1"),
-    ] {
+    for key in ["sk-ant-api03-x", "sk-proj-abc", "sk-or-v1-x"] {
         let mut w = env.wizard();
         typ(&mut w, key);
         press(&mut w, &[KeyCode::Enter]);
-        assert_eq!(w.endpoint.value, url);
+        assert_eq!(w.endpoint.value, "", "{key}");
     }
     // Unknown shape: empty, required.
     let mut w = env.wizard();
@@ -209,7 +206,7 @@ fn key_shape_hints_the_endpoint_but_never_overrides_the_users_choice() {
 }
 
 #[test]
-fn endpoint_is_validated_trimmed_and_suggestions_cycle_with_tab() {
+fn endpoint_is_validated_trimmed_and_has_no_suggestions() {
     let env = Env::new(false);
     let mut w = env.wizard();
     press(&mut w, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]); // no key
@@ -222,15 +219,11 @@ fn endpoint_is_validated_trimmed_and_suggestions_cycle_with_tab() {
         assert_eq!(w.step, Step::Endpoint, "{bad}");
         assert!(w.error.is_some(), "{bad}");
     }
-    w.endpoint.set("");
-    press(&mut w, &[KeyCode::Tab]);
-    assert_eq!(w.endpoint.value, "https://api.anthropic.com");
-    for _ in 0..3 {
-        press(&mut w, &[KeyCode::Tab]);
-    }
-    assert_eq!(w.endpoint.value, "http://localhost:11434/v1");
     let out = draw(&w);
-    assert!(out.contains("LM Studio") && out.contains("vLLM"), "{out}");
+    assert!(
+        !out.contains("OpenRouter") && !out.contains("LM Studio"),
+        "{out}"
+    );
     w.endpoint.set("  http://localhost:11434/v1/  ");
     let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
         panic!()
@@ -257,6 +250,7 @@ fn anthropic_flavor_default_url_is_not_stored() {
     let mut w = env.wizard();
     typ(&mut w, "sk-ant-api03-zzz");
     press(&mut w, &[KeyCode::Enter]);
+    typ(&mut w, "https://api.anthropic.com");
     let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
         panic!()
     };
@@ -568,9 +562,10 @@ fn every_step_renders() {
     press(&mut w, &[KeyCode::Enter]);
     let out = draw(&w);
     assert!(
-        out.contains("step 2 of 7") && out.contains("Suggestions"),
+        out.contains("step 2 of 7") && !out.contains("Suggestions"),
         "{out}"
     );
+    typ(&mut w, "https://api.anthropic.com");
     let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
         panic!()
     };
