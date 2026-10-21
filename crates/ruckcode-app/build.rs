@@ -20,6 +20,7 @@ fn main() {
             "setup_presets",
             "setup_state",
             "list_models",
+            "setup_probe",
             "setup_preview",
             "setup_apply",
             "keys_list",

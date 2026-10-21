@@ -37,7 +37,7 @@ Configured as profiles in `~/.config/ruckcode/config.toml`; each mode may set `p
 
 ### Onboarding and keys
 
-`ruckcode_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_core::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (resolution: named key, then `api_key_env`). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
+`ruckcode_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_core::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (no env-var keys; a legacy hand-written `api_key_env` is still read). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
 
 ## Modes
 

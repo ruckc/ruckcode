@@ -1,11 +1,6 @@
 <script lang="ts">
-  import {
-    STEPS,
-    STEP_LABEL,
-    choiceValue,
-    type AuthKind,
-    type SetupWizard
-  } from '../state/wizard.svelte';
+  import { STEPS, STEP_LABEL, choiceValue, type SetupWizard } from '../state/wizard.svelte';
+  import { suggestionForUrl } from '../host/setup';
   import DiffText from './DiffText.svelte';
 
   let {
@@ -22,27 +17,7 @@
     void w.next();
   }
 
-  const authOptions = $derived<{ id: AuthKind; label: string; hint: string; disabled?: boolean }[]>(
-    [
-      {
-        id: 'env',
-        label: 'Environment variable',
-        hint: 'Read the key from the environment at run time'
-      },
-      {
-        id: 'existing',
-        label: 'Saved named key',
-        hint: w.keyNames.length ? 'Use a key from your API keys' : 'No saved keys yet',
-        disabled: w.keyNames.length === 0
-      },
-      {
-        id: 'new',
-        label: 'Add a new named key',
-        hint: 'Stored in credentials.toml (private file)'
-      },
-      { id: 'none', label: 'No key', hint: 'For local servers without authentication' }
-    ]
-  );
+  const currentSuggestion = $derived(suggestionForUrl(w.suggestions, w.endpoint));
 
   const missingNames = $derived(w.state.keys.missing.map((m) => m.name));
 </script>
@@ -93,77 +68,71 @@
     </section>
   {:else}
     <form onsubmit={submit} data-step={w.step}>
-      {#if w.step === 'provider'}
-        <fieldset>
-          <legend>Which provider do you want to use?</legend>
-          {#each w.presets as p (p.id)}
-            <label class="choice">
-              <input
-                type="radio"
-                name="preset"
-                value={p.id}
-                checked={w.preset?.id === p.id}
-                onchange={() => w.choosePreset(p.id)}
-              />
-              <span>{p.label}</span>
-              <span class="muted">{p.baseUrl ?? 'you enter the URL'}</span>
-            </label>
-          {/each}
-        </fieldset>
-      {:else if w.step === 'endpoint'}
-        <label class="field">
-          <span>Endpoint URL</span>
-          <input
-            type="text"
-            data-autofocus
-            bind:value={w.endpoint}
-            placeholder="http://localhost:8000/v1"
-            spellcheck="false"
-            autocomplete="off"
-          />
-        </label>
-        <p class="muted">
-          {w.preset?.kind === 'anthropic' ? 'Anthropic Messages API' : 'OpenAI-compatible API'}.
-          Models are listed from this endpoint in a later step.
-        </p>
-      {:else if w.step === 'auth'}
+      {#if w.step === 'key'}
         <fieldset>
           <legend>How should ruckcode authenticate?</legend>
-          {#each authOptions as o (o.id)}
-            <label class="choice" class:off={o.disabled}>
-              <input
-                type="radio"
-                name="auth"
-                value={o.id}
-                checked={w.authKind === o.id}
-                disabled={o.disabled}
-                onchange={() => w.setAuth(o.id)}
-              />
-              <span>{o.label}</span>
-              <span class="muted">{o.hint}</span>
-            </label>
-          {/each}
-        </fieldset>
-        {#if w.authKind === 'env'}
-          <label class="field">
-            <span>Variable name</span>
-            <input type="text" bind:value={w.envName} spellcheck="false" autocomplete="off" />
+          <label class="choice">
+            <input
+              type="radio"
+              name="auth"
+              value="new"
+              checked={w.authKind === 'new'}
+              onchange={() => w.setAuth('new')}
+            />
+            <span>Paste an API key</span>
+            <span class="muted">Saved to your private per-user credentials file</span>
           </label>
-          <p class="status" role="status" data-testid="env-status">
-            {#if !w.envName.trim()}
-              &nbsp;
-            {:else if w.envSet}
-              <span class="ok">&#10003; {w.envName.trim()} is set in the environment</span>
-            {:else}
-              <span class="warn"
-                >&#9888; {w.envName.trim()} is not set; set it before running the agent</span
-              >
-            {/if}
+          <label class="choice" class:off={w.keyNames.length === 0}>
+            <input
+              type="radio"
+              name="auth"
+              value="existing"
+              checked={w.authKind === 'existing'}
+              disabled={w.keyNames.length === 0}
+              onchange={() => w.setAuth('existing')}
+            />
+            <span>Use a saved key</span>
+            <span class="muted"
+              >{w.keyNames.length ? 'From your API keys' : 'No saved keys yet'}</span
+            >
+          </label>
+          <label class="choice">
+            <input
+              type="radio"
+              name="auth"
+              value="none"
+              checked={w.authKind === 'none'}
+              onchange={() => w.setAuth('none')}
+            />
+            <span>No key</span>
+            <span class="muted">For local servers without authentication</span>
+          </label>
+        </fieldset>
+        {#if w.authKind === 'new'}
+          <label class="field">
+            <span>API key</span>
+            <input
+              type="password"
+              data-autofocus
+              bind:value={w.newKeySecret}
+              oninput={() => w.keyEdited()}
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="secret-note"
+            />
+          </label>
+          <p id="secret-note" class="muted">
+            Kept in memory until you save, then stored in <code>credentials.toml</code> (private file)
+            in your user config folder; never in the project or in config files. It is never shown again.
           </p>
+          <label class="field">
+            <span>Description (optional)</span>
+            <input type="text" bind:value={w.newKeyDescription} />
+          </label>
         {:else if w.authKind === 'existing'}
           <label class="field">
             <span>Saved key</span>
-            <select bind:value={w.existingKey}>
+            <select bind:value={w.existingKey} onchange={() => w.setAuth('existing')}>
               {#each w.state.keys.keys as k (k.name)}
                 <option value={k.name}
                   >{k.name} ({k.masked}){k.description ? ` - ${k.description}` : ''}</option
@@ -171,51 +140,176 @@
               {/each}
             </select>
           </label>
-        {:else if w.authKind === 'new'}
-          <label class="field">
-            <span>Key name</span>
-            <input type="text" bind:value={w.newKeyName} spellcheck="false" autocomplete="off" />
-          </label>
-          {#if w.keyNames.includes(w.newKeyName.trim())}
-            <p class="warn" role="status">
-              A key named "{w.newKeyName.trim()}" exists and will be replaced.
-            </p>
-          {/if}
-          <label class="field">
-            <span>API key</span>
-            <input
-              type="password"
-              bind:value={w.newKeySecret}
-              autocomplete="off"
-              spellcheck="false"
-              aria-describedby="secret-note"
-            />
-          </label>
-          <p id="secret-note" class="muted">
-            The key is sent to the backend once and is never shown again.
-          </p>
-          <label class="field">
-            <span>Description (optional)</span>
-            <input type="text" bind:value={w.newKeyDescription} />
-          </label>
-        {/if}
-        {#if w.authKind === 'existing' || w.authKind === 'new'}
-          <fieldset class="scope">
-            <legend>Where should the profile reference this key?</legend>
-            <label class="choice">
-              <input type="radio" name="scope" value="user" bind:group={w.keyScope} />
-              <span>My profile (all projects)</span>
-            </label>
-            <label class="choice">
-              <input type="radio" name="scope" value="project" bind:group={w.keyScope} />
-              <span>This project only</span>
-              <span class="muted">.ruckcode/config.toml</span>
-            </label>
-          </fieldset>
         {/if}
         {#if missingNames.length}
           <p class="warn">Some profiles reference missing keys: {missingNames.join(', ')}.</p>
         {/if}
+      {:else if w.step === 'endpoint'}
+        <label class="field">
+          <span>Endpoint URL</span>
+          <input
+            type="text"
+            data-autofocus
+            value={w.endpoint}
+            oninput={(e) => w.setEndpoint(e.currentTarget.value)}
+            placeholder="https://api.example.com/v1"
+            spellcheck="false"
+            autocomplete="off"
+            aria-required="true"
+            aria-invalid={w.endpointError ? 'true' : undefined}
+            aria-describedby="endpoint-msg"
+            list="endpoint-suggestions"
+          />
+        </label>
+        <datalist id="endpoint-suggestions">
+          {#each w.suggestions as s (s.id)}
+            <option value={s.url}>{s.label}</option>
+          {/each}
+        </datalist>
+        <p id="endpoint-msg" class="problem" role="status" data-testid="endpoint-error">
+          {w.endpointError ?? ''}
+        </p>
+        <div class="chips" role="group" aria-label="Endpoint suggestions">
+          {#each w.suggestions as s (s.id)}
+            <button
+              type="button"
+              class="chip"
+              class:on={currentSuggestion?.id === s.id}
+              title={s.url}
+              onclick={() => w.setEndpoint(s.url)}
+            >
+              {s.label}
+            </button>
+          {/each}
+        </div>
+        <p class="muted">
+          Anthropic or any OpenAI-compatible server (OpenAI, OpenRouter, Ollama, LM Studio, vLLM,
+          ...). The next step checks which API answers.
+        </p>
+      {:else if w.step === 'check'}
+        <p class="muted">Checking <code>{w.endpoint}</code></p>
+        {#if w.checkPhase === 'checking'}
+          <p class="loading" role="status" data-testid="check-status">
+            <span class="spinner" aria-hidden="true"></span> Probing the Anthropic and OpenAI-compatible
+            APIs...
+          </p>
+        {:else if w.checkPhase === 'ok'}
+          <p class="ok" role="status" data-testid="check-status">
+            &#10003; {w.probe?.message}{w.forced ? ' (flavor chosen manually)' : ''}
+          </p>
+          <div class="actions">
+            <button type="button" onclick={() => w.overrideKind()}>
+              Use the {w.kind === 'anthropic' ? 'OpenAI-compatible' : 'Anthropic'} API instead
+            </button>
+            <button type="button" onclick={() => w.runCheck(w.forced)}>Re-check</button>
+          </div>
+        {:else if w.checkPhase === 'failed'}
+          <div class="errbox" role="alert">
+            <strong>Could not verify the endpoint.</strong>
+            <span data-testid="check-error">{w.checkError}</span>
+            <div class="actions">
+              <button type="button" onclick={() => w.runCheck(w.forced)}>Retry</button>
+              <button type="button" onclick={() => w.overrideKind()}>
+                Try the {w.kind === 'anthropic' ? 'OpenAI-compatible' : 'Anthropic'} API
+              </button>
+              <button type="button" onclick={() => w.back()}>Change URL</button>
+              <button type="button" onclick={() => w.continueManually()}>
+                Continue without a model list
+              </button>
+            </div>
+          </div>
+        {/if}
+      {:else if w.step === 'models'}
+        {#if w.fetched.length}
+          <div class="toolbar">
+            <input
+              type="text"
+              aria-label="Filter models"
+              placeholder="Filter models"
+              bind:value={w.filter}
+              data-autofocus
+            />
+            <button type="button" onclick={() => w.toggleAllFiltered()}>
+              {w.filtered.length > 0 && w.filtered.every((m) => w.selected.includes(m))
+                ? 'Deselect all'
+                : 'Select all'}
+            </button>
+            <span class="muted">{w.selected.length} of {w.available.length} selected</span>
+          </div>
+          <ul class="models" aria-label="Models">
+            {#each w.filtered as m (m)}
+              <li>
+                <label class="choice">
+                  <input
+                    type="checkbox"
+                    checked={w.selected.includes(m)}
+                    onchange={() => w.toggleModel(m)}
+                  />
+                  <code>{m}</code>
+                </label>
+                {#if w.selected.includes(m)}
+                  <label class="default">
+                    <input
+                      type="radio"
+                      name="default-model"
+                      aria-label={`Default model ${m}`}
+                      checked={w.defaultModel === m}
+                      onchange={() => (w.defaultModel = m)}
+                    />
+                    default
+                  </label>
+                {/if}
+              </li>
+            {:else}
+              <li class="muted">No model matches the filter.</li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="muted">No model list is available: type the model ids you want to use.</p>
+        {/if}
+        <div class="manual">
+          <label class="field">
+            <span>Add model ids manually</span>
+            <span class="row">
+              <input
+                type="text"
+                bind:value={w.manualText}
+                placeholder="model-a, model-b"
+                spellcheck="false"
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    w.addManual();
+                  }
+                }}
+              />
+              <button type="button" onclick={() => w.addManual()}>Add</button>
+            </span>
+          </label>
+          {#if !w.fetched.length && w.selected.length}
+            <ul class="models" aria-label="Chosen models">
+              {#each w.selected as m (m)}
+                <li>
+                  <code>{m}</code>
+                  <label class="default">
+                    <input
+                      type="radio"
+                      name="default-model"
+                      aria-label={`Default model ${m}`}
+                      checked={w.defaultModel === m}
+                      onchange={() => (w.defaultModel = m)}
+                    />
+                    default
+                  </label>
+                  <button type="button" class="ghost" onclick={() => w.toggleModel(m)}
+                    >Remove</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
       {:else if w.step === 'profile'}
         <label class="field">
           <span>Profile name</span>
@@ -223,6 +317,7 @@
             type="text"
             data-autofocus
             bind:value={w.profileName}
+            oninput={() => (w.profileTouched = true)}
             spellcheck="false"
             autocomplete="off"
           />
@@ -240,111 +335,6 @@
           <input type="checkbox" bind:checked={w.setDefault} />
           <span>Make this the default profile</span>
         </label>
-      {:else if w.step === 'models'}
-        {#if w.modelsPhase === 'loading'}
-          <p class="loading" role="status">
-            <span class="spinner" aria-hidden="true"></span> Fetching models from {w.endpoint}...
-          </p>
-        {:else if w.modelsPhase === 'error'}
-          <div class="errbox" role="alert">
-            <strong>Could not list models.</strong>
-            <span data-testid="models-error">{w.modelsError}</span>
-            <div class="actions">
-              <button type="button" onclick={() => w.fetchModels(true)}>Retry</button>
-              <button type="button" onclick={w.back.bind(w)}>Change endpoint or key</button>
-            </div>
-          </div>
-        {/if}
-        {#if w.modelsPhase === 'ready' || w.modelsPhase === 'error'}
-          {#if w.modelsPhase === 'ready'}
-            <div class="toolbar">
-              <input
-                type="text"
-                aria-label="Filter models"
-                placeholder="Filter models"
-                bind:value={w.filter}
-                data-autofocus
-              />
-              <button type="button" onclick={() => w.toggleAllFiltered()}>
-                {w.filtered.length > 0 && w.filtered.every((m) => w.selected.includes(m))
-                  ? 'Deselect all'
-                  : 'Select all'}
-              </button>
-              <span class="muted">{w.selected.length} of {w.available.length} selected</span>
-            </div>
-            <ul class="models" aria-label="Models">
-              {#each w.filtered as m (m)}
-                <li>
-                  <label class="choice">
-                    <input
-                      type="checkbox"
-                      checked={w.selected.includes(m)}
-                      onchange={() => w.toggleModel(m)}
-                    />
-                    <code>{m}</code>
-                  </label>
-                  {#if w.selected.includes(m)}
-                    <label class="default">
-                      <input
-                        type="radio"
-                        name="default-model"
-                        aria-label={`Default model ${m}`}
-                        checked={w.defaultModel === m}
-                        onchange={() => (w.defaultModel = m)}
-                      />
-                      default
-                    </label>
-                  {/if}
-                </li>
-              {:else}
-                <li class="muted">No model matches the filter.</li>
-              {/each}
-            </ul>
-          {/if}
-          <div class="manual">
-            <label class="field">
-              <span>Add model ids manually</span>
-              <span class="row">
-                <input
-                  type="text"
-                  bind:value={w.manualText}
-                  placeholder="model-a, model-b"
-                  spellcheck="false"
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      w.addManual();
-                    }
-                  }}
-                />
-                <button type="button" onclick={() => w.addManual()}>Add</button>
-              </span>
-            </label>
-            {#if w.modelsPhase === 'error' && w.selected.length}
-              <ul class="models" aria-label="Chosen models">
-                {#each w.selected as m (m)}
-                  <li>
-                    <code>{m}</code>
-                    <label class="default">
-                      <input
-                        type="radio"
-                        name="default-model"
-                        aria-label={`Default model ${m}`}
-                        checked={w.defaultModel === m}
-                        onchange={() => (w.defaultModel = m)}
-                      />
-                      default
-                    </label>
-                    <button type="button" class="ghost" onclick={() => w.toggleModel(m)}
-                      >Remove</button
-                    >
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        {/if}
       {:else if w.step === 'modes'}
         {#if w.state.modes.status === 'ready'}
           <p class="muted">
@@ -406,7 +396,7 @@
         {/if}
       {/if}
 
-      {#if w.problem && w.step !== 'review' && w.step !== 'provider'}
+      {#if w.problem && w.step !== 'review' && w.step !== 'endpoint'}
         <p class="problem" role="status" data-testid="step-problem">{w.problem}</p>
       {/if}
       {#if w.error}<p class="errbox" role="alert">{w.error}</p>{/if}
@@ -553,16 +543,26 @@
     display: grid;
     gap: 4px;
   }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+  }
+  .chip.on {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .ok {
     color: var(--ok);
   }
   .warn {
     color: var(--warn);
     margin: 0;
-  }
-  .status {
-    margin: 0;
-    min-height: 1.5em;
   }
   .problem {
     margin: 0;

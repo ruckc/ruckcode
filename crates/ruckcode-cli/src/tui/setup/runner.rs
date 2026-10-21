@@ -7,11 +7,11 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use ruckcode_core::init::{self, InitOptions};
 use ruckcode_core::setup::{self, SetupReport};
+use ruckcode_core::setup_api::{self, ModelsAuth, ProbeResult};
 use ruckcode_core::ModeSet;
-use ruckcode_llm::ModelInfo;
 use tokio::sync::mpsc;
 
-use super::{Effect, FetchRequest, SetupContext, SetupWizard};
+use super::{Effect, ProbeRequest, SetupContext, SetupWizard};
 use crate::tui::{Term, TerminalGuard};
 use crate::Cli;
 
@@ -22,16 +22,22 @@ pub enum Outcome {
 }
 
 enum Msg {
-    Models(u64, Result<Vec<ModelInfo>, String>),
+    Probe(u64, Result<ProbeResult, String>),
     Init(Result<ModeSet, String>),
 }
 
-fn spawn_fetch(req: FetchRequest, tx: mpsc::UnboundedSender<Msg>) {
+fn spawn_probe(
+    req: ProbeRequest,
+    user_dir: Option<std::path::PathBuf>,
+    tx: mpsc::UnboundedSender<Msg>,
+) {
     tokio::spawn(async move {
-        let r = ruckcode_llm::list_models(req.kind, &req.base_url, req.api_key.as_deref())
+        let auth = req.api_key.clone().map(ModelsAuth::Secret);
+        let force = req.force.map(|k| k.as_str());
+        let r = setup_api::probe(&req.base_url, auth, user_dir.as_deref(), force)
             .await
             .map_err(|e| format!("{e:#}"));
-        let _ = tx.send(Msg::Models(req.generation, r));
+        let _ = tx.send(Msg::Probe(req.generation, r));
     });
 }
 
@@ -65,14 +71,14 @@ pub async fn run_wizard(
                 Some(Err(_)) | None => return Ok(Outcome::Aborted),
             },
             Some(m) = rx.recv() => match m {
-                Msg::Models(g, r) => w.models_loaded(g, r),
+                Msg::Probe(g, r) => w.probed(g, r),
                 Msg::Init(r) => w.modes_initialized(r),
             },
             _ = tick.tick() => w.tick(),
         }
         match effect {
             Effect::None => {}
-            Effect::FetchModels(req) => spawn_fetch(req, tx.clone()),
+            Effect::Probe(req) => spawn_probe(req, w.ctx.user_dir.clone(), tx.clone()),
             Effect::RunInit => {
                 let (tx, project) = (tx.clone(), w.ctx.project.clone());
                 tokio::spawn(async move {

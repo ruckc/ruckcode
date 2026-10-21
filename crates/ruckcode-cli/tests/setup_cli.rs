@@ -67,8 +67,7 @@ fn non_interactive_writes_config_and_modes() {
             "--non-interactive",
             "--provider",
             "anthropic",
-            "--api-key-env",
-            "MY_ANTHROPIC_KEY",
+            "--api-key-stdin",
             "--models",
             "claude-opus-5-5,claude-haiku-5-5",
             "--mode-model",
@@ -76,12 +75,18 @@ fn non_interactive_writes_config_and_modes() {
             "--mode-model",
             "test=default",
         ],
-        None,
+        Some("sk-ant-secret-1\n"),
     );
     assert!(o.status.success(), "{}", text(&o));
     let cfg = e.read("config.toml");
     assert!(cfg.contains("[profiles.anthropic]"), "{cfg}");
-    assert!(cfg.contains("api_key_env = \"MY_ANTHROPIC_KEY\""), "{cfg}");
+    assert!(cfg.contains("api_key_name = \"anthropic\""), "{cfg}");
+    assert!(
+        !cfg.contains("api_key_env") && !cfg.contains("sk-ant"),
+        "{cfg}"
+    );
+    let creds = e.read("credentials.toml");
+    assert!(creds.contains("sk-ant-secret-1"), "{creds}");
     assert!(cfg.contains("default_profile = \"anthropic\""), "{cfg}");
     assert!(cfg.contains("\"claude-haiku-5-5\""), "{cfg}");
     let modes = std::fs::read_to_string(e.proj.path().join(".ruckcode/modes.toml")).unwrap();
@@ -112,13 +117,85 @@ fn non_interactive_errors_are_clear() {
         "{}",
         text(&o)
     );
-    // Pinning a mode model without modes.toml fails and writes nothing.
+    // OpenAI-compatible needs a URL; remote endpoints need a key; the URL must be http(s).
+    let o = e.rc(
+        &[
+            "setup",
+            "--non-interactive",
+            "--provider",
+            "openai",
+            "--models",
+            "a",
+        ],
+        None,
+    );
+    assert!(
+        !o.status.success() && text(&o).contains("--base-url"),
+        "{}",
+        text(&o)
+    );
+    let o = e.rc(
+        &[
+            "setup",
+            "--non-interactive",
+            "--provider",
+            "openai",
+            "--models",
+            "a",
+            "--base-url",
+            "localhost:1",
+        ],
+        None,
+    );
+    assert!(
+        !o.status.success() && text(&o).contains("http"),
+        "{}",
+        text(&o)
+    );
+    let o = e.rc(
+        &[
+            "setup",
+            "--non-interactive",
+            "--provider",
+            "openai",
+            "--models",
+            "a",
+            "--base-url",
+            "https://api.openai.com/v1",
+        ],
+        None,
+    );
+    assert!(
+        !o.status.success() && text(&o).contains("API key is required"),
+        "{}",
+        text(&o)
+    );
     let o = e.rc(
         &[
             "setup",
             "--non-interactive",
             "--provider",
             "ollama",
+            "--models",
+            "a",
+        ],
+        None,
+    );
+    assert!(
+        !o.status.success() && text(&o).contains("anthropic or openai"),
+        "{}",
+        text(&o)
+    );
+    assert!(!e.cfg.path().join("config.toml").exists());
+    // Pinning a mode model without modes.toml fails and writes nothing.
+    let o = e.rc(
+        &[
+            "setup",
+            "--non-interactive",
+            "--provider",
+            "openai",
+            "--base-url",
+            "http://localhost:11434/v1",
             "--models",
             "llama3",
             "--mode-model",

@@ -13,7 +13,8 @@ use ruckcode_core::setup_api::{InitInput, ModelsAuth, PlanInput};
 use serde_json::Value;
 use setup::Target;
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::path::BaseDirectory;
+use tauri::{Manager, State};
 use zeroize::Zeroizing;
 
 /// Start an agent for `cwd` and stream its events to `on_event`: every ACP line, then a final
@@ -97,6 +98,45 @@ async fn wsl_install_rc(
     .await
 }
 
+/// The Linux `rc` shipped in the Windows installer (`<resources>/wsl/rc`); `None` in dev builds
+/// and on other platforms, where the Pages download is used instead.
+fn bundled_rc(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .resolve(wsl::BUNDLED_RESOURCE, BaseDirectory::Resource)
+        .ok()
+        .filter(|p| p.is_file())
+}
+
+/// Install the bundled `rc` into the distro (stdin copy, no network); falls back to the Pages
+/// download when there is no bundled binary or the distro is not x86_64.
+#[tauri::command]
+async fn wsl_install_bundled_rc(
+    app: tauri::AppHandle,
+    distro: String,
+    on_progress: Channel<String>,
+) -> Result<wsl::RcStatus, String> {
+    let key = update::pubkey(&app);
+    wsl::install_bundled_rc(&distro, bundled_rc(&app), key.as_deref(), move |l| {
+        let _ = on_progress.send(l);
+    })
+    .await
+}
+
+/// Automatic provisioning: install the bundled `rc` only when it is missing or its version
+/// differs from the app's. Returns the resulting status.
+#[tauri::command]
+async fn wsl_ensure_rc(
+    app: tauri::AppHandle,
+    distro: String,
+    on_progress: Channel<String>,
+) -> Result<wsl::RcStatus, String> {
+    let key = update::pubkey(&app);
+    wsl::ensure_rc(&distro, bundled_rc(&app), key.as_deref(), move |l| {
+        let _ = on_progress.send(l);
+    })
+    .await
+}
+
 /// Linux path for a Windows or Linux path as seen from `distro` (errors for other distros).
 #[tauri::command]
 async fn wsl_translate_path(distro: String, path: String) -> Result<String, String> {
@@ -112,7 +152,7 @@ fn wsl_to_windows_path(distro: String, path: String) -> Result<String, String> {
 // ---- setup and keys -------------------------------------------------------------------------
 //
 // `project` is a local path or (with `distro`) a Linux path inside that WSL2 distro, where the same
-// features then run through `rc ... --json`. Secrets are accepted only by `list_models`
+// features then run through `rc ... --json`. Secrets are accepted only by `list_models` and `setup_probe`
 // (`auth.secret`), `setup_preview`/`setup_apply` (`plan.newKey.secret`) and `keys_add`; they are
 // zeroized when dropped and are never logged or returned.
 
@@ -139,6 +179,24 @@ async fn list_models(
         &project,
         &kind,
         &base_url,
+        auth,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn setup_probe(
+    project: String,
+    distro: Option<String>,
+    base_url: String,
+    force: Option<String>,
+    auth: Option<ModelsAuth>,
+) -> Result<Value, String> {
+    setup::probe(
+        &Target::from_distro(distro),
+        &project,
+        &base_url,
+        force.as_deref(),
         auth,
     )
     .await
@@ -308,11 +366,14 @@ pub fn run() {
             wsl_list_distros,
             wsl_check_rc,
             wsl_install_rc,
+            wsl_install_bundled_rc,
+            wsl_ensure_rc,
             wsl_translate_path,
             wsl_to_windows_path,
             setup_presets,
             setup_state,
             list_models,
+            setup_probe,
             setup_preview,
             setup_apply,
             keys_list,

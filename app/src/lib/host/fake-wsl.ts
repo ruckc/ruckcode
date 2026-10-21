@@ -37,7 +37,7 @@ export interface FakeWslOptions {
 }
 
 /**
- * A scripted WSL2 environment for browser mock mode: Ubuntu-24.04 has no `rc` yet (Install works),
+ * A scripted WSL2 environment for browser mock mode: Ubuntu-24.04 has no `rc` yet (it is installed automatically from the "bundled" copy),
  * Debian has an older one (version mismatch), and everything else is not selectable. A distro named
  * `Broken` makes the install fail, for the error path.
  */
@@ -67,6 +67,7 @@ export class FakeWsl implements WslApi {
     };
   }
 
+  /** Pages download (fallback path). */
   async installRc(distro: string, onProgress: (line: string) => void): Promise<RcStatus> {
     this.calls.push(`install:${distro}`);
     const steps = [
@@ -75,6 +76,31 @@ export class FakeWsl implements WslApi {
       '[rc-install] verifying checksum',
       '[rc-install] extracting'
     ];
+    return this.run(distro, steps, onProgress);
+  }
+
+  /** The rc shipped in the installer, copied over stdin. */
+  async installBundledRc(distro: string, onProgress: (line: string) => void): Promise<RcStatus> {
+    this.calls.push(`bundled:${distro}`);
+    const steps = [
+      `[rc-install] copying bundled rc (9216 KiB, sha256 0123456789ab) into ${distro}`,
+      '[rc-install] sha256 verified'
+    ];
+    return this.run(distro, steps, onProgress);
+  }
+
+  async ensureRc(distro: string, onProgress: (line: string) => void): Promise<RcStatus> {
+    this.calls.push(`ensure:${distro}`);
+    const status = await this.checkRc(distro);
+    if (status.installed && status.version === EXPECTED) return status;
+    return this.installBundledRc(distro, onProgress);
+  }
+
+  private async run(
+    distro: string,
+    steps: string[],
+    onProgress: (line: string) => void
+  ): Promise<RcStatus> {
     for (const s of steps) {
       await new Promise((r) => setTimeout(r, this.delayMs));
       onProgress(s);

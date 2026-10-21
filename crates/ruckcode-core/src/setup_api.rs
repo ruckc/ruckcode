@@ -4,7 +4,6 @@
 //! are zeroized on drop and no *output* type here contains one (the input types serialize only so
 //! the desktop app can forward a plan to `rc` over stdin).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -14,31 +13,29 @@ use zeroize::Zeroize;
 use crate::config::{Profile, ProviderKind};
 use crate::init::{self, InitOptions};
 use crate::keys::{self, KeyScope};
-use crate::setup::{self, NewKey, SetupPlan, SetupReport, PRESETS};
+use crate::setup::{self, NewKey, SetupPlan, SetupReport};
 use crate::ModeSet;
 
-/// One provider choice (`rc setup`'s first step).
+/// A quick-fill endpoint (`id` is also the suggested profile name).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct PresetInfo {
+pub struct EndpointSuggestionInfo {
     pub id: String,
     pub label: String,
-    /// `anthropic` or `openai` (OpenAI-compatible).
+    pub url: String,
+    /// `anthropic` or `openai` (OpenAI-compatible): the API flavor this endpoint speaks.
     pub kind: String,
-    /// `null` for "enter a URL" (vLLM, LM Studio, other).
-    pub base_url: Option<String>,
-    pub api_key_env: Option<String>,
 }
 
-pub fn presets() -> Vec<PresetInfo> {
-    PRESETS
+/// The quick-fill endpoints, in display order (`rc setup`'s URL step).
+pub fn suggestions() -> Vec<EndpointSuggestionInfo> {
+    setup::ENDPOINT_SUGGESTIONS
         .iter()
-        .map(|p| PresetInfo {
-            id: p.id.into(),
-            label: p.label.into(),
-            kind: p.kind.as_str().into(),
-            base_url: p.base_url.map(String::from),
-            api_key_env: p.api_key_env.map(String::from),
+        .map(|s| EndpointSuggestionInfo {
+            id: s.id.into(),
+            label: s.label.into(),
+            url: s.url.into(),
+            kind: s.kind.as_str().into(),
         })
         .collect()
 }
@@ -109,14 +106,12 @@ pub enum ModesState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupState {
-    /// No user config file and no provider key in the environment: open the wizard.
+    /// No profile with a stored key (or keyless local endpoint): open the wizard.
     pub needs_onboarding: bool,
     pub project: String,
     pub default_profile: String,
     pub profiles: Vec<ProfileInfo>,
     pub keys: KeysList,
-    /// Presence (non-empty) of every env var that may hold a key: the presets' and the profiles'.
-    pub env: BTreeMap<String, bool>,
     pub modes: ModesState,
 }
 
@@ -175,31 +170,14 @@ pub fn keys_list(user_dir: Option<&Path>, project: &Path) -> Result<KeysList> {
     })
 }
 
-/// Everything the wizard and the keys tab need. `env` looks variables up (the process
-/// environment in production).
-pub fn state(
-    project: &Path,
-    user_dir: Option<&Path>,
-    env: &dyn Fn(&str) -> Option<String>,
-) -> SetupState {
+/// Everything the wizard and the keys tab need.
+pub fn state(project: &Path, user_dir: Option<&Path>) -> SetupState {
     let profiles: Vec<Profile> = setup::configured_profiles(project, user_dir);
     let default_profile = crate::Config::load(project, user_dir)
         .map(|c| c.default_profile)
         .unwrap_or_default();
-    let mut names: Vec<String> = PRESETS
-        .iter()
-        .filter_map(|p| p.api_key_env.map(String::from))
-        .collect();
-    names.extend(profiles.iter().filter_map(|p| p.api_key_env.clone()));
-    let env_map = names
-        .into_iter()
-        .map(|n| {
-            let present = env(&n).is_some_and(|v| !v.is_empty());
-            (n, present)
-        })
-        .collect();
     SetupState {
-        needs_onboarding: setup::needs_onboarding(user_dir, env),
+        needs_onboarding: setup::needs_onboarding(project, user_dir),
         project: project.display().to_string(),
         default_profile,
         profiles: profiles
@@ -218,7 +196,6 @@ pub fn state(
             keys: vec![],
             missing: vec![],
         }),
-        env: env_map,
         modes: modes_state(project),
     }
 }
@@ -274,8 +251,6 @@ pub struct PlanInput {
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
-    pub api_key_env: Option<String>,
-    #[serde(default)]
     pub api_key_name: Option<String>,
     #[serde(default)]
     pub new_key: Option<NewKeyInput>,
@@ -320,9 +295,8 @@ impl PlanInput {
             Some("project") => KeyScope::Project,
             Some(o) => bail!("unknown key scope `{o}`: use user or project"),
         };
-        if self.api_key_name.is_some() && self.api_key_env.is_some() {
-            bail!("choose either apiKeyName or apiKeyEnv");
-        }
+        let base_url = setup::validate_endpoint(self.base_url.as_deref().unwrap_or(""))
+            .map_err(anyhow::Error::msg)?;
         let mut api_key_name = self.api_key_name.clone();
         let new_key = match self.new_key.take() {
             Some(k) => {
@@ -350,11 +324,8 @@ impl PlanInput {
                 model: self.model.clone(),
                 models,
                 api_key_name,
-                api_key_env: self.api_key_env.clone(),
-                base_url: self
-                    .base_url
-                    .as_deref()
-                    .and_then(|u| setup::stored_base_url(kind, u)),
+                api_key_env: None,
+                base_url: setup::stored_base_url(kind, &base_url),
                 max_tokens: 32_000,
                 context_window: 200_000,
                 thinking: None,
@@ -433,7 +404,6 @@ pub fn apply(input: PlanInput, user_dir: Option<&Path>, project: &Path) -> Resul
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ModelsAuth {
-    Env(String),
     #[serde(alias = "key_name")]
     KeyName(String),
     Secret(String),
@@ -450,7 +420,6 @@ impl Drop for ModelsAuth {
 impl std::fmt::Debug for ModelsAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Env(n) => write!(f, "Env({n})"),
             Self::KeyName(n) => write!(f, "KeyName({n})"),
             Self::Secret(_) => write!(f, "Secret(<redacted>)"),
         }
@@ -464,19 +433,13 @@ pub struct ModelView {
     pub display_name: Option<String>,
 }
 
-/// Resolve the secret for `auth` (None for no auth or an unset env var is an error).
+/// Resolve the secret for `auth` (`None` means no key).
 pub fn resolve_models_auth(
     auth: Option<&ModelsAuth>,
     user_dir: Option<&Path>,
-    env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Option<String>> {
     Ok(match auth {
         None => None,
-        Some(ModelsAuth::Env(n)) => Some(
-            env(n)
-                .filter(|v| !v.is_empty())
-                .with_context(|| format!("environment variable {n} is not set"))?,
-        ),
         Some(ModelsAuth::KeyName(n)) => Some(
             crate::config::named_key(user_dir, n)
                 .with_context(|| format!("named key `{n}` not found"))?,
@@ -490,7 +453,6 @@ pub async fn list_models(
     base_url: &str,
     auth: Option<ModelsAuth>,
     user_dir: Option<&Path>,
-    env: &(dyn Fn(&str) -> Option<String> + Sync),
 ) -> Result<Vec<ModelView>> {
     let kind_p = parse_kind(kind)?;
     let api = match kind_p {
@@ -502,7 +464,7 @@ pub async fn list_models(
     } else {
         base_url.trim().to_string()
     };
-    let mut key = resolve_models_auth(auth.as_ref(), user_dir, env)?;
+    let mut key = resolve_models_auth(auth.as_ref(), user_dir)?;
     let r = ruckcode_llm::list_models(api, &base, key.as_deref()).await;
     if let Some(k) = key.as_mut() {
         k.zeroize();
@@ -514,6 +476,176 @@ pub async fn list_models(
             display_name: m.display_name,
         })
         .collect())
+}
+
+// ----- probe -----
+
+/// One request the probe made.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeAttempt {
+    /// `anthropic` or `openai`.
+    pub kind: String,
+    pub url: String,
+    /// HTTP status when the server answered.
+    pub status: Option<u16>,
+    /// `null` on success.
+    pub error: Option<String>,
+}
+
+/// Result of [`probe`]: the detected API flavor (if any), its models and a human explanation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeResult {
+    /// `anthropic` / `openai`, or `null` when no probe succeeded.
+    pub kind: Option<String>,
+    pub models: Vec<ModelView>,
+    pub attempts: Vec<ProbeAttempt>,
+    /// One line for the user: `Anthropic API ✓ (3 models)` or what went wrong and how to fix it.
+    pub message: String,
+}
+
+fn kind_label(kind: &str) -> &'static str {
+    if kind == "anthropic" {
+        "Anthropic API"
+    } else {
+        "OpenAI-compatible API"
+    }
+}
+
+fn status_of(err: &str) -> Option<u16> {
+    let rest = err.split("HTTP ").nth(1)?;
+    rest.get(..3)?.parse().ok()
+}
+
+/// Explain a failed probe (`attempts` all failed).
+fn failure_message(attempts: &[ProbeAttempt]) -> String {
+    let any = |f: &dyn Fn(u16) -> bool| attempts.iter().any(|a| a.status.is_some_and(f));
+    if any(&|s| s == 401 || s == 403) {
+        let s = attempts
+            .iter()
+            .find_map(|a| a.status.filter(|s| *s == 401 || *s == 403))
+            .unwrap_or(401);
+        return format!("The server rejected the API key (HTTP {s}). Check the key and try again.");
+    }
+    if any(&|s| s == 404) {
+        return "Neither API answered at this URL (HTTP 404). Try adding or removing a `/v1` suffix, e.g. https://host/v1.".into();
+    }
+    if let Some(a) = attempts.iter().find(|a| a.status.is_some()) {
+        return format!(
+            "The server answered with an error: {}",
+            a.error.as_deref().unwrap_or("unexpected response")
+        );
+    }
+    let e = attempts
+        .iter()
+        .filter_map(|a| a.error.as_deref())
+        .next()
+        .unwrap_or("");
+    let l = e.to_lowercase();
+    if l.contains("certificate") || l.contains("tls") || l.contains("ssl") {
+        format!("TLS error talking to the server: {e}")
+    } else if l.contains("dns") || l.contains("resolve") || l.contains("lookup") {
+        format!("Could not resolve the host name: {e}")
+    } else if l.contains("refused") || l.contains("connect") {
+        format!("Could not connect (is the server running?): {e}")
+    } else {
+        format!("The request failed: {e}")
+    }
+}
+
+/// Probe `base_url` with `auth` and detect which API it speaks: Anthropic Messages
+/// (`GET {base}/v1/models`) or OpenAI-compatible (`GET {base}/models`). The probes are ordered by
+/// hints (an Anthropic host or an `sk-ant-` key goes first). `force` (`anthropic`/`openai`) skips
+/// detection and checks only that flavor.
+pub async fn probe(
+    base_url: &str,
+    auth: Option<ModelsAuth>,
+    user_dir: Option<&Path>,
+    force: Option<&str>,
+) -> Result<ProbeResult> {
+    let base = setup::validate_endpoint(base_url).map_err(anyhow::Error::msg)?;
+    let mut key = resolve_models_auth(auth.as_ref(), user_dir)?;
+    let order: Vec<ProviderKind> = match force {
+        Some(k) => vec![parse_kind(k)?],
+        None => {
+            let anthropic_first = key.as_deref().is_some_and(|k| k.starts_with("sk-ant-"))
+                || setup::suggestion_for_url(&base)
+                    .is_some_and(|s| s.kind == ProviderKind::Anthropic)
+                || base.contains("anthropic");
+            if anthropic_first {
+                vec![ProviderKind::Anthropic, ProviderKind::Openai]
+            } else {
+                vec![ProviderKind::Openai, ProviderKind::Anthropic]
+            }
+        }
+    };
+    let mut attempts = vec![];
+    let mut found: Option<(String, Vec<ModelView>)> = None;
+    for kind in order {
+        let ks = kind.as_str().to_string();
+        let (api, url) = match kind {
+            ProviderKind::Anthropic => (
+                ruckcode_llm::ApiKind::Anthropic,
+                format!("{base}/v1/models"),
+            ),
+            _ => (ruckcode_llm::ApiKind::Openai, format!("{base}/models")),
+        };
+        match ruckcode_llm::list_models(api, &base, key.as_deref()).await {
+            Ok(models) => {
+                attempts.push(ProbeAttempt {
+                    kind: ks.clone(),
+                    url,
+                    status: Some(200),
+                    error: None,
+                });
+                found = Some((
+                    ks,
+                    models
+                        .into_iter()
+                        .map(|m| ModelView {
+                            id: m.id,
+                            display_name: m.display_name,
+                        })
+                        .collect(),
+                ));
+                break;
+            }
+            Err(e) => {
+                let text = format!("{e:#}");
+                attempts.push(ProbeAttempt {
+                    kind: ks,
+                    url,
+                    status: status_of(&text),
+                    error: Some(text),
+                });
+            }
+        }
+    }
+    if let Some(k) = key.as_mut() {
+        k.zeroize();
+    }
+    Ok(match found {
+        Some((kind, models)) => {
+            let n = models.len();
+            ProbeResult {
+                message: format!(
+                    "{} ✓ ({n} model{})",
+                    kind_label(&kind),
+                    if n == 1 { "" } else { "s" }
+                ),
+                kind: Some(kind),
+                models,
+                attempts,
+            }
+        }
+        None => ProbeResult {
+            message: failure_message(&attempts),
+            kind: None,
+            models: vec![],
+            attempts,
+        },
+    })
 }
 
 // ----- init -----
@@ -653,16 +785,12 @@ pub fn keys_use(
 mod tests {
     use super::*;
 
-    fn none(_: &str) -> Option<String> {
-        None
-    }
-
     fn input(json: &str) -> PlanInput {
         serde_json::from_str(json).unwrap()
     }
 
     #[test]
-    fn state_reports_profiles_keys_env_and_modes_without_secrets() {
+    fn state_reports_profiles_keys_and_modes_without_secrets() {
         let user = tempfile::tempdir().unwrap();
         let proj = tempfile::tempdir().unwrap();
         keys::add_key(Some(user.path()), "work", "sk-secret-abcd1234", Some("w")).unwrap();
@@ -671,13 +799,10 @@ mod tests {
             "default_profile=\"o\"\n[profiles.o]\nprovider=\"openai\"\nmodel=\"m\"\napi_key_env=\"MY_VAR\"\napi_key_name=\"work\"\n",
         )
         .unwrap();
-        let env = |k: &str| (k == "MY_VAR").then(|| "x".to_string());
-        let s = state(proj.path(), Some(user.path()), &env);
+        let s = state(proj.path(), Some(user.path()));
         assert!(!s.needs_onboarding);
         assert_eq!(s.default_profile, "o");
         assert_eq!(s.profiles.len(), 1);
-        assert!(s.env["MY_VAR"]);
-        assert!(!s.env["ANTHROPIC_API_KEY"]);
         assert_eq!(s.keys.keys[0].masked, "…1234");
         assert_eq!(s.keys.keys[0].used_by, ["profile `o` (user)"]);
         assert_eq!(s.modes, ModesState::Missing);
@@ -687,7 +812,8 @@ mod tests {
         assert!(json.contains("\"status\":\"missing\""), "{json}");
         // Fresh dir needs onboarding.
         let fresh = tempfile::tempdir().unwrap();
-        assert!(state(proj.path(), Some(fresh.path()), &none).needs_onboarding);
+        assert!(state(proj.path(), Some(fresh.path())).needs_onboarding);
+        assert!(!json.contains("\"env\""), "{json}");
     }
 
     #[test]
@@ -742,15 +868,23 @@ mod tests {
     fn plan_validation() {
         let bad = |s: &str| input(s).into_plan().is_err();
         assert!(bad(
-            r#"{"profileName":"a b","provider":"openai","model":"m"}"#
-        ));
-        assert!(bad(r#"{"profileName":"a","provider":"nope","model":"m"}"#));
-        assert!(bad(r#"{"profileName":"a","provider":"openai","model":""}"#));
-        assert!(bad(
-            r#"{"profileName":"a","provider":"openai","model":"m","keyScope":"x"}"#
+            r#"{"profileName":"a b","provider":"openai","model":"m","baseUrl":"http://h/v1"}"#
         ));
         assert!(bad(
-            r#"{"profileName":"a","provider":"openai","model":"m","apiKeyName":"k","apiKeyEnv":"E"}"#
+            r#"{"profileName":"a","provider":"nope","model":"m","baseUrl":"http://h/v1"}"#
+        ));
+        assert!(bad(
+            r#"{"profileName":"a","provider":"openai","model":"","baseUrl":"http://h/v1"}"#
+        ));
+        assert!(bad(
+            r#"{"profileName":"a","provider":"openai","model":"m","baseUrl":"http://h/v1","keyScope":"x"}"#
+        ));
+        // The endpoint URL is required and must be an absolute http(s) URL.
+        assert!(bad(
+            r#"{"profileName":"a","provider":"openai","model":"m"}"#
+        ));
+        assert!(bad(
+            r#"{"profileName":"a","provider":"openai","model":"m","baseUrl":"localhost:11434"}"#
         ));
         let p = input(
             r#"{"profileName":"a","provider":"anthropic","model":"m","baseUrl":"https://api.anthropic.com/",
@@ -767,15 +901,8 @@ mod tests {
     fn models_auth_resolution() {
         let user = tempfile::tempdir().unwrap();
         keys::add_key(Some(user.path()), "k", "from-file", None).unwrap();
-        let env = |k: &str| (k == "V").then(|| "from-env".to_string());
-        let r = |a: Option<ModelsAuth>| {
-            resolve_models_auth(a.as_ref(), Some(user.path()), &env).unwrap()
-        };
+        let r = |a: Option<ModelsAuth>| resolve_models_auth(a.as_ref(), Some(user.path())).unwrap();
         assert_eq!(r(None), None);
-        assert_eq!(
-            r(Some(ModelsAuth::Env("V".into()))).as_deref(),
-            Some("from-env")
-        );
         assert_eq!(
             r(Some(ModelsAuth::KeyName("k".into()))).as_deref(),
             Some("from-file")
@@ -784,16 +911,125 @@ mod tests {
             r(Some(ModelsAuth::Secret(" s ".into()))).as_deref(),
             Some("s")
         );
-        assert!(resolve_models_auth(Some(&ModelsAuth::Env("U".into())), None, &env).is_err());
-        assert!(resolve_models_auth(
-            Some(&ModelsAuth::KeyName("nope".into())),
-            Some(user.path()),
-            &env
-        )
-        .is_err());
+        assert!(
+            resolve_models_auth(Some(&ModelsAuth::KeyName("nope".into())), Some(user.path()))
+                .is_err()
+        );
         let a: ModelsAuth = serde_json::from_str(r#"{"keyName":"k"}"#).unwrap();
         assert!(matches!(a, ModelsAuth::KeyName(_)));
         assert!(!format!("{:?}", ModelsAuth::Secret("zzz".into())).contains("zzz"));
+    }
+
+    /// Serve `routes` (path prefix -> (status, expected bearer/x-api-key or ""), body) forever.
+    async fn fake_server(routes: Vec<(&'static str, &'static str, &'static str)>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = l.accept().await.unwrap();
+                let mut buf = vec![0u8; 8192];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                let path = head
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("")
+                    .to_string();
+                let (status, body) = routes
+                    .iter()
+                    .find(|(p, _, _)| path.split('?').next() == Some(p))
+                    .map(|(_, s, b)| (*s, *b))
+                    .unwrap_or(("404 Not Found", "{}"));
+                let r = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(r.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        url
+    }
+
+    const MODELS: &str = r#"{"data":[{"id":"m1"},{"id":"m2"}]}"#;
+
+    #[tokio::test]
+    async fn probe_detects_each_flavor_and_explains_failures() {
+        let secret = || Some(ModelsAuth::Secret("sk-test".into()));
+        // OpenAI-compatible server (only /v1/models exists).
+        let oa = fake_server(vec![("/v1/models", "200 OK", MODELS)]).await;
+        let r = probe(&format!("{oa}/v1/"), secret(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(r.kind.as_deref(), Some("openai"));
+        assert_eq!(r.models.len(), 2);
+        assert_eq!(r.message, "OpenAI-compatible API ✓ (2 models)");
+        assert_eq!(r.attempts.len(), 1);
+        // Anthropic-style server (/v1/models at the root); the OpenAI probe 404s first.
+        let an = fake_server(vec![(
+            "/v1/models",
+            "200 OK",
+            r#"{"data":[{"id":"claude-x"}]}"#,
+        )])
+        .await;
+        let r = probe(&an, secret(), None, None).await.unwrap();
+        assert_eq!(r.kind.as_deref(), Some("anthropic"), "{r:?}");
+        assert_eq!(r.attempts.len(), 2);
+        assert_eq!(r.message, "Anthropic API ✓ (1 model)");
+        // `sk-ant-` keys try Anthropic first.
+        let r = probe(&an, Some(ModelsAuth::Secret("sk-ant-1".into())), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            (r.kind.as_deref(), r.attempts.len()),
+            (Some("anthropic"), 1)
+        );
+        // Forced flavor checks only that one.
+        let r = probe(&an, secret(), None, Some("openai")).await.unwrap();
+        assert_eq!(r.kind, None);
+        assert_eq!(r.attempts.len(), 1);
+        // 401 beats 404 in the explanation.
+        let bad = fake_server(vec![(
+            "/v1/models",
+            "401 Unauthorized",
+            r#"{"error":{"message":"bad key"}}"#,
+        )])
+        .await;
+        let r = probe(&bad, secret(), None, None).await.unwrap();
+        assert_eq!(r.kind, None);
+        assert!(
+            r.message.contains("rejected the API key (HTTP 401)"),
+            "{}",
+            r.message
+        );
+        // Wrong path: everything 404s.
+        let r = probe(&format!("{oa}/nope"), secret(), None, None)
+            .await
+            .unwrap();
+        assert!(
+            r.message.contains("404") && r.message.contains("/v1"),
+            "{}",
+            r.message
+        );
+        assert_eq!(r.attempts[0].status, Some(404));
+        // Connection refused.
+        let r = probe("http://127.0.0.1:1", None, None, None).await.unwrap();
+        assert!(
+            r.message.to_lowercase().contains("connect"),
+            "{}",
+            r.message
+        );
+        assert_eq!(r.attempts[0].status, None);
+        // Invalid URL is an error, a missing named key too.
+        assert!(probe("nope", None, None, None).await.is_err());
+        assert!(
+            probe(&oa, Some(ModelsAuth::KeyName("zz".into())), None, None)
+                .await
+                .is_err()
+        );
     }
 
     #[test]

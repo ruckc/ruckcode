@@ -3,8 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use ruckcode_core::config::Profile;
+use ruckcode_core::config::ProviderKind;
 use ruckcode_core::keys::{self, KeyScope};
-use ruckcode_core::setup::{self, NewKey, SetupPlan, PRESETS};
+use ruckcode_core::setup::{self, NewKey, SetupPlan};
 use ruckcode_core::setup_api;
 use zeroize::Zeroize;
 
@@ -15,19 +16,19 @@ pub struct SetupArgs {
     /// Skip the wizard and apply the flags below.
     #[arg(long)]
     pub non_interactive: bool,
-    /// anthropic, openai, or a preset: ollama, openrouter.
+    /// API flavor: `anthropic` or `openai` (OpenAI-compatible: OpenAI, OpenRouter, Ollama, LM
+    /// Studio, vLLM, ...).
     #[arg(long)]
     pub provider: Option<String>,
-    /// Endpoint (default: the provider's usual URL).
+    /// Endpoint URL. Required for `openai`; `anthropic` defaults to https://api.anthropic.com.
     #[arg(long)]
     pub base_url: Option<String>,
-    /// Read the key from this environment variable at run time.
-    #[arg(long)]
-    pub api_key_env: Option<String>,
-    /// Use (or, with --api-key-stdin, create) this named key in credentials.toml.
+    /// Use this existing named key from your per-user credentials.toml (or, with
+    /// --api-key-stdin, create it; default name: the profile name).
     #[arg(long)]
     pub api_key_name: Option<String>,
-    /// Read the secret for --api-key-name from stdin and save it to credentials.toml.
+    /// Read a new API key from stdin and store it in your per-user credentials.toml. Required
+    /// unless --api-key-name names an existing key or the endpoint is local/LAN.
     #[arg(long)]
     pub api_key_stdin: bool,
     /// Save the key reference in this project's .ruckcode/config.toml instead of your profile.
@@ -78,7 +79,7 @@ pub async fn run(cli: &Cli, args: &SetupArgs) -> Result<()> {
     }
     let project = cli.project_dir()?;
     if args.json_state {
-        let st = setup_api::state(&project, None, &setup::process_env);
+        let st = setup_api::state(&project, None);
         println!("{}", serde_json::to_string(&st)?);
         return Ok(());
     }
@@ -133,24 +134,27 @@ pub fn build_plan(args: &SetupArgs, stdin: impl FnOnce() -> Result<String>) -> R
         .provider
         .as_deref()
         .context("--provider is required with --non-interactive")?;
-    let preset = PRESETS
-        .iter()
-        .find(|p| p.id == id && p.id != "custom")
-        .with_context(|| {
-            format!("unknown provider `{id}`: use anthropic, openai, ollama or openrouter")
-        })?;
+    let kind = match id {
+        "anthropic" => ProviderKind::Anthropic,
+        "openai" => ProviderKind::Openai,
+        _ => bail!("unknown provider `{id}`: use anthropic or openai (OpenAI-compatible)"),
+    };
     if args.models.is_empty() {
         bail!("--models is required with --non-interactive");
     }
+    let raw_url = match (&args.base_url, kind) {
+        (Some(u), _) => u.clone(),
+        (None, ProviderKind::Anthropic) => setup::ANTHROPIC_BASE_URL.to_string(),
+        (None, _) => bail!(
+            "--base-url is required for --provider openai, e.g. https://api.openai.com/v1 or http://localhost:11434/v1"
+        ),
+    };
+    let base =
+        setup::validate_endpoint(&raw_url).map_err(|e| anyhow::anyhow!("--base-url: {e}"))?;
     let name = args
         .profile
         .clone()
-        .unwrap_or_else(|| preset.id.to_string());
-    let base = args
-        .base_url
-        .clone()
-        .or_else(|| preset.base_url.map(String::from))
-        .unwrap_or_default();
+        .unwrap_or_else(|| setup::suggested_profile_name(kind, &base));
     let default_model = args
         .default_model
         .clone()
@@ -160,29 +164,28 @@ pub fn build_plan(args: &SetupArgs, stdin: impl FnOnce() -> Result<String>) -> R
         models.insert(0, default_model.clone());
     }
 
-    let (mut api_key_env, mut api_key_name, mut new_key) = (None, None, None);
-    if let Some(n) = &args.api_key_name {
+    let (mut api_key_name, mut new_key) = (None, None);
+    if args.api_key_stdin {
+        let key_name = args.api_key_name.clone().unwrap_or_else(|| name.clone());
+        keys::validate_key_name(&key_name)?;
+        let secret = stdin()?.trim().to_string();
+        if secret.is_empty() {
+            bail!("--api-key-stdin: no key on stdin");
+        }
+        new_key = Some(NewKey {
+            name: key_name.clone(),
+            secret,
+            description: Some(format!("{name} key")),
+        });
+        api_key_name = Some(key_name);
+    } else if let Some(n) = &args.api_key_name {
         keys::validate_key_name(n)?;
-        api_key_name = Some(n.clone());
-        if args.api_key_stdin {
-            let secret = stdin()?.trim().to_string();
-            if secret.is_empty() {
-                bail!("--api-key-stdin: no key on stdin");
-            }
-            new_key = Some(NewKey {
-                name: n.clone(),
-                secret,
-                description: Some(format!("{} key", preset.label)),
-            });
-        } else if !keys::list_keys(None)?.iter().any(|k| k.name == *n) {
+        if !keys::list_keys(None)?.iter().any(|k| k.name == *n) {
             bail!("named key `{n}` not found in credentials.toml; add it with `rc keys add {n}` or pass --api-key-stdin");
         }
-    } else if args.api_key_stdin {
-        bail!("--api-key-stdin needs --api-key-name");
-    } else if let Some(e) = &args.api_key_env {
-        api_key_env = Some(e.clone());
-    } else {
-        api_key_env = preset.api_key_env.map(String::from);
+        api_key_name = Some(n.clone());
+    } else if !setup::is_local_endpoint(&base) {
+        bail!("an API key is required for {base}: pass --api-key-stdin (stores a new key in your per-user credentials.toml) or --api-key-name <existing key>");
     }
 
     let mut mode_models = vec![];
@@ -198,12 +201,12 @@ pub fn build_plan(args: &SetupArgs, stdin: impl FnOnce() -> Result<String>) -> R
         profile_name: name.clone(),
         profile: Profile {
             name,
-            provider: preset.kind,
+            provider: kind,
             model: default_model,
             models,
             api_key_name,
-            api_key_env,
-            base_url: setup::stored_base_url(preset.kind, &base),
+            api_key_env: None,
+            base_url: setup::stored_base_url(kind, &base),
             max_tokens: 32_000,
             context_window: 200_000,
             thinking: None,

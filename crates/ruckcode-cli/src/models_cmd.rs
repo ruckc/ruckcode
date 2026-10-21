@@ -10,14 +10,16 @@ use zeroize::Zeroize;
 #[derive(Args, Debug, Default)]
 pub struct ModelsArgs {
     /// `anthropic` or `openai` (OpenAI-compatible: OpenAI, Ollama, OpenRouter, vLLM, ...).
-    #[arg(long)]
-    pub provider: String,
-    /// Endpoint (default: the provider's usual URL).
+    /// Required unless --probe is given (then it forces that API flavor).
+    #[arg(long, required_unless_present = "probe")]
+    pub provider: Option<String>,
+    /// Endpoint (default: the provider's usual URL; required with --probe).
     #[arg(long)]
     pub base_url: Option<String>,
-    /// Read the key from this environment variable.
-    #[arg(long, conflicts_with_all = ["api_key_name", "api_key_stdin"])]
-    pub api_key_env: Option<String>,
+    /// Auto-detect the API flavor of --base-url (Anthropic Messages or OpenAI-compatible) using
+    /// the key, and list its models. With --json: `{"kind","models","attempts","message"}`.
+    #[arg(long)]
+    pub probe: bool,
     /// Use this named key from credentials.toml.
     #[arg(long, conflicts_with = "api_key_stdin")]
     pub api_key_name: Option<String>,
@@ -42,10 +44,8 @@ pub fn auth_from_args(
             bail!("--api-key-stdin: no key on stdin");
         }
         Some(ModelsAuth::Secret(t))
-    } else if let Some(n) = &args.api_key_name {
-        Some(ModelsAuth::KeyName(n.clone()))
     } else {
-        args.api_key_env.clone().map(ModelsAuth::Env)
+        args.api_key_name.clone().map(ModelsAuth::KeyName)
     })
 }
 
@@ -55,12 +55,28 @@ pub async fn run(args: &ModelsArgs) -> Result<()> {
         std::io::stdin().read_to_string(&mut s)?;
         Ok(s)
     })?;
+    if args.probe {
+        let base = args.base_url.as_deref().unwrap_or("");
+        let r = setup_api::probe(base, auth, None, args.provider.as_deref()).await?;
+        if args.json {
+            println!("{}", serde_json::to_string(&r)?);
+        } else {
+            println!("{}", r.message);
+            for m in &r.models {
+                println!("{}", m.id);
+            }
+        }
+        return if r.kind.is_some() || args.json {
+            Ok(())
+        } else {
+            bail!("no compatible API found")
+        };
+    }
     let models = setup_api::list_models(
-        &args.provider,
+        args.provider.as_deref().unwrap_or(""),
         args.base_url.as_deref().unwrap_or(""),
         auth,
         None,
-        &ruckcode_core::setup::process_env,
     )
     .await?;
     if args.json {
@@ -83,7 +99,7 @@ mod tests {
     #[test]
     fn auth_choices() {
         let base = ModelsArgs {
-            provider: "openai".into(),
+            provider: Some("openai".into()),
             ..Default::default()
         };
         assert!(auth_from_args(&base, || unreachable!()).unwrap().is_none());
@@ -103,14 +119,6 @@ mod tests {
         assert!(matches!(
             auth_from_args(&n, || unreachable!()).unwrap(),
             Some(ModelsAuth::KeyName(_))
-        ));
-        let e = ModelsArgs {
-            api_key_env: Some("V".into()),
-            ..Default::default()
-        };
-        assert!(matches!(
-            auth_from_args(&e, || unreachable!()).unwrap(),
-            Some(ModelsAuth::Env(_))
         ));
     }
 }

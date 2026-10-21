@@ -11,56 +11,168 @@ use toml_edit::{value, Array, DocumentMut, Item, Table};
 use crate::config::{credentials_path, user_config_dir, Profile, ProviderKind};
 use crate::keys::{self, KeyScope};
 
-/// A provider choice offered by the wizard.
+/// A quick-fill endpoint offered by the wizard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProviderPreset {
-    /// Short id (also the default profile name), e.g. `ollama`.
+pub struct EndpointSuggestion {
+    /// Also the default profile name.
     pub id: &'static str,
     pub label: &'static str,
+    pub url: &'static str,
+    /// The API flavor this endpoint speaks.
     pub kind: ProviderKind,
-    /// `None` means the user must enter a URL (vLLM, LM Studio, other).
-    pub base_url: Option<&'static str>,
-    /// Conventional key env var; `None` means no key is needed.
-    pub api_key_env: Option<&'static str>,
 }
 
-pub const PRESETS: &[ProviderPreset] = &[
-    ProviderPreset {
+pub const ENDPOINT_SUGGESTIONS: &[EndpointSuggestion] = &[
+    EndpointSuggestion {
         id: "anthropic",
         label: "Anthropic",
+        url: "https://api.anthropic.com",
         kind: ProviderKind::Anthropic,
-        base_url: Some("https://api.anthropic.com"),
-        api_key_env: Some("ANTHROPIC_API_KEY"),
     },
-    ProviderPreset {
+    EndpointSuggestion {
         id: "openai",
         label: "OpenAI",
+        url: "https://api.openai.com/v1",
         kind: ProviderKind::Openai,
-        base_url: Some("https://api.openai.com/v1"),
-        api_key_env: Some("OPENAI_API_KEY"),
     },
-    ProviderPreset {
-        id: "ollama",
-        label: "Ollama (local)",
-        kind: ProviderKind::Openai,
-        base_url: Some("http://localhost:11434/v1"),
-        api_key_env: None,
-    },
-    ProviderPreset {
+    EndpointSuggestion {
         id: "openrouter",
         label: "OpenRouter",
+        url: "https://openrouter.ai/api/v1",
         kind: ProviderKind::Openai,
-        base_url: Some("https://openrouter.ai/api/v1"),
-        api_key_env: Some("OPENROUTER_API_KEY"),
     },
-    ProviderPreset {
-        id: "custom",
-        label: "vLLM / LM Studio / other OpenAI-compatible",
+    EndpointSuggestion {
+        id: "ollama",
+        label: "Ollama",
+        url: "http://localhost:11434/v1",
         kind: ProviderKind::Openai,
-        base_url: None,
-        api_key_env: None,
+    },
+    EndpointSuggestion {
+        id: "lmstudio",
+        label: "LM Studio",
+        url: "http://localhost:1234/v1",
+        kind: ProviderKind::Openai,
+    },
+    EndpointSuggestion {
+        id: "vllm",
+        label: "vLLM",
+        url: "http://localhost:8000/v1",
+        kind: ProviderKind::Openai,
     },
 ];
+
+/// The endpoint suggestion implied by the shape of an API key (a hint only, always editable).
+pub fn suggestion_for_key(key: &str) -> Option<&'static EndpointSuggestion> {
+    let id = if key.starts_with("sk-ant-") {
+        "anthropic"
+    } else if key.starts_with("sk-or-") {
+        "openrouter"
+    } else if key.starts_with("sk-") {
+        "openai"
+    } else {
+        return None;
+    };
+    ENDPOINT_SUGGESTIONS.iter().find(|s| s.id == id)
+}
+
+/// Validate an endpoint typed by the user: must be an absolute http(s) URL with a host and no
+/// whitespace. Returns it trimmed and without trailing slashes.
+pub fn validate_endpoint(raw: &str) -> Result<String, String> {
+    let u = raw.trim();
+    if u.is_empty() {
+        return Err("the endpoint URL is required".into());
+    }
+    let lower = u.to_ascii_lowercase();
+    let rest = if lower.starts_with("https://") {
+        &u[8..]
+    } else if lower.starts_with("http://") {
+        &u[7..]
+    } else {
+        return Err("the endpoint must start with http:// or https://".into());
+    };
+    if u.chars().any(char::is_whitespace) {
+        return Err("the endpoint must not contain spaces".into());
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let hostname = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host.split(':').next().unwrap_or(""),
+    };
+    if hostname.is_empty() {
+        return Err("the endpoint needs a host, e.g. https://example.com/v1".into());
+    }
+    Ok(u.trim_end_matches('/').to_string())
+}
+
+fn host_and_port(url: &str) -> (String, Option<u16>) {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let (h, port) = match host.rsplit_once(':') {
+        Some((h, p)) if !h.ends_with(']') || h.contains(']') => (h, p.parse().ok()),
+        _ => (host, None),
+    };
+    (h.trim_matches(['[', ']']).to_ascii_lowercase(), port)
+}
+
+fn is_local(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1")
+}
+
+/// The suggestion whose endpoint `url` points at (same host; for local servers the same port).
+pub fn suggestion_for_url(url: &str) -> Option<&'static EndpointSuggestion> {
+    let (host, port) = host_and_port(url);
+    ENDPOINT_SUGGESTIONS.iter().find(|s| {
+        let (sh, sp) = host_and_port(s.url);
+        if is_local(&sh) {
+            is_local(&host) && port == sp
+        } else {
+            host == sh
+        }
+    })
+}
+
+/// True for endpoints on this machine or LAN (loopback, private ranges, `*.local`): these usually
+/// need no API key.
+pub fn is_local_endpoint(url: &str) -> bool {
+    let (host, _) = host_and_port(url);
+    if is_local(&host) || host.ends_with(".local") || host.starts_with("127.") {
+        return true;
+    }
+    let o: Vec<u8> = host.split('.').filter_map(|p| p.parse().ok()).collect();
+    host.split('.').count() == 4
+        && o.len() == 4
+        && (o[0] == 10 || (o[0] == 192 && o[1] == 168) || (o[0] == 172 && (16..32).contains(&o[1])))
+}
+
+/// Default profile name from provider + endpoint: `anthropic`, `openai`, `openrouter`, `ollama`,
+/// `lmstudio`, `vllm`, or the sanitised hostname.
+pub fn suggested_profile_name(kind: ProviderKind, url: &str) -> String {
+    let (host, _) = host_and_port(url);
+    if kind == ProviderKind::Anthropic && (host.is_empty() || host == "api.anthropic.com") {
+        return "anthropic".into();
+    }
+    if kind != ProviderKind::Anthropic {
+        if let Some(s) = suggestion_for_url(url) {
+            return s.id.into();
+        }
+    }
+    let name: String = host
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let name = name.trim_matches('-').to_string();
+    if name.is_empty() {
+        if kind == ProviderKind::Anthropic {
+            "anthropic".into()
+        } else {
+            "openai-compatible".into()
+        }
+    } else {
+        name
+    }
+}
 
 pub const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 
@@ -116,20 +228,20 @@ pub struct SetupReport {
     pub modes_updated: usize,
 }
 
-/// True when there is no user config file and no provider key in the environment.
-pub fn needs_onboarding(user_dir: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) -> bool {
-    let has_config = user_config_dir(user_dir)
-        .map(|d| d.join("config.toml").is_file())
-        .unwrap_or(false);
-    let has_key = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+/// True when no configured profile is usable: one needs a stored named key that resolves (or be
+/// the mock provider, or a keyless profile on a local/LAN endpoint). Environment variables never
+/// count as configuration.
+pub fn needs_onboarding(project: &Path, user_dir: Option<&Path>) -> bool {
+    !configured_profiles(project, user_dir)
         .iter()
-        .any(|k| env(k).is_some_and(|v| !v.is_empty()));
-    !has_config && !has_key
-}
-
-/// Reads the process environment, for [`needs_onboarding`].
-pub fn process_env(key: &str) -> Option<String> {
-    std::env::var(key).ok()
+        .any(|p| match (&p.api_key_name, p.provider) {
+            (_, ProviderKind::Mock) => true,
+            (Some(n), _) => crate::config::named_key(user_dir, n).is_some(),
+            (None, ProviderKind::Openai) => {
+                p.api_key_env.is_none() && p.base_url.as_deref().is_some_and(is_local_endpoint)
+            }
+            (None, _) => false,
+        })
 }
 
 /// Profiles defined in the user or project config files (not the built-in defaults).
@@ -443,14 +555,22 @@ mod tests {
     #[test]
     fn onboarding_detection() {
         let d = tempfile::tempdir().unwrap();
-        let none = |_: &str| None;
-        assert!(needs_onboarding(Some(d.path()), &none));
-        let key = |k: &str| (k == "OPENAI_API_KEY").then(|| "sk".to_string());
-        assert!(!needs_onboarding(Some(d.path()), &key));
-        let empty = |_: &str| Some(String::new());
-        assert!(needs_onboarding(Some(d.path()), &empty));
-        std::fs::write(d.path().join("config.toml"), "").unwrap();
-        assert!(!needs_onboarding(Some(d.path()), &none));
+        let proj = tempfile::tempdir().unwrap();
+        let cfg = |t: &str| std::fs::write(d.path().join("config.toml"), t).unwrap();
+        assert!(needs_onboarding(proj.path(), Some(d.path())));
+        // A config file alone, or an env-var-only profile, is not "configured".
+        cfg("[profiles.a]\nprovider=\"anthropic\"\nmodel=\"m\"\napi_key_env=\"ANTHROPIC_API_KEY\"\n");
+        assert!(needs_onboarding(proj.path(), Some(d.path())));
+        // A named key that is not stored does not count; a stored one does.
+        cfg("[profiles.a]\nprovider=\"anthropic\"\nmodel=\"m\"\napi_key_name=\"k\"\n");
+        assert!(needs_onboarding(proj.path(), Some(d.path())));
+        keys::add_key(Some(d.path()), "k", "sk-1", None).unwrap();
+        assert!(!needs_onboarding(proj.path(), Some(d.path())));
+        // Keyless local endpoint counts; keyless remote does not.
+        cfg("[profiles.o]\nprovider=\"openai\"\nmodel=\"m\"\nbase_url=\"http://localhost:11434/v1\"\n");
+        assert!(!needs_onboarding(proj.path(), Some(d.path())));
+        cfg("[profiles.o]\nprovider=\"openai\"\nmodel=\"m\"\nbase_url=\"https://api.openai.com/v1\"\n");
+        assert!(needs_onboarding(proj.path(), Some(d.path())));
     }
 
     #[test]
@@ -664,7 +784,7 @@ mod tests {
         let a = &c.profiles["anthropic"];
         assert_eq!(a.api_key_name.as_deref(), Some("client-acme"));
         assert_eq!((a.model.as_str(), a.max_tokens), ("u-model", 123));
-        assert_eq!(a.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(a.api_key_env, None);
     }
 
     const MODES: &str = "# team modes\ndefault_mode = \"explore\"\n\n[modes.explore]\n# model = \"claude-haiku-5-5\"\ndescription = \"look\"\nmodel = \"legacy\"\n\n[modes.explore.permissions]\nBash = \"ask\"\n\n[modes.test]\ndescription = \"test\"\nprofile = \"gone\"\nmodel = \"x\"\n";
@@ -737,5 +857,81 @@ mod tests {
             stored_base_url(ProviderKind::Openai, "http://localhost:11434/v1/").as_deref(),
             Some("http://localhost:11434/v1")
         );
+    }
+
+    #[test]
+    fn endpoint_validation() {
+        assert_eq!(
+            validate_endpoint("  https://api.openai.com/v1/ ").unwrap(),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            validate_endpoint("HTTP://localhost:11434").unwrap(),
+            "HTTP://localhost:11434"
+        );
+        for bad in [
+            "",
+            "  ",
+            "localhost:11434",
+            "ftp://x.com",
+            "http://",
+            "https:///v1",
+            "http://a b",
+        ] {
+            assert!(validate_endpoint(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn suggestions_drive_profile_name_and_locality() {
+        use ProviderKind::{Anthropic, Openai};
+        let cases = [
+            ("https://api.openai.com/v1", "openai"),
+            ("https://openrouter.ai/api/v1", "openrouter"),
+            ("http://localhost:11434/v1", "ollama"),
+            ("http://127.0.0.1:1234/v1", "lmstudio"),
+            ("http://localhost:8000/v1", "vllm"),
+            ("http://localhost:9999/v1", "localhost"),
+            (
+                "https://llm.corp.example.com:8443/v1",
+                "llm-corp-example-com",
+            ),
+        ];
+        for (url, name) in cases {
+            assert_eq!(suggested_profile_name(Openai, url), name, "{url}");
+        }
+        assert_eq!(
+            suggested_profile_name(Anthropic, "https://api.anthropic.com"),
+            "anthropic"
+        );
+        assert_eq!(
+            suggested_profile_name(Anthropic, "https://proxy.example.com"),
+            "proxy-example-com"
+        );
+        for local in [
+            "http://localhost:1/v1",
+            "http://192.168.1.5:8000",
+            "http://10.0.0.2",
+            "http://172.20.1.1",
+            "http://box.local/v1",
+            "http://[::1]:80",
+        ] {
+            assert!(is_local_endpoint(local), "{local}");
+        }
+        for remote in [
+            "https://api.openai.com/v1",
+            "http://172.32.0.1",
+            "http://8.8.8.8",
+        ] {
+            assert!(!is_local_endpoint(remote), "{remote}");
+        }
+        assert_eq!(
+            suggestion_for_key("sk-ant-api03-x").unwrap().id,
+            "anthropic"
+        );
+        assert_eq!(suggestion_for_key("sk-or-v1-x").unwrap().id, "openrouter");
+        assert_eq!(suggestion_for_key("sk-proj-x").unwrap().id, "openai");
+        assert!(suggestion_for_key("abc").is_none());
+        assert_eq!(ENDPOINT_SUGGESTIONS.len(), 6);
     }
 }

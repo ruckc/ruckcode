@@ -42,14 +42,13 @@ Source builds have no update signing key embedded, so `rc self-update` refuses t
 ## Quick start
 
 Configuration lives in `~/.config/ruckcode/config.toml` (user) and `.ruckcode/config.toml`
-(project, overrides user per key). The built-in defaults define two profiles, `anthropic`
-(default; reads `ANTHROPIC_API_KEY`) and `openai` (reads `OPENAI_API_KEY`), so for Anthropic you
-only need (or just run `rc` and follow the setup wizard, see [Setup](#setup)):
+(project, overrides user per key). API keys are never read from your shell environment: the
+setup wizard stores them in your per-user credentials file (see [Setup](#setup) and
+[Named API keys](#named-api-keys)). Just run `rc` and follow the wizard:
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...
 cd your-project
-rc                       # interactive TUI
+rc                       # interactive TUI (first run starts the setup wizard)
 rc "explain this repo"   # TUI with an initial prompt
 ```
 
@@ -63,7 +62,7 @@ default_profile = "ollama"
 provider = "openai"                  # "anthropic" | "openai"
 model = "qwen2.5-coder:14b"
 base_url = "http://localhost:11434/v1"
-# api_key_env = "OPENAI_API_KEY"     # optional for openai-provider profiles
+# api_key_name = "ollama"           # a key from credentials.toml (omit for local servers)
 # max_tokens = 32000                 # default 32000
 # context_window = 200000            # default 200000
 # thinking = "high"                  # passed through: Anthropic `thinking` object / OpenAI reasoning_effort
@@ -77,23 +76,39 @@ Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` 
 
 ## Setup
 
-The first time you run interactive `rc` with no user config and no `ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY` (and no project `.ruckcode/config.toml`), a setup wizard starts automatically.
-Run it again any time with `rc setup` or the `/setup` slash command. Steps: provider (Anthropic,
-OpenAI, Ollama, OpenRouter, or any OpenAI-compatible URL such as vLLM / LM Studio), endpoint,
-authentication, profile name, models, models per mode, and a review of exactly what will be
-written. The wizard fetches the endpoint's model list (Space toggles, `a` selects all, typing
-filters, `/` focuses the filter; if the fetch fails you can retry or type ids by hand). `Esc` goes
-back a step, `Ctrl+C` aborts without writing anything. `-p` and `rc acp` never start the wizard; with
-no usable key they fail with an error that points at `rc setup`.
+The first time you run interactive `rc` without a usable profile (one with a stored key, or a
+keyless local endpoint) and without a project `.ruckcode/config.toml`, a setup wizard starts
+automatically. Environment variables never count. Run it again any time with `rc setup` or the
+`/setup` slash command. The steps, in order:
+
+1. **API key**: paste it (masked), pick a saved named key, or choose "no key" (for local servers).
+   Nothing is written until the final save; the secret is held only in memory until then.
+2. **Endpoint URL** (required, `http(s)://...`, trailing slashes are trimmed). It is prefilled from
+   the key's shape (`sk-ant-` Anthropic, `sk-or-` OpenRouter, `sk-` OpenAI) and offers quick fills:
+   Anthropic `https://api.anthropic.com`, OpenAI `https://api.openai.com/v1`, OpenRouter
+   `https://openrouter.ai/api/v1`, Ollama `http://localhost:11434/v1`, LM Studio
+   `http://localhost:1234/v1`, vLLM `http://localhost:8000/v1` (Tab in the terminal, chips in the app).
+3. **Check compatibility**: the wizard probes the URL with the key and detects the API: Anthropic
+   Messages (`GET {url}/v1/models`) or OpenAI-compatible (`GET {url}/models`), trying the likelier one
+   first. You see `Anthropic API ✓ (N models)` / `OpenAI-compatible API ✓ (N models)` or a specific
+   failure (invalid key / HTTP 401, wrong path / HTTP 404 with a hint to add or remove `/v1`, connection
+   refused, DNS, TLS). You can retry, force the other API flavor, or continue and type model ids by hand.
+4. **Models** (Space toggles, `a` selects all, typing filters, `/` focuses the filter), then the default.
+5. **Profile name** (default from the detected provider and host: `anthropic`, `openai`, `openrouter`,
+   `ollama`, `lmstudio`, `vllm`, or the hostname), **models per mode**, and a **review** of exactly what
+   will be written.
+
+`Esc` goes back a step, `Ctrl+C` aborts without writing anything. `-p` and `rc acp` never start the
+wizard; with no usable key they fail with an error that points at `rc setup`.
 
 What gets written, and where:
 
 - `~/.config/ruckcode/config.toml`: the `[profiles.<name>]` entry (provider, default `model`,
-  `models` available to `/model`, `base_url`, `api_key_env` or `api_key_name`) and `default_profile`.
+  `models` available to `/model`, `base_url`, `api_key_name`) and `default_profile`.
   Existing comments and formatting are preserved. Set `RUCKCODE_CONFIG_DIR` to use another directory.
-- `~/.config/ruckcode/credentials.toml` (mode 0600): API keys, only if you choose to save one.
-  Keys are never written to `config.toml`, the project or the repository.
+- `~/.config/ruckcode/credentials.toml` (mode 0600, your per-user config directory): the pasted API
+  key, saved as a named key called after the profile (`anthropic`, `openrouter`, ...). Keys are never
+  written to `config.toml`, the project or the repository.
 - `.ruckcode/modes.toml` (the project, shared with your team): `profile` and `model` for each mode
   you assigned a model to. "Profile default" removes both keys. If the project has no `modes.toml`
   the wizard offers to run `rc init` first.
@@ -101,30 +116,38 @@ What gets written, and where:
 Scripted setup:
 
 ```sh
-rc setup --non-interactive --provider anthropic --api-key-env ANTHROPIC_API_KEY \
+echo "$KEY" | rc setup --non-interactive --provider anthropic --api-key-stdin \
   --models claude-opus-5-5,claude-haiku-5-5 --mode-model explore=claude-haiku-5-5
-rc setup --non-interactive --provider ollama --models qwen2.5-coder:14b
-echo "$KEY" | rc setup --non-interactive --provider openrouter --api-key-name work --api-key-stdin \
-  --models anthropic/claude-sonnet-5 --profile openrouter
+rc setup --non-interactive --provider openai --base-url http://localhost:11434/v1 \
+  --models qwen2.5-coder:14b          # local endpoint: no key needed
+echo "$KEY" | rc setup --non-interactive --provider openai --base-url https://openrouter.ai/api/v1 \
+  --api-key-name work --api-key-stdin --models anthropic/claude-sonnet-5 --profile openrouter
 ```
 
-Flags: `--provider anthropic|openai|ollama|openrouter`, `--base-url`, `--profile` (default: the
-provider), `--models a,b` (required), `--default-model`, `--api-key-env NAME`, `--api-key-name NAME`
-(+ `--api-key-stdin` to store the secret), `--project-key` (see below), `--no-default`, and repeated
-`--mode-model MODE=MODEL` (`MODE=default` clears; the model belongs to the profile being set up).
+Flags: `--provider anthropic|openai` (`openai` = any OpenAI-compatible server) with `--base-url`
+(required for `openai`, validated as an absolute http(s) URL; `anthropic` defaults to
+`https://api.anthropic.com`), `--profile` (default: from provider and host, e.g. `ollama`),
+`--models a,b` (required), `--default-model`, `--api-key-stdin` (reads the key from stdin and stores
+it as a named key, called `--api-key-name` or else the profile name) or `--api-key-name NAME` alone
+(an existing key). A key is required unless the endpoint is local/LAN (localhost, private ranges,
+`*.local`). `--project-key` (see below), `--no-default`, and repeated `--mode-model MODE=MODEL`
+(`MODE=default` clears; the model belongs to the profile being set up). The old `--api-key-env` flag
+was removed.
 
 Machine-readable modes (used by the desktop app, stable shapes, camelCase JSON on one stdout line;
 errors go to stderr as `rc: message` with exit code 1; secrets are only ever read from stdin):
 
 ```sh
 rc setup --json-state          # {needsOnboarding, project, defaultProfile, profiles[], keys{keys[],missing[]},
-                               #  env{NAME:bool}, modes{status:"ready"|"missing"|"broken", ...}}
+                               #  modes{status:"ready"|"missing"|"broken", ...}}
 rc setup --non-interactive ... --json            # apply; prints {configPath, projectConfigPath,
                                                  #  credentialsPath, modesPath, modesUpdated}
 rc setup --non-interactive ... --preview [--json]  # print the diff (or {diff}) and write nothing
 rc setup --plan-stdin [--preview] --json         # the whole plan as JSON on stdin (incl. newKey.secret)
-rc models --provider anthropic|openai [--base-url U] [--api-key-env N | --api-key-name N | --api-key-stdin] [--json]
+rc models --provider anthropic|openai [--base-url U] [--api-key-name N | --api-key-stdin] [--json]
                                                  # {models:[{id, displayName}]}
+rc models --probe --base-url U [--provider anthropic|openai] [--api-key-name N | --api-key-stdin] --json
+                                                 # detect the API: {kind|null, models[], attempts[{kind,url,status,error}], message}
 rc keys list --json            # {keys:[{name, description, createdAt, masked, usedBy[]}], missing[]}
 rc keys add NAME --api-key-stdin [--description D] --json   # {name, path}
 rc keys remove NAME --json     # {name, stillUsedBy[]}
@@ -167,8 +190,9 @@ transcript as a `model_change` record; `/model default` clears it).
 
 ### Named API keys
 
-A profile finds its key in this order: `api_key_name` (a name in `credentials.toml`; a missing name
-is an error telling you to run `rc keys add NAME`), then the env var named by `api_key_env`.
+A profile finds its key through `api_key_name`, a name in your per-user `credentials.toml` (a missing
+name is an error telling you to run `rc keys add NAME`). Environment variables are not used (an
+old hand-written `api_key_env` still works for backward compatibility but is deprecated and never written).
 Names are references, not secrets, so they are safe to commit; profiles can share a key, and a
 project can pick its own:
 
@@ -185,9 +209,9 @@ api_key_name = "client-acme"
 ```
 
 Profiles from user and project config are merged field by field, so a project config can override
-just `api_key_name` (or `model`, ...) of a user profile. The wizard's auth step offers: an env var,
-an existing named key, a new named key (name + masked secret), or no key, and whether to save the
-reference in your profile or in this project's config.
+just `api_key_name` (or `model`, ...) of a user profile. The wizard's first step offers a pasted key
+(stored as a named key), an existing named key, or no key; `rc keys use NAME --project` points a
+project at another key.
 
 ```sh
 rc keys list                       # names, masked last 4 chars, descriptions, who uses them
@@ -451,23 +475,20 @@ libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-ess
 
 ### Install the desktop app
 
-Download the installer for your OS from <https://ruckc.github.io/ruckcode/> (the latest release;
-the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sha256`, all listed in
+The desktop app currently ships for **Windows only** (macOS and Linux users: use the `rc` command
+line tool, see `install.sh` above; the macOS/Linux desktop builds are disabled in the release
+pipeline for now). Download the installer from <https://ruckc.github.io/ruckcode/> (the latest
+release; the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sha256`, all listed in
 `SHA256SUMS`, under `download/v<version>/`):
 
 | OS | File | Notes |
 |----|------|-------|
-| macOS (Apple Silicon) | `...-aarch64-apple-darwin.dmg` (or `.app.tar.gz`) | open the dmg, drag to Applications |
-| macOS (Intel) | `...-x86_64-apple-darwin.dmg` | same |
-| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc.msi` | per-user by default, no administrator needed (see below) |
-| Linux x86_64 | `...-x86_64-unknown-linux-gnu.AppImage` or `.deb` | built on Ubuntu 22.04 (glibc 2.35, webkit2gtk 4.1) |
+| Windows 10/11 x64 | `...-x86_64-pc-windows-msvc.msi` | per-user by default, no administrator needed (see below); includes `rc` for WSL2 |
+| macOS, Linux | not available yet | use `rc` (`curl -fsSL https://ruckc.github.io/ruckcode/install.sh \| sh`) |
 
-Release builds are **unsigned** until signing secrets are configured. macOS Gatekeeper says the app
-"cannot be opened": right-click the app, choose Open (or run `xattr -dr com.apple.quarantine
-/Applications/ruckcode.app`). Windows SmartScreen shows "Windows protected your PC": More info, then
-Run anyway. On Linux, `chmod +x ruckcode-app-*.AppImage && ./ruckcode-app-*.AppImage` (needs `libfuse2`,
-or run with `--appimage-extract-and-run`), or `sudo apt install ./ruckcode-app-*.deb`. Verify downloads
-with `sha256sum -c SHA256SUMS --ignore-missing`.
+Release builds are **unsigned** until signing secrets are configured: Windows SmartScreen shows
+"Windows protected your PC": More info, then Run anyway. Verify downloads with
+`sha256sum -c SHA256SUMS --ignore-missing`.
 
 **Windows scope.** The `.msi` is the only Windows installer. It installs **for the current user by
 default** (into `%LocalAppData%\Programs\ruckcode`) and never asks for administrator rights, for the
@@ -476,8 +497,7 @@ administrator) run `msiexec /i ruckcode-app-<version>-x86_64-pc-windows-msvc.msi
 keep the scope and location of the existing install and are prompt-free for per-user installs.
 
 On Windows, install the app on Windows itself (not inside WSL2) and choose the WSL2 host to run the
-agent in a distribution; the app installs a matching `rc` there. Linux GUI apps inside WSL2 (WSLg)
-also work with the AppImage or `.deb`, but then the Local host is the distro itself.
+agent in a distribution; the MSI carries a matching `rc` and the app installs it there for you.
 
 Build from source: `mise run app:install && mise run app:build` (bundles land in
 `crates/ruckcode-app/target/release/bundle/`; pass extra Tauri flags with
@@ -493,17 +513,23 @@ WSL2 distribution:
 
 1. Pick a distribution (the default one is preselected; WSL1 and Docker Desktop's internal distros
    are shown but cannot be chosen).
-2. If `rc` is missing in the distro, click **Install rc**. Inside the distro the app runs the same
-   installer as `install.sh`: it reads the latest version from `rc/latest.json` on the download
-   site, downloads the archive (x86_64 musl or aarch64), verifies the SHA-256 and, if `minisign` is
-   installed in the distro, the signature, and installs `~/.local/bin/rc`. A different installed
-   version than the app's shows a warning and an **Update rc** button; after the Windows app
-   updates itself, opening a WSL project offers exactly that.
+2. `rc` is provisioned automatically. The MSI bundles the static Linux `rc` (x86_64 musl, under the
+   app's `wsl/rc` resource). When `rc` is missing in the distro, or its version differs from the
+   app's (for example after the Windows app updated itself), the app streams the bundled binary
+   into the distro over `wsl.exe` stdin (no network, no `\\wsl$` paths), verifies its SHA-256 and
+   `rc --version`, and installs `~/.local/bin/rc`. The picker shows the progress and then
+   `rc <version> (bundled)`; **Reinstall rc** repeats it by hand. Only x86_64 distros get the
+   bundled binary; an aarch64 distro, or a development build without the resource, falls back to
+   the download used by `install.sh` (reads `rc/latest.json` on the download site, verifies the
+   SHA-256 and, if `minisign` is installed, the signature). You can also install `rc` yourself with
+   `curl -fsSL https://ruckc.github.io/ruckcode/install.sh | sh` inside the distro.
 3. Enter the project folder as a Windows path (`C:\Users\me\proj`, `\\wsl.localhost\Ubuntu\home\me\proj`,
    `\\wsl$\Ubuntu\...`) or a Linux path (`/home/me/proj`), or use Browse. The translated Linux path
    is shown under the field; a path in another distro is rejected. Then **Connect**.
 
-The app runs `wsl.exe -d <distro> --cd <path> -- sh -lc 'exec rc acp'` and relays its stdio like
+The app runs `wsl.exe -d <distro> --cd <path> --exec sh -lc <script>` (the script, which ends in
+`exec rc acp`, is passed base64-encoded so no quoting is involved; `--exec` avoids wsl.exe
+re-parsing the command line through the distro's shell) and relays its stdio like
 any other host. The chosen host is remembered per recent project. If the agent exits, the app
 shows its exit code and last stderr lines and offers Reconnect. Try the UI in a browser with
 `?mock=1&platform=windows`.
@@ -560,15 +586,18 @@ unreadable one) it edits an in-memory file.
 #### Settings: providers, keys and modes
 
 The **Settings** button (top bar) opens the graphical `rc setup`: **Providers & models** is the
-wizard (provider, endpoint, authentication with an env-var set/unset indicator, a saved key or a new
-masked one saved for your profile or this project only, profile name with an overwrite warning, live
-model list with filter, select all and manual entry when the fetch fails, a model per mode, and a
-diff of exactly what will be written), **API keys** lists, adds, removes (with confirmation) and
+wizard (API key pasted into a masked field or picked from the saved keys, endpoint URL with quick-fill
+chips and inline validation, a compatibility check that detects Anthropic vs OpenAI-compatible with
+retry and a manual override, live model list with filter, select all and manual entry, profile name
+with an overwrite warning, a model per mode, and a diff of exactly what will be written),
+**API keys** lists, adds, removes (with confirmation) and
 applies named keys to a profile (secrets are never shown, only the last four characters), and
 **Project** creates `.ruckcode/modes.toml` (like `rc init`, including mise tasks). With no usable
 profile the wizard opens by itself on Connect. After saving you can reconnect the agent so the new
-configuration takes effect. For WSL2 projects all of this runs inside the distro through the `rc`
-JSON commands above, so the distro's own `~/.config/ruckcode` is edited. In the browser demo,
+configuration takes effect. For WSL2 projects all of this (including the probe) runs inside the distro
+through the `rc` JSON commands above, so keys entered for a WSL project are stored in the distro's own
+`~/.config/ruckcode/credentials.toml`, and the WSL-side `rc` reads that file (keys saved by the Windows
+app live in the Windows user config and are not visible inside the distro). In the browser demo,
 `?mock=1&setup=fresh` starts with nothing configured.
 
 The frontend can also run in a plain browser against a scripted fake agent:

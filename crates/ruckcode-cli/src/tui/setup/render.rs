@@ -5,8 +5,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
-use ruckcode_core::keys::KeyScope;
-use ruckcode_core::setup::PRESETS;
 
 use super::*;
 
@@ -96,9 +94,9 @@ pub fn render(w: &SetupWizard, f: &mut Frame) {
 
     let body = chunks[1].inner(ratatui::layout::Margin::new(1, 0));
     let (lines, cursor): (Vec<Line>, Option<(usize, usize)>) = match w.step {
-        Step::Provider => (provider_lines(w), None),
+        Step::ApiKey => auth_lines(w),
         Step::Endpoint => endpoint_lines(w),
-        Step::Auth => auth_lines(w),
+        Step::Check => (check_lines(w), None),
         Step::ProfileName => profile_lines(w),
         Step::Models => models_lines(w, body.height as usize),
         Step::Modes => (modes_lines(w, body.height as usize), None),
@@ -131,14 +129,18 @@ pub fn render(w: &SetupWizard, f: &mut Frame) {
 fn hint(w: &SetupWizard) -> String {
     let base = "ctrl+c abort · esc back";
     match w.step {
-        Step::Provider => format!("↑/↓ choose · enter select · {base}"),
-        Step::Endpoint | Step::ProfileName => format!("enter continue · {base}"),
-        Step::Auth => format!("↑/↓ option · ←/→ choose key / scope · tab next field · enter continue · {base}"),
+        Step::Endpoint => format!("tab cycle suggestions · enter check · {base}"),
+        Step::ProfileName => format!("enter continue · {base}"),
+        Step::ApiKey => format!("↑/↓ option · type/paste the key · ←/→ choose saved key · enter continue · {base}"),
+        Step::Check => match &w.check {
+            CheckPhase::Checking => base.to_string(),
+            CheckPhase::Detected { .. } => format!("enter continue · o try the other API · r retry · {base}"),
+            CheckPhase::Failed { .. } => format!("r retry · o force the other API · m type model ids by hand · {base}"),
+        },
         Step::Models => match &w.models {
             ModelsPhase::List(_) => format!(
                 "space toggle · a all · type to filter ( / for names starting with a) · enter confirm · {base}"
             ),
-            ModelsPhase::Error { .. } => format!("r retry · m enter manually · {base}"),
             _ => base.to_string(),
         },
         Step::Modes => format!("↑/↓ mode · enter change · c continue · {base}"),
@@ -146,104 +148,98 @@ fn hint(w: &SetupWizard) -> String {
     }
 }
 
-fn provider_lines(w: &SetupWizard) -> Vec<Line<'static>> {
+fn endpoint_lines(w: &SetupWizard) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
+    let (f, c) = field("Base URL", &w.endpoint, false, true);
     let mut l = vec![
-        Line::from("Which provider do you want to use?"),
+        Line::from(
+            "Where is the API? The URL is required (Anthropic or any OpenAI-compatible server).",
+        ),
         Line::default(),
+        f,
+        Line::default(),
+        Line::from(Span::styled("Suggestions (tab to fill):", dim())),
     ];
-    for (i, p) in PRESETS.iter().enumerate() {
-        let s = i == w.preset_cursor;
-        let url = p.base_url.unwrap_or("you enter the URL");
+    let current = setup::suggestion_for_url(w.endpoint.trimmed());
+    for s in setup::ENDPOINT_SUGGESTIONS {
+        let on = current == Some(s);
         l.push(Line::from(vec![
-            Span::styled(format!("{}{}", marker(s), p.label), sel(s)),
-            Span::styled(format!("   {url}"), dim()),
+            Span::styled(format!("{}{:<11}", marker(on), s.label), sel(on)),
+            Span::styled(s.url.to_string(), dim()),
         ]));
+    }
+    l.extend(err_line(w));
+    if w.error.is_none() && !w.endpoint.trimmed().is_empty() {
+        if let Err(e) = setup::validate_endpoint(w.endpoint.trimmed()) {
+            l.push(Line::from(Span::styled(
+                format!("! {e}"),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+    }
+    (l, c.map(|c| (2, c)))
+}
+
+fn check_lines(w: &SetupWizard) -> Vec<Line<'static>> {
+    let mut l = vec![Line::from(format!("Checking {} …", w.endpoint.trimmed()))];
+    l.push(Line::default());
+    match &w.check {
+        CheckPhase::Checking => l.push(Line::from(format!(
+            "{} probing the Anthropic and OpenAI-compatible APIs",
+            spin(w)
+        ))),
+        CheckPhase::Detected { message } => {
+            l.push(Line::from(Span::styled(
+                message.clone(),
+                Style::default().fg(Color::Green),
+            )));
+            if w.forced.is_some() {
+                l.push(Line::from(Span::styled("(flavor chosen manually)", dim())));
+            }
+        }
+        CheckPhase::Failed { message } => {
+            l.push(Line::from(Span::styled(
+                message.clone(),
+                Style::default().fg(Color::Red),
+            )));
+        }
     }
     l
 }
 
-fn endpoint_lines(w: &SetupWizard) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
-    let (f, c) = field("Base URL", &w.endpoint, false, true);
-    let mut l = vec![
-        Line::from(format!("Where is the {} API?", w.preset().label)),
-        Line::default(),
-        f,
-    ];
-    l.extend(err_line(w));
-    (l, c.map(|c| (2, c)))
-}
-
 fn auth_lines(w: &SetupWizard) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
     let mut l = vec![
-        Line::from("How should ruckcode authenticate?"),
+        Line::from(
+            "Enter your API key. It is saved to your per-user credentials file when you finish.",
+        ),
         Line::default(),
     ];
-    let mut cursor = None;
     let on = |i: usize| w.auth_cursor == i;
-    // 0: env var
-    let set = if w.env_is_set(w.env_name.trimmed()) {
-        Span::styled("  (currently set)", Style::default().fg(Color::Green))
-    } else {
-        Span::styled(
-            "  (not set in this shell)",
-            Style::default().fg(Color::Yellow),
-        )
-    };
+    let secret = "•".repeat(w.new_key_secret.value.chars().count());
+    let head = format!("{}paste an API key: ", marker(on(0)));
+    let col = head.chars().count() + w.new_key_secret.cursor_col();
     l.push(Line::from(vec![
-        Span::styled(
-            format!("{}use an environment variable: ", marker(on(0))),
-            sel(on(0)),
-        ),
-        Span::styled(w.env_name.value.clone(), sel(on(0))),
-        set,
+        Span::styled(head, sel(on(0))),
+        Span::styled(secret, sel(on(0))),
     ]));
-    if on(0) {
-        cursor = Some((l.len() - 1, 2 + 29 + w.env_name.cursor_col()));
-    }
-    // 1: existing key
+    let cursor = on(0).then_some((l.len() - 1, col));
     let existing = match w.ctx.keys.get(w.existing_idx) {
         Some(k) => format!("◂ {} ({}) ▸", k.name, k.masked),
-        None => "(no named keys saved yet)".into(),
+        None => "(no saved keys yet)".into(),
     };
     l.push(Line::from(Span::styled(
-        format!("{}use an existing named key: {existing}", marker(on(1))),
+        format!("{}use a saved key: {existing}", marker(on(1))),
         sel(on(1)),
     )));
-    // 2: new key
     l.push(Line::from(Span::styled(
         format!(
-            "{}add a new named key (saved to credentials.toml)",
+            "{}no key (local servers such as Ollama, LM Studio, vLLM)",
             marker(on(2))
         ),
         sel(on(2)),
     )));
-    if on(2) {
-        let (n, nc) = field("    name  ", &w.new_key_name, false, w.new_field == 0);
-        let (s, sc) = field("    secret", &w.new_key_secret, true, w.new_field == 1);
-        l.push(n);
-        l.push(s);
-        cursor = nc
-            .map(|c| (l.len() - 2, c))
-            .or(sc.map(|c| (l.len() - 1, c)));
-    }
-    l.push(Line::from(Span::styled(
-        format!("{}no key", marker(on(3))),
-        sel(on(3)),
-    )));
     l.push(Line::default());
-    let scope = match w.key_scope {
-        KeyScope::User => "your profile (all projects)",
-        KeyScope::Project => "this project only (.ruckcode/config.toml)",
-    };
-    l.push(Line::from(vec![
-        Span::styled(
-            format!("{}save the key reference in: ", marker(on(AUTH_SCOPE_ROW))),
-            sel(on(AUTH_SCOPE_ROW)),
-        ),
-        Span::styled(format!("◂ {scope} ▸"), sel(on(AUTH_SCOPE_ROW))),
-    ]));
     l.push(Line::from(Span::styled(
-        "Keys are only ever written to credentials.toml (mode 0600), never to config files.",
+        "Keys live only in credentials.toml (mode 0600) in your user config directory; never in the project or config.toml.",
         dim(),
     )));
     l.extend(err_line(w));
@@ -291,29 +287,6 @@ fn window(cursor: usize, len: usize, height: usize) -> std::ops::Range<usize> {
 fn models_lines(w: &SetupWizard, height: usize) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
     let mut l = vec![];
     match &w.models {
-        ModelsPhase::Loading => {
-            l.push(Line::from(format!(
-                "{} fetching models from {} …",
-                spin(w),
-                w.endpoint.trimmed()
-            )));
-        }
-        ModelsPhase::Error { msg, cursor } => {
-            l.push(Line::from(Span::styled(
-                format!("Could not list models: {msg}"),
-                Style::default().fg(Color::Red),
-            )));
-            l.push(Line::default());
-            for (i, t) in ["retry (r)", "enter model ids manually (m)"]
-                .iter()
-                .enumerate()
-            {
-                l.push(Line::from(Span::styled(
-                    format!("{}{t}", marker(i == *cursor)),
-                    sel(i == *cursor),
-                )));
-            }
-        }
         ModelsPhase::Manual { input, err } => {
             l.push(Line::from(
                 "Enter the model ids you want available, comma-separated:",

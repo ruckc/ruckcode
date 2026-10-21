@@ -312,12 +312,12 @@ fn profile_models(cli: &Cli, cwd: &Path) -> Vec<String> {
     v
 }
 
-/// First run: no user config, no provider key in the environment and no project config.
+/// First run: no usable profile (no stored key / keyless local endpoint) and no project config.
 fn should_onboard(cli: &Cli, cwd: &Path) -> bool {
     cli.profile.is_none()
         && std::env::var_os("RUCKCODE_PROFILE").is_none()
         && !cwd.join(".ruckcode/config.toml").exists()
-        && ruckcode_core::setup::needs_onboarding(None, &ruckcode_core::setup::process_env)
+        && ruckcode_core::setup::needs_onboarding(cwd, None)
 }
 
 pub async fn run(cli: &Cli) -> Result<()> {

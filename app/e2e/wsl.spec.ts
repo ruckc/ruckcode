@@ -21,7 +21,7 @@ test('WSL2 host is hidden outside Windows', async ({ page }) => {
   await expect(page.getByRole('radio', { name: 'WSL2' })).toHaveCount(0);
 });
 
-test('lists distros, installs rc with progress, then connects through the WSL host', async ({
+test('lists distros, installs the bundled rc automatically, then connects through the WSL host', async ({
   page
 }) => {
   await open(page);
@@ -36,17 +36,14 @@ test('lists distros, installs rc with progress, then connects through the WSL ho
     ''
   );
 
-  // rc is missing: cannot connect until it is installed
+  // rc is missing in the distro: it is installed from the bundled copy without any click
   const connect = page.getByRole('button', { name: 'Connect', exact: true });
-  await expect(page.getByText('rc is not installed in Ubuntu-24.04.')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('C:\\Users\\me\\proj');
-  await expect(connect).toBeDisabled();
+  await expect(page.getByLabel('Install progress')).toContainText('copying bundled rc');
+  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reinstall rc' })).toBeVisible();
   // path translation is shown
   await expect(page.getByLabel('Linux path')).toContainText('/mnt/c/Users/me/proj');
-
-  await page.getByRole('button', { name: 'Install rc' }).click();
-  await expect(page.getByLabel('Install progress')).toContainText('verifying checksum');
-  await expect(page.getByText('rc 0.1.0 installed')).toBeVisible();
   await expect(connect).toBeEnabled();
 
   await connect.click();
@@ -62,16 +59,32 @@ test('lists distros, installs rc with progress, then connects through the WSL ho
   await expect(page.getByTestId('assistant-msg')).toContainText('You said: hello wsl.');
 });
 
-test('a distro with an older rc shows a warning and can be updated', async ({ page }) => {
+test('connect is blocked while the bundled rc is being installed', async ({ page }) => {
+  await page.goto('/?mock=1&delay=120&platform=windows');
+  await page.getByRole('radio', { name: 'WSL2' }).click();
+  await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/app');
+  await expect(page.getByRole('status', { name: 'rc status' })).toHaveAttribute(
+    'data-state',
+    'installing'
+  );
+  await expect(page.getByText('Installing bundled rc into Ubuntu-24.04…')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeDisabled();
+  await expect(page.getByRole('status', { name: 'rc status' })).toHaveAttribute('data-state', 'ok');
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
+});
+
+test('a distro with an older rc is updated automatically', async ({ page }) => {
   await open(page);
   await chooseWsl(page);
   await page.getByRole('combobox', { name: 'WSL distro' }).selectOption('Debian');
-  await expect(page.getByText(/rc 0.0.9 is installed, but this app is 0.1.0/)).toBeVisible();
-  // a mismatch is a warning: connecting is still possible
+  await expect(page.getByLabel('Install progress')).toContainText('copying bundled rc');
+  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/app');
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Update rc' }).click();
-  await expect(page.getByText('rc 0.1.0 installed')).toBeVisible();
+  // a manual reinstall stays available
+  await page.getByRole('button', { name: 'Reinstall rc' }).click();
+  await expect(page.getByLabel('Install progress')).toContainText('installed');
+  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
 });
 
 test('translates UNC and Linux paths and rejects another distro', async ({ page }) => {
@@ -100,8 +113,7 @@ test('Browse returns a \\\\wsl.localhost path that is shown as a Linux path', as
 test('the host choice is remembered with the recent project', async ({ page }) => {
   await open(page);
   await chooseWsl(page);
-  await page.getByRole('button', { name: 'Install rc' }).click();
-  await expect(page.getByText('rc 0.1.0 installed')).toBeVisible();
+  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/app');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
@@ -122,8 +134,7 @@ test('the host choice is remembered with the recent project', async ({ page }) =
 test('a WSL project in another distro is refused before connecting', async ({ page }) => {
   await open(page);
   await chooseWsl(page);
-  await page.getByRole('button', { name: 'Install rc' }).click();
-  await expect(page.getByText('rc 0.1.0 installed')).toBeVisible();
+  await expect(page.getByText('rc 0.1.0 (bundled)')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('\\\\wsl$\\Debian\\home\\dev');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'belongs to distro' })).toBeVisible();

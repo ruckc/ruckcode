@@ -563,7 +563,8 @@ jobs:
   # the optional signing secrets exist (see "Signing" steps and CONTRIBUTING.md).
   release-app:
     name: release-app (${{ matrix.target }})
-    needs: release-version
+    # release-rc: the Windows MSI bundles the static Linux rc (x86_64 musl) for WSL2.
+    needs: [release-version, release-rc]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-version.outputs.release == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
@@ -575,9 +576,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, bundles: "appimage,deb" }
-          - { target: aarch64-apple-darwin,     os: macos-14,     bundles: "app,dmg" }
-          - { target: x86_64-apple-darwin,      os: macos-14,     bundles: "app,dmg" }
+          # macOS/Linux desktop builds are disabled for now (users on those use `rc`); to
+          # re-enable, uncomment these lines (build_site.py derives platforms from the artifacts).
+          # - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, bundles: "appimage,deb" }
+          # - { target: aarch64-apple-darwin,     os: macos-14,     bundles: "app,dmg" }
+          # - { target: x86_64-apple-darwin,      os: macos-14,     bundles: "app,dmg" }
           - { target: x86_64-pc-windows-msvc,   os: windows-2022, bundles: "msi" }
     env:
       VERSION: ${{ needs.release-version.outputs.version }}
@@ -722,6 +725,27 @@ jobs:
             echo "::notice::Updater signing is not configured (TAURI_SIGNING_PRIVATE_KEY secret and RUCKCODE_UPDATER_PUBKEY variable); building without updater artifacts."
           fi
 
+      # Windows only: ship the static Linux rc inside the MSI (resource wsl/rc); the app copies it
+      # into WSL2 distros itself, no download needed.
+      - name: Download the Linux rc for WSL2 (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-x86_64-unknown-linux-musl
+          path: rc-musl
+      - name: Stage the bundled rc (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          set -euo pipefail
+          name="rc-${VERSION}-x86_64-unknown-linux-musl"
+          tar -xzf "rc-musl/${name}.tar.gz" -C rc-musl
+          mkdir -p crates/ruckcode-app/wsl-bundle
+          cp "rc-musl/${name}/rc" crates/ruckcode-app/wsl-bundle/rc-linux-x86_64
+          file crates/ruckcode-app/wsl-bundle/rc-linux-x86_64 || true
+          test -s crates/ruckcode-app/wsl-bundle/rc-linux-x86_64
+          # Windows-only Tauri config merge: bundle resource wsl/rc (relative to tauri.conf.json).
+          echo '{"bundle":{"resources":{"wsl-bundle/rc-linux-x86_64":"wsl/rc"}}}' > "$RUNNER_TEMP/wsl-bundle.json"
+          echo "WSL_BUNDLE_CONFIG=$RUNNER_TEMP/wsl-bundle.json" >> "$GITHUB_ENV"
       - name: Build bundles
         run: |
           set -euo pipefail
@@ -733,6 +757,7 @@ jobs:
           extra=()
           if [ -n "${SIGN_CONFIG:-}" ]; then extra+=(--config "$SIGN_CONFIG"); fi
           if [ -n "${UPDATER_CONFIG:-}" ]; then extra+=(--config "$UPDATER_CONFIG"); fi
+          if [ -n "${WSL_BUNDLE_CONFIG:-}" ]; then extra+=(--config "$WSL_BUNDLE_CONFIG"); fi
           export NO_STRIP=true   # linuxdeploy's bundled strip chokes on newer ELF sections
           pnpm -C app tauri build --ci --target "$TARGET" --bundles "${{ matrix.bundles }}" \
             --config "{\"version\":\"${VERSION}\"}" ${extra[@]+"${extra[@]}"}

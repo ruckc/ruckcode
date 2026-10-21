@@ -83,7 +83,7 @@ fn state_shape_and_onboarding() {
     assert_eq!(s["defaultProfile"], "anthropic");
     assert_eq!(s["profiles"], serde_json::json!([]));
     assert_eq!(s["keys"], serde_json::json!({"keys": [], "missing": []}));
-    assert_eq!(s["env"]["ANTHROPIC_API_KEY"], false);
+    assert!(s.get("env").is_none(), "no env-var presence in the state");
     assert_eq!(s["modes"], serde_json::json!({"status": "missing"}));
     assert!(s["project"].is_string());
 }
@@ -156,7 +156,9 @@ fn non_interactive_flags_json_and_preview() {
         "setup",
         "--non-interactive",
         "--provider",
-        "ollama",
+        "openai",
+        "--base-url",
+        "http://localhost:11434/v1/",
         "--models",
         "llama3",
         "--json",
@@ -303,25 +305,8 @@ fn models_json_sorted_with_stdin_key() {
 }
 
 #[test]
-fn models_by_env_and_name_and_errors() {
+fn models_by_name_and_errors() {
     let e = Env::new();
-    let (url, rx) = serve_once("200 OK", r#"{"data":[{"id":"m"}]}"#);
-    let v = e.json(
-        &[
-            "models",
-            "--provider",
-            "openai",
-            "--base-url",
-            &url,
-            "--api-key-env",
-            "RC_TEST_PRESENT",
-            "--json",
-        ],
-        "",
-    );
-    assert_eq!(v["models"][0]["id"], "m");
-    assert!(rx.recv().unwrap().to_lowercase().contains("bearer 1"));
-
     e.json(
         &["keys", "add", "k", "--api-key-stdin", "--json"],
         "named-secret\n",
@@ -357,18 +342,76 @@ fn models_by_env_and_name_and_errors() {
     );
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stderr).contains("bad key"));
+    // The environment-variable key option is gone.
     let o = e.rc(
         &[
             "models",
             "--provider",
             "openai",
             "--api-key-env",
-            "RC_UNSET_VAR",
+            "X",
             "--json",
         ],
         "",
     );
-    assert!(String::from_utf8_lossy(&o.stderr).contains("RC_UNSET_VAR is not set"));
+    assert!(!o.status.success());
+}
+
+#[test]
+fn models_probe_detects_the_api_flavor() {
+    let e = Env::new();
+    // The server only answers the OpenAI-style path; the Anthropic-first probe 404s first when
+    // the key looks like an Anthropic key, so serve two connections.
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap();
+            let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            let (status, body) = if head.starts_with("GET /models") {
+                ("200 OK", r#"{"data":[{"id":"m1"}]}"#)
+            } else {
+                ("404 Not Found", "{}")
+            };
+            let _ = write!(
+                s,
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let v = e.json(
+        &[
+            "models",
+            "--probe",
+            "--base-url",
+            &url,
+            "--api-key-stdin",
+            "--json",
+        ],
+        "sk-ant-test\n",
+    );
+    assert_eq!(v["kind"], "openai", "{v}");
+    assert_eq!(v["models"][0]["id"], "m1");
+    assert_eq!(v["attempts"].as_array().unwrap().len(), 2);
+    assert_eq!(v["message"], "OpenAI-compatible API ✓ (1 model)");
+    // A failure is reported in the JSON (exit 0) with a null kind.
+    let v = e.json(
+        &[
+            "models",
+            "--probe",
+            "--base-url",
+            "http://127.0.0.1:1",
+            "--json",
+        ],
+        "",
+    );
+    assert!(
+        v["kind"].is_null() && v["message"].as_str().unwrap().contains("connect"),
+        "{v}"
+    );
 }
 
 // ---- rc sessions --json -----------------------------------------------------------------------

@@ -1,5 +1,8 @@
 import { FakeModes } from './fake-modes';
+import { isLocalEndpoint, validateEndpoint } from './setup';
 import type {
+  ApiKind,
+  EndpointSuggestion,
   InitInput,
   InitResult,
   KeysList,
@@ -8,7 +11,7 @@ import type {
   ModelView,
   ModesState,
   PlanInput,
-  PresetInfo,
+  ProbeResult,
   ProfileInfo,
   ReportView,
   SetupApi,
@@ -16,42 +19,13 @@ import type {
   SetupTarget
 } from './setup';
 
-const PRESETS: PresetInfo[] = [
-  {
-    id: 'anthropic',
-    label: 'Anthropic',
-    kind: 'anthropic',
-    baseUrl: 'https://api.anthropic.com',
-    apiKeyEnv: 'ANTHROPIC_API_KEY'
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    kind: 'openai',
-    baseUrl: 'https://api.openai.com/v1',
-    apiKeyEnv: 'OPENAI_API_KEY'
-  },
-  {
-    id: 'ollama',
-    label: 'Ollama (local)',
-    kind: 'openai',
-    baseUrl: 'http://localhost:11434/v1',
-    apiKeyEnv: null
-  },
-  {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    kind: 'openai',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    apiKeyEnv: 'OPENROUTER_API_KEY'
-  },
-  {
-    id: 'custom',
-    label: 'vLLM / LM Studio / other OpenAI-compatible',
-    kind: 'openai',
-    baseUrl: null,
-    apiKeyEnv: null
-  }
+const SUGGESTIONS: EndpointSuggestion[] = [
+  { id: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com', kind: 'anthropic' },
+  { id: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', kind: 'openai' },
+  { id: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api/v1', kind: 'openai' },
+  { id: 'ollama', label: 'Ollama', url: 'http://localhost:11434/v1', kind: 'openai' },
+  { id: 'lmstudio', label: 'LM Studio', url: 'http://localhost:1234/v1', kind: 'openai' },
+  { id: 'vllm', label: 'vLLM', url: 'http://localhost:8000/v1', kind: 'openai' }
 ];
 
 const ANTHROPIC = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
@@ -83,20 +57,19 @@ const mask = (s: string) => (s.length <= 8 ? '…' : `…${s.slice(-4)}`);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * In-memory setup/keys for browser mock mode. Model lists: Anthropic, OpenAI, Ollama and OpenRouter
- * endpoints answer; a base URL containing `broken` (or `fail`) answers HTTP 401, an unset env var
- * or the secret `bad` fails too, and any other URL lists two generic models.
+ * In-memory setup/keys for browser mock mode. `probe` mimics endpoint detection: Anthropic
+ * (`https://api.anthropic.com`, no path) answers the Anthropic API; OpenAI, OpenRouter, Ollama,
+ * LM Studio and vLLM URLs (ending in `/v1`) answer the OpenAI-compatible API; any other URL
+ * answers as a generic OpenAI-compatible server; the secret `bad` (or a key of the wrong shape for
+ * OpenAI/Anthropic) is rejected with HTTP 401, a missing key is rejected by remote hosts, a URL
+ * with the wrong path answers HTTP 404, and a URL containing `broken` or `fail` refuses the
+ * connection.
  */
 export class FakeSetup implements SetupApi {
   profiles: ProfileInfo[];
   defaultProfile: string;
   keys = new Map<string, { description: string | null; createdAt: string; secret: string }>();
   refs: Ref[] = [];
-  env: Record<string, boolean> = {
-    ANTHROPIC_API_KEY: false,
-    OPENAI_API_KEY: false,
-    OPENROUTER_API_KEY: true
-  };
   /** modes.toml per project, shared with the mode editor. */
   readonly modes: FakeModes;
   private fresh: boolean;
@@ -132,7 +105,7 @@ export class FakeSetup implements SetupApi {
   }
 
   async presets() {
-    return PRESETS;
+    return SUGGESTIONS;
   }
 
   private modesOf(project: string): ModesState {
@@ -164,18 +137,12 @@ export class FakeSetup implements SetupApi {
   async state(t: SetupTarget): Promise<SetupState> {
     this.calls.push('state');
     await wait(5);
-    const envNames = new Set([
-      ...Object.keys(this.env),
-      ...this.profiles.flatMap((p) => p.apiKeyEnv ?? [])
-    ]);
     return {
-      needsOnboarding:
-        this.profiles.length === 0 && !this.env.ANTHROPIC_API_KEY && !this.env.OPENAI_API_KEY,
+      needsOnboarding: this.profiles.length === 0,
       project: t.project,
       defaultProfile: this.defaultProfile,
       profiles: structuredClone(this.profiles),
       keys: this.buildKeys(t.project),
-      env: Object.fromEntries([...envNames].map((n) => [n, !!this.env[n]])),
       modes: structuredClone(this.modesOf(t.project))
     };
   }
@@ -187,9 +154,6 @@ export class FakeSetup implements SetupApi {
     this.calls.push(`models:${req.kind}:${req.baseUrl}`);
     await wait(this.delayMs);
     const { auth } = req;
-    if (auth && 'env' in auth && !this.env[auth.env]) {
-      throw new Error(`environment variable ${auth.env} is not set`);
-    }
     if (auth && 'keyName' in auth && !this.keys.has(auth.keyName)) {
       throw new Error(`named key \`${auth.keyName}\` not found`);
     }
@@ -209,6 +173,81 @@ export class FakeSetup implements SetupApi {
     return ids.map((id) => ({ id, displayName: null }));
   }
 
+  async probe(
+    _t: SetupTarget,
+    req: { baseUrl: string; force?: ApiKind; auth?: ModelsAuth }
+  ): Promise<ProbeResult> {
+    this.calls.push(`probe:${req.force ?? 'auto'}:${req.baseUrl}`);
+    await wait(this.delayMs);
+    const v = validateEndpoint(req.baseUrl);
+    if ('error' in v) throw new Error(v.error);
+    const url = v.url;
+    const { auth } = req;
+    let secret: string | null = null;
+    if (auth && 'keyName' in auth) {
+      const k = this.keys.get(auth.keyName);
+      if (!k) throw new Error(`named key \`${auth.keyName}\` not found`);
+      secret = k.secret;
+    } else if (auth) {
+      secret = auth.secret.trim();
+    }
+    const fail = (status: number | null, message: string): ProbeResult => ({
+      kind: null,
+      models: [],
+      attempts: [
+        {
+          kind: req.force ?? 'openai',
+          url,
+          status,
+          error: status ? `HTTP ${status}` : message
+        }
+      ],
+      message
+    });
+    if (/broken|fail/.test(url))
+      return fail(
+        null,
+        'Could not connect (is the server running?): error sending request: Connection refused'
+      );
+    const anthropicHost = /(^|\/\/)api\.anthropic\.com$/i.test(url);
+    const known = /openai\.com|openrouter\.ai|:(11434|1234|8000)\b/.test(url);
+    // The flavor that answers at this URL, or none (wrong path).
+    const natural: ApiKind | null = anthropicHost
+      ? 'anthropic'
+      : /\/v1$/.test(url) || !known
+        ? 'openai'
+        : null;
+    const rejected =
+      secret === 'bad' ||
+      (secret === null && !isLocalEndpoint(url)) ||
+      (secret !== null && /openai\.com/.test(url) && secret.startsWith('sk-ant-')) ||
+      (secret !== null && anthropicHost && !secret.startsWith('sk-ant-'));
+    const flavorOk = natural !== null && (!req.force || req.force === natural);
+    if (!flavorOk)
+      return fail(
+        404,
+        'Neither API answered at this URL (HTTP 404). Try adding or removing a `/v1` suffix, e.g. https://host/v1.'
+      );
+    if (rejected)
+      return fail(401, 'The server rejected the API key (HTTP 401). Check the key and try again.');
+    const ids = anthropicHost
+      ? ANTHROPIC
+      : url.includes('openrouter')
+        ? OPENROUTER
+        : url.includes('11434')
+          ? OLLAMA
+          : url.includes('openai.com')
+            ? OPENAI
+            : ['local-model-a', 'local-model-b'];
+    const label = natural === 'anthropic' ? 'Anthropic API' : 'OpenAI-compatible API';
+    return {
+      kind: natural,
+      models: ids.map((id) => ({ id, displayName: null })),
+      attempts: [{ kind: natural, url, status: 200, error: null }],
+      message: `${label} ✓ (${ids.length} models)`
+    };
+  }
+
   private diff(plan: PlanInput, project: string): string {
     const cfg = '~/.config/ruckcode/config.toml';
     const lines = [
@@ -221,7 +260,6 @@ export class FakeSetup implements SetupApi {
       `+model = "${plan.model}"`
     ];
     if (plan.baseUrl) lines.push(`+base_url = "${plan.baseUrl}"`);
-    if (plan.apiKeyEnv) lines.push(`+api_key_env = "${plan.apiKeyEnv}"`);
     if (plan.apiKeyName && plan.keyScope === 'user')
       lines.push(`+api_key_name = "${plan.apiKeyName}"`);
     lines.push(`+models = [${plan.models.map((m) => `"${m}"`).join(', ')}]`);
@@ -265,7 +303,8 @@ export class FakeSetup implements SetupApi {
   private validate(plan: PlanInput) {
     if (!/^[A-Za-z0-9._-]+$/.test(plan.profileName)) throw new Error('invalid profile name');
     if (!plan.model) throw new Error('a default model is required');
-    if (plan.apiKeyName && plan.apiKeyEnv) throw new Error('choose either apiKeyName or apiKeyEnv');
+    const v = validateEndpoint(plan.baseUrl ?? '');
+    if ('error' in v) throw new Error(v.error);
   }
 
   async apply(t: SetupTarget, plan: PlanInput): Promise<ReportView> {
@@ -294,7 +333,7 @@ export class FakeSetup implements SetupApi {
       model: plan.model,
       models: plan.models,
       baseUrl: plan.baseUrl,
-      apiKeyEnv: plan.apiKeyEnv,
+      apiKeyEnv: null,
       apiKeyName: apiKeyName ?? null
     };
     this.profiles = [...this.profiles.filter((p) => p.name !== info.name), info];

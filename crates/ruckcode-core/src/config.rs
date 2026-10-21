@@ -18,14 +18,12 @@ default_profile = "anthropic"
 [profiles.anthropic]
 provider = "anthropic"
 model = "claude-opus-5-5"
-api_key_env = "ANTHROPIC_API_KEY"
 max_tokens = 32000
 context_window = 200000
 
 [profiles.openai]
 provider = "openai"
 model = "gpt-5"
-api_key_env = "OPENAI_API_KEY"
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -196,7 +194,8 @@ pub fn named_key(user_dir: Option<&Path>, name: &str) -> Option<String> {
 }
 
 /// Resolve a profile's API key: the named key (`api_key_name`, an error if it is missing from
-/// `credentials.toml`), else the env var named by `api_key_env`, else none.
+/// `credentials.toml`), else (legacy, hand-written configs only) the env var named by
+/// `api_key_env`, else none.
 pub fn resolve_api_key(profile: &Profile, user_dir: Option<&Path>) -> Result<Option<String>> {
     if let Some(name) = profile.api_key_name.as_deref() {
         return match named_key(user_dir, name) {
@@ -324,13 +323,14 @@ pub fn make_provider(profile: &Profile) -> Result<Arc<dyn Provider>> {
 }
 
 /// Instantiate the provider client for a profile. The API key comes from the profile's named key
-/// in `credentials.toml`, else the env var named by `api_key_env`, else none.
+/// in the per-user `credentials.toml` (legacy `api_key_env` is still honoured), else none (only
+/// local/LAN OpenAI-compatible endpoints may run without a key).
 pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<Arc<dyn Provider>> {
     let key = resolve_api_key(profile, user_dir)?;
     let missing = || {
-        let var = profile.api_key_env.as_deref().unwrap_or("an API key");
         anyhow::anyhow!(
-            "no API key for profile `{}`: set {var} or run `rc setup` (or `rc keys add`)",
+            "no API key for profile `{}`: run `rc setup` (or `rc keys add <name>` then `rc keys use <name> --profile {}`)",
+            profile.name,
             profile.name
         )
     };
@@ -344,7 +344,11 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
             ))
         }
         ProviderKind::Openai => {
-            if key.is_none() && profile.api_key_env.is_some() {
+            let local = profile
+                .base_url
+                .as_deref()
+                .is_some_and(crate::setup::is_local_endpoint);
+            if key.is_none() && !local {
                 return Err(missing());
             }
             Arc::new(ruckcode_llm::openai::OpenAi::new(

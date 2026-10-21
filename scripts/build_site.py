@@ -198,10 +198,16 @@ def build_manifests(
             return ""
         return sig.read_text().strip()
 
+    # Only platforms whose installer was built appear (the release currently ships the Windows
+    # MSI only); a present installer without its .sig is still an error.
     platforms = {}
     for key, (triple, suffix) in UPDATER_PLATFORMS.items():
         name = f"ruckcode-app-{version}-{triple}{suffix}"
+        if not (dist / name).is_file():
+            continue
         platforms[key] = {"signature": sig_of(name), "url": f"{dl}/{name}"}
+    if not platforms:
+        problems.append("no desktop app installer found")
 
     targets = {}
     for triple, _label, ext in RC_TARGETS:
@@ -283,6 +289,21 @@ def render_index(
         if items:
             app_cards.append(f'<div class="card"><h3>{html.escape(title)}</h3><ul>{items}</ul></div>')
 
+    have_app = lambda suffix: any(n.startswith(f"ruckcode-app-{version}-") and n.endswith(suffix) for n in names)  # noqa: E731
+    app_note = "The desktop app is currently available for Windows only; on macOS and Linux use the command line tool below."
+    if have_app(".dmg") or have_app(".AppImage") or have_app(".deb"):
+        app_note = (
+            "Builds are not yet code-signed: macOS Gatekeeper and Windows SmartScreen will warn on "
+            "first launch. On Linux only the AppImage updates itself; for the .deb, download the "
+            "new version from this page."
+        )
+    elif have_app(".msi"):
+        app_note = (
+            "Builds are not yet code-signed: Windows SmartScreen will warn on first launch. "
+            "The installer includes <code>rc</code> and installs it into WSL2 distributions "
+            "automatically. The desktop app is currently Windows only; on macOS and Linux use the "
+            "command line tool below."
+        )
     rc_cards = []
     for triple, label, ext in RC_TARGETS:
         item = link(f"rc-{version}-{triple}.{ext}", f"rc-{version}-{triple}.{ext}")
@@ -342,9 +363,7 @@ Older versions are not hosted here.</p>
 
 <h2 id="app">Desktop app</h2>
 <div class="cards">{"".join(app_cards)}</div>
-<p class="sub">{update_note} Builds are not yet code-signed: macOS Gatekeeper and Windows
-SmartScreen will warn on first launch. On Linux only the AppImage updates itself; for the .deb,
-download the new version from this page.</p>
+<p class="sub">{update_note} {app_note}</p>
 
 <h2 id="rc">Command line: rc</h2>
 <p>Linux, macOS and WSL:</p>

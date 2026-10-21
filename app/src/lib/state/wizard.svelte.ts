@@ -1,11 +1,16 @@
 import {
-  ENV_NAME_RE,
-  KEY_NAME_RE,
   PROFILE_NAME_RE,
+  isLocalEndpoint,
+  suggestedProfileName,
+  suggestionForKey,
+  suggestionForUrl,
+  validateEndpoint,
+  type ApiKind,
+  type EndpointSuggestion,
   type ModelView,
   type ModelsAuth,
   type PlanInput,
-  type PresetInfo,
+  type ProbeResult,
   type ReportView,
   type SetupApi,
   type SetupState,
@@ -13,22 +18,14 @@ import {
 } from '../host/setup';
 
 export type Step =
-  'provider' | 'endpoint' | 'auth' | 'profile' | 'models' | 'modes' | 'review' | 'done';
-export const STEPS: Step[] = [
-  'provider',
-  'endpoint',
-  'auth',
-  'profile',
-  'models',
-  'modes',
-  'review'
-];
+  'key' | 'endpoint' | 'check' | 'models' | 'profile' | 'modes' | 'review' | 'done';
+export const STEPS: Step[] = ['key', 'endpoint', 'check', 'models', 'profile', 'modes', 'review'];
 export const STEP_LABEL: Record<Step, string> = {
-  provider: 'Provider',
+  key: 'API key',
   endpoint: 'Endpoint',
-  auth: 'Authentication',
-  profile: 'Profile',
+  check: 'Check',
   models: 'Models',
+  profile: 'Profile',
   modes: 'Modes',
   review: 'Review',
   done: 'Done'
@@ -36,8 +33,9 @@ export const STEP_LABEL: Record<Step, string> = {
 
 export type SettingsTab = 'providers' | 'keys' | 'project' | 'updates';
 
-export type AuthKind = 'env' | 'existing' | 'new' | 'none';
-export type ModelsPhase = 'idle' | 'loading' | 'ready' | 'error';
+/** `new`: a pasted key (saved as a named key in the per-user credentials file on save). */
+export type AuthKind = 'new' | 'existing' | 'none';
+export type CheckPhase = 'idle' | 'checking' | 'ok' | 'failed';
 
 /** Value of a mode's model dropdown: `''` is "profile default", else `profile::model`. */
 export const DEFAULT_CHOICE = '';
@@ -45,16 +43,6 @@ export const choiceValue = (profile: string, model: string) => `${profile}::${mo
 export function parseChoice(v: string): { profile: string; model: string } | null {
   const i = v.indexOf('::');
   return v && i >= 0 ? { profile: v.slice(0, i), model: v.slice(i + 2) } : null;
-}
-
-export function isHttpUrl(s: string): boolean {
-  try {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- only parsed, never reactive
-    const u = new URL(s.trim());
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
-    return false;
-  }
 }
 
 export interface ModeRow {
@@ -65,33 +53,39 @@ export interface ModeRow {
 }
 
 /**
- * The setup wizard's state machine (steps mirror the TUI). Nothing here touches the DOM, and the
- * new key's secret is wiped from state as soon as it has been saved (`clearSecrets`).
+ * The setup wizard's state machine (steps mirror the TUI): API key, endpoint URL, a compatibility
+ * check that detects the API flavor, models, profile name, per-mode models, review. The pasted
+ * key's secret lives only in memory until the final save (`clearSecrets` wipes it).
  */
 export class SetupWizard {
   readonly api: SetupApi;
   readonly target: SetupTarget;
-  readonly presets: PresetInfo[];
+  readonly suggestions: EndpointSuggestion[];
   state = $state<SetupState>() as SetupState;
 
-  step = $state<Step>('provider');
+  step = $state<Step>('key');
   busy = $state(false);
   error = $state<string | null>(null);
 
-  preset = $state<PresetInfo | null>(null);
-  endpoint = $state('');
-  authKind = $state<AuthKind>('env');
-  envName = $state('');
+  authKind = $state<AuthKind>('new');
   existingKey = $state('');
-  newKeyName = $state('');
   newKeySecret = $state('');
   newKeyDescription = $state('');
-  keyScope = $state<'user' | 'project'>('user');
+  endpoint = $state('');
+  endpointTouched = $state(false);
+
+  checkPhase = $state<CheckPhase>('idle');
+  probe = $state<ProbeResult | null>(null);
+  checkError = $state<string | null>(null);
+  /** Manual override of the detected API flavor. */
+  forced = $state<ApiKind | null>(null);
+  /** Continue without a model list after a failed check. */
+  manual = $state(false);
+
   profileName = $state('');
+  profileTouched = $state(false);
   overwrite = $state(false);
 
-  modelsPhase = $state<ModelsPhase>('idle');
-  modelsError = $state<string | null>(null);
   fetched = $state<ModelView[]>([]);
   manualModels = $state<string[]>([]);
   selected = $state<string[]>([]);
@@ -107,13 +101,17 @@ export class SetupWizard {
   diffError = $state<string | null>(null);
   report = $state<ReportView | null>(null);
 
-  private fetchKey = '';
   private generation = 0;
 
-  constructor(api: SetupApi, target: SetupTarget, presets: PresetInfo[], state: SetupState) {
+  constructor(
+    api: SetupApi,
+    target: SetupTarget,
+    suggestions: EndpointSuggestion[],
+    state: SetupState
+  ) {
     this.api = api;
     this.target = target;
-    this.presets = presets;
+    this.suggestions = suggestions;
     this.state = state;
     this.setDefault = state.profiles.length === 0 || state.needsOnboarding;
     this.resetChoices();
@@ -133,8 +131,34 @@ export class SetupWizard {
     return this.state.keys.keys.map((k) => k.name);
   }
 
-  get envSet(): boolean {
-    return !!this.state.env[this.envName.trim()];
+  /** The API flavor in use: the manual override, else the detected one, else a guess. */
+  get kind(): ApiKind {
+    return (
+      this.forced ??
+      this.probe?.kind ??
+      suggestionForUrl(this.suggestions, this.endpoint)?.kind ??
+      'openai'
+    );
+  }
+
+  /** Inline validation message for the endpoint field (null when valid or still empty). */
+  get endpointError(): string | null {
+    if (!this.endpoint.trim()) return null;
+    const v = validateEndpoint(this.endpoint);
+    return 'error' in v ? v.error : null;
+  }
+
+  /** Name for a pasted key: the profile name, made unique among the saved keys. */
+  get newKeyName(): string {
+    const base = this.profileName.trim() || 'default';
+    let name = base;
+    for (let i = 2; this.keyNames.includes(name); i++) name = `${base}-${i}`;
+    return name;
+  }
+
+  /** Keyless is the default only for local/LAN endpoints. */
+  get keylessHint(): boolean {
+    return this.authKind === 'none' && !isLocalEndpoint(this.endpoint);
   }
 
   /** All models the user can pick from: fetched plus manually added. */
@@ -175,23 +199,22 @@ export class SetupWizard {
   /** The error that blocks leaving the current step, or null. */
   get problem(): string | null {
     switch (this.step) {
-      case 'provider':
-        return this.preset ? null : 'Choose a provider.';
-      case 'endpoint':
-        return isHttpUrl(this.endpoint) ? null : 'Enter a full http:// or https:// URL.';
-      case 'auth':
-        if (this.authKind === 'env')
-          return ENV_NAME_RE.test(this.envName.trim())
-            ? null
-            : 'Enter an environment variable name.';
+      case 'key':
         if (this.authKind === 'existing')
-          return this.existingKey ? null : 'Choose a saved key (or add a new one).';
-        if (this.authKind === 'new') {
-          if (!KEY_NAME_RE.test(this.newKeyName.trim()))
-            return 'Key name: letters, digits, ".", "-" or "_".';
-          return this.newKeySecret.trim() ? null : 'Enter the API key.';
-        }
+          return this.existingKey ? null : 'Choose a saved key (or paste a new one).';
+        if (this.authKind === 'new')
+          return this.newKeySecret.trim()
+            ? null
+            : 'Paste your API key (or choose "No key" for a local server).';
         return null;
+      case 'endpoint': {
+        if (!this.endpoint.trim()) return 'The endpoint URL is required.';
+        const v = validateEndpoint(this.endpoint);
+        return 'error' in v ? v.error : null;
+      }
+      case 'check':
+        if (this.checkPhase === 'checking') return 'Checking the endpoint...';
+        return this.checkPhase === 'ok' ? null : 'The endpoint has not been verified yet.';
       case 'profile':
         if (!PROFILE_NAME_RE.test(this.profileName.trim()))
           return 'Profile name: letters, digits, ".", "-" or "_".';
@@ -199,7 +222,6 @@ export class SetupWizard {
           return `Profile "${this.profileName.trim()}" exists: confirm that it should be overwritten.`;
         return null;
       case 'models':
-        if (this.modelsPhase === 'loading') return 'Loading models...';
         if (!this.selected.length) return 'Select at least one model.';
         return this.selected.includes(this.defaultModel) ? null : 'Pick a default model.';
       case 'review':
@@ -215,26 +237,6 @@ export class SetupWizard {
 
   // ---- inputs ----------------------------------------------------------------------------
 
-  choosePreset(id: string) {
-    const p = this.presets.find((x) => x.id === id);
-    if (!p) return;
-    const changed = this.preset?.id !== p.id;
-    this.preset = p;
-    if (changed) {
-      this.endpoint = p.baseUrl ?? '';
-      this.envName = p.apiKeyEnv ?? '';
-      this.authKind = p.apiKeyEnv ? 'env' : 'none';
-      this.profileName = this.freeProfileName(p.id);
-      this.overwrite = false;
-      this.fetchKey = '';
-    }
-  }
-
-  private freeProfileName(base: string) {
-    // Re-running setup for the same provider updates that profile; offer the name as is.
-    return base;
-  }
-
   private resetChoices() {
     this.choices = {};
     for (const r of this.modeRows) this.choices[r.id] = r.initial;
@@ -244,6 +246,31 @@ export class SetupWizard {
     this.authKind = kind;
     if (kind === 'existing' && !this.existingKey) this.existingKey = this.keyNames[0] ?? '';
     if (kind !== 'new') this.wipeSecret();
+    this.invalidateCheck();
+  }
+
+  /** The pasted key changed: re-check before moving on, and hint the endpoint from its shape. */
+  keyEdited() {
+    this.invalidateCheck();
+    if (!this.endpointTouched) {
+      const s = suggestionForKey(this.suggestions, this.newKeySecret.trim());
+      this.endpoint = s?.url ?? '';
+    }
+  }
+
+  setEndpoint(url: string) {
+    this.endpoint = url;
+    this.endpointTouched = true;
+    this.invalidateCheck();
+  }
+
+  private invalidateCheck() {
+    this.generation++;
+    this.checkPhase = 'idle';
+    this.probe = null;
+    this.checkError = null;
+    this.forced = null;
+    this.manual = false;
   }
 
   private wipeSecret() {
@@ -261,20 +288,23 @@ export class SetupWizard {
     if (!this.canNext) return;
     this.error = null;
     switch (this.step) {
-      case 'provider':
+      case 'key':
         this.step = 'endpoint';
         break;
-      case 'endpoint':
-        this.step = 'auth';
+      case 'endpoint': {
+        const v = validateEndpoint(this.endpoint);
+        if ('url' in v) this.endpoint = v.url;
+        this.step = 'check';
+        if (this.checkPhase !== 'ok') void this.runCheck();
         break;
-      case 'auth':
+      }
+      case 'check':
+        this.enterModels();
+        break;
+      case 'models':
         this.step = 'profile';
         break;
       case 'profile':
-        this.step = 'models';
-        void this.fetchModels();
-        break;
-      case 'models':
         this.resetChoicesIfNeeded();
         this.step = 'modes';
         break;
@@ -293,22 +323,31 @@ export class SetupWizard {
     this.error = null;
     const i = this.stepIndex;
     if (i > 0) this.step = STEPS[i - 1];
+    // Never leave a probe running behind the user's back.
+    if (this.step === 'endpoint' && this.checkPhase === 'checking') {
+      this.generation++;
+      this.checkPhase = 'idle';
+    }
   }
 
   goto(step: Step) {
-    if (STEPS.indexOf(step) < this.stepIndex) this.step = step;
+    if (STEPS.indexOf(step) < this.stepIndex) {
+      this.step = step;
+      if (step === 'endpoint' && this.checkPhase === 'checking') {
+        this.generation++;
+        this.checkPhase = 'idle';
+      }
+    }
   }
 
   private resetChoicesIfNeeded() {
     for (const r of this.modeRows) if (!(r.id in this.choices)) this.choices[r.id] = r.initial;
   }
 
-  // ---- models ----------------------------------------------------------------------------
+  // ---- check -----------------------------------------------------------------------------
 
-  private authForFetch(): ModelsAuth | undefined {
+  private authForProbe(): ModelsAuth | undefined {
     switch (this.authKind) {
-      case 'env':
-        return { env: this.envName.trim() };
       case 'existing':
         return { keyName: this.existingKey };
       case 'new':
@@ -318,46 +357,58 @@ export class SetupWizard {
     }
   }
 
-  private currentFetchKey() {
-    return [
-      this.preset?.kind,
-      this.endpoint.trim(),
-      this.authKind,
-      this.authKind === 'env'
-        ? this.envName
-        : this.authKind === 'existing'
-          ? this.existingKey
-          : this.authKind === 'new'
-            ? this.newKeySecret
-            : ''
-    ].join('\0');
-  }
-
-  /** Fetch the live model list (skipped when nothing changed since the last successful fetch). */
-  async fetchModels(force = false) {
-    const key = this.currentFetchKey();
-    if (!force && this.modelsPhase === 'ready' && key === this.fetchKey) return;
+  /** Probe the endpoint with the key; `force` checks only that API flavor (manual override). */
+  async runCheck(force: ApiKind | null = null) {
     const gen = ++this.generation;
-    this.modelsPhase = 'loading';
-    this.modelsError = null;
+    this.forced = force;
+    this.checkPhase = 'checking';
+    this.checkError = null;
+    this.manual = false;
     try {
-      const list = await this.api.listModels(this.target, {
-        kind: this.preset?.kind ?? 'openai',
+      const r = await this.api.probe(this.target, {
         baseUrl: this.endpoint.trim(),
-        auth: this.authForFetch()
+        force: force ?? undefined,
+        auth: this.authForProbe()
       });
       if (gen !== this.generation) return;
-      this.fetched = list;
-      this.fetchKey = key;
-      this.modelsPhase = 'ready';
-      this.initSelection();
+      this.probe = r;
+      if (r.kind) {
+        this.fetched = r.models;
+        this.checkPhase = 'ok';
+      } else {
+        this.fetched = [];
+        this.checkPhase = 'failed';
+        this.checkError = r.message;
+      }
     } catch (e) {
       if (gen !== this.generation) return;
-      this.modelsError = e instanceof Error ? e.message : String(e);
-      this.modelsPhase = 'error';
-      this.fetchKey = '';
+      this.probe = null;
+      this.fetched = [];
+      this.checkPhase = 'failed';
+      this.checkError = e instanceof Error ? e.message : String(e);
     }
   }
+
+  /** Check only the other API flavor than the one currently assumed. */
+  overrideKind() {
+    void this.runCheck(this.kind === 'anthropic' ? 'openai' : 'anthropic');
+  }
+
+  /** After a failed check: continue and type the model ids by hand. */
+  continueManually() {
+    this.manual = true;
+    this.enterModels();
+  }
+
+  private enterModels() {
+    if (!this.profileTouched) {
+      this.profileName = suggestedProfileName(this.suggestions, this.kind, this.endpoint);
+    }
+    this.initSelection();
+    this.step = 'models';
+  }
+
+  // ---- models ----------------------------------------------------------------------------
 
   private initSelection() {
     const existing = this.state.profiles.find((p) => p.name === this.profileName.trim());
@@ -367,7 +418,6 @@ export class SetupWizard {
     } else if (existing) {
       this.selected = existing.models.filter((m) => this.available.includes(m));
     }
-    if (!this.selected.length && this.available.length) this.selected = [];
     if (!this.selected.includes(this.defaultModel))
       this.defaultModel =
         (existing && this.selected.includes(existing.model) ? existing.model : this.selected[0]) ??
@@ -404,7 +454,6 @@ export class SetupWizard {
     }
     this.manualText = '';
     if (!this.defaultModel) this.defaultModel = this.selected[0] ?? '';
-    if (this.modelsPhase === 'error') this.modelsPhase = 'ready';
   }
 
   // ---- modes -----------------------------------------------------------------------------
@@ -431,7 +480,7 @@ export class SetupWizard {
     const newKey =
       this.authKind === 'new'
         ? {
-            name: this.newKeyName.trim(),
+            name: this.newKeyName,
             secret: this.newKeySecret.trim(),
             description: this.newKeyDescription.trim() || null
           }
@@ -444,14 +493,13 @@ export class SetupWizard {
       });
     return {
       profileName: name,
-      provider: this.preset?.kind ?? 'openai',
+      provider: this.kind,
       baseUrl: this.endpoint.trim(),
       model: this.defaultModel,
       models: [...this.selected],
-      apiKeyEnv: this.authKind === 'env' ? this.envName.trim() : null,
       apiKeyName: this.authKind === 'existing' ? this.existingKey : newKey ? newKey.name : null,
       newKey,
-      keyScope: this.authKind === 'existing' || this.authKind === 'new' ? this.keyScope : 'user',
+      keyScope: 'user',
       setDefault: this.setDefault,
       modeModels
     };

@@ -521,7 +521,7 @@ mod tests {
         let wsl = root.join("wsl.exe");
         std::fs::write(
             &wsl,
-            "#!/bin/sh\n[ \"$1\" = -d ] && [ \"$2\" = Ubuntu ] && [ \"$3\" = --cd ] && [ \"$5\" = -- ] && [ \"$6\" = sh ] && [ \"$7\" = -lc ] || { echo \"bad args: $*\" >&2; exit 90; }\ncd \"$4\" || exit 91\nexport HOME=$FAKE_HOME\nexec sh -c \"$8\"\n",
+            "#!/bin/sh\n[ \"$1\" = -d ] && [ \"$2\" = Ubuntu ] && [ \"$3\" = --cd ] && [ \"$5\" = --exec ] && [ \"$6\" = sh ] && [ \"$7\" = -lc ] || { echo \"bad args: $*\" >&2; exit 90; }\ncd \"$4\" || exit 91\nexport HOME=$FAKE_HOME\nexec sh -c \"$8\"\n",
         )
         .unwrap();
         std::fs::set_permissions(&wsl, std::fs::Permissions::from_mode(0o755)).unwrap();

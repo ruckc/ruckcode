@@ -40,9 +40,12 @@ rather than committed.
 `release-app` matrix job in `ci.yml` builds the Tauri desktop bundles with the Tauri CLI from
 `app/` (no third-party action), only when a release is being made. The version is passed as
 `--config '{"version":"X.Y.Z"}'` plus `RUCKCODE_VERSION`, so `tauri.conf.json` and `Cargo.toml`
-stay at `0.1.0`. Artifacts: `ruckcode-app-<version>-<target>.{dmg,app.tar.gz}` (macOS aarch64 and
-x86_64, the latter cross-built on macos-14), `.msi` (Windows x86_64),
-`.AppImage` and `.deb` (Linux x86_64, built on ubuntu-22.04 for glibc 2.35 compatibility), each with
+stay at `0.1.0`. Only the Windows build is enabled (macOS/Linux desktop entries are commented out in
+the matrix; re-enable them there, `build_site.py` derives the updater platforms and download cards
+from the artifacts present). The Windows leg `needs` `release-rc`, downloads
+`dist-x86_64-unknown-linux-musl`, and merges `{"bundle":{"resources":{"wsl-bundle/rc-linux-x86_64":"wsl/rc"}}}`
+via `--config` so the MSI carries the Linux `rc` that the app copies into WSL2 distros.
+Artifacts: `ruckcode-app-<version>-x86_64-pc-windows-msvc.msi`, each with
 a `.sha256` (plus a `.sig` for the updater bundles when signing is configured). `release-publish`
 needs all builds, so any failed bundle blocks the release. `release.yml` is only the manual
 "redeploy Pages" workflow.

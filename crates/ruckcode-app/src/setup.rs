@@ -7,7 +7,6 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use ruckcode_core::setup::process_env;
 use ruckcode_core::setup_api::{self, InitInput, ModelsAuth, PlanInput};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -50,11 +49,7 @@ pub fn rc_script(args: &[String]) -> String {
 
 /// Argument vector for `wsl.exe` that runs `rc <args>` in `distro`, starting in `linux_cwd`.
 pub fn wsl_rc_args(distro: &str, linux_cwd: &str, args: &[String]) -> Vec<String> {
-    ["-d", distro, "--cd", linux_cwd, "--", "sh", "-lc"]
-        .iter()
-        .map(|s| s.to_string())
-        .chain([rc_script(args)])
-        .collect()
+    wsl::exec_args(distro, Some(linux_cwd), &rc_script(args))
 }
 
 fn s(a: &[&str]) -> Vec<String> {
@@ -94,7 +89,6 @@ pub fn models_call(kind: &str, base_url: &str, auth: Option<&ModelsAuth>) -> RcC
     let mut stdin = None;
     match auth {
         None => {}
-        Some(ModelsAuth::Env(n)) => args.extend(s(&["--api-key-env", n])),
         Some(ModelsAuth::KeyName(n)) => args.extend(s(&["--api-key-name", n])),
         Some(ModelsAuth::Secret(k)) => {
             args.push("--api-key-stdin".into());
@@ -258,7 +252,7 @@ pub(crate) async fn via_wsl(
 // ---- operations -------------------------------------------------------------------------------
 
 pub fn presets() -> Result<Value, String> {
-    json(setup_api::presets())
+    json(setup_api::suggestions())
 }
 
 pub async fn state(t: &Target, project: &str) -> Result<Value, String> {
@@ -269,7 +263,7 @@ pub async fn state(t: &Target, project: &str) -> Result<Value, String> {
 }
 
 pub fn state_local(project: &str, user_dir: Option<&Path>) -> Result<Value, String> {
-    json(setup_api::state(Path::new(project), user_dir, &process_env))
+    json(setup_api::state(Path::new(project), user_dir))
 }
 
 pub async fn list_models(
@@ -281,7 +275,7 @@ pub async fn list_models(
 ) -> Result<Value, String> {
     match t {
         Target::Local => {
-            let models = setup_api::list_models(kind, base_url, auth, None, &process_env)
+            let models = setup_api::list_models(kind, base_url, auth, None)
                 .await
                 .map_err(err)?;
             Ok(serde_json::json!({ "models": models }))
@@ -384,6 +378,48 @@ pub async fn init_modes(t: &Target, project: &str, opts: InitInput) -> Result<Va
     }
 }
 
+/// `rc models --probe`: detect the API flavor of `base_url` with the key (never stored).
+pub fn probe_call(base_url: &str, force: Option<&str>, auth: Option<&ModelsAuth>) -> RcCall {
+    let mut args = s(&["models", "--probe", "--json", "--base-url", base_url.trim()]);
+    if let Some(k) = force.filter(|k| !k.is_empty()) {
+        args.extend(s(&["--provider", k]));
+    }
+    let mut stdin = None;
+    match auth {
+        None => {}
+        Some(ModelsAuth::KeyName(n)) => args.extend(s(&["--api-key-name", n])),
+        Some(ModelsAuth::Secret(k)) => {
+            args.push("--api-key-stdin".into());
+            stdin = Some(Zeroizing::new(format!("{k}\n")));
+        }
+    }
+    RcCall { args, stdin }
+}
+
+/// Probe an endpoint with the entered key: inside the WSL distro for a WSL project, so the
+/// network path and the distro's own saved keys match where the agent will run.
+pub async fn probe(
+    t: &Target,
+    project: &str,
+    base_url: &str,
+    force: Option<&str>,
+    auth: Option<ModelsAuth>,
+) -> Result<Value, String> {
+    match t {
+        Target::Local => {
+            let r = setup_api::probe(base_url, auth, None, force)
+                .await
+                .map_err(err)?;
+            json(r)
+        }
+        Target::Wsl(d) => {
+            let call = probe_call(base_url, force, auth.as_ref());
+            drop(auth);
+            via_wsl(d, project, call, 60).await
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,26 +437,20 @@ mod tests {
             &s(&["setup", "--json-state"]),
         );
         assert_eq!(
-            &v[..7],
-            [
-                "-d",
-                "Ubuntu-24.04",
-                "--cd",
-                "/home/me/p q",
-                "--",
-                "sh",
-                "-lc"
-            ]
+            &v[..6],
+            ["-d", "Ubuntu-24.04", "--cd", "/home/me/p q", "--exec", "sh"]
         );
+        assert_eq!(v[6], "-lc");
         assert_eq!(
-            v[7],
+            wsl::unwrap_script_for_tests(&v[7]),
             "PATH=$HOME/.local/bin:$PATH; exec rc setup --json-state"
         );
+        assert!(!v.iter().any(|a| a == "--"));
     }
 
     fn plan(secret: bool) -> PlanInput {
         serde_json::from_value(serde_json::json!({
-            "profileName": "p", "provider": "openai", "model": "m", "models": ["m"],
+            "profileName": "p", "provider": "openai", "baseUrl": "http://localhost:11434/v1", "model": "m", "models": ["m"],
             "newKey": secret.then(|| serde_json::json!({"name":"k","secret":"sk-TOPSECRET"})),
         }))
         .unwrap()
@@ -449,19 +479,35 @@ mod tests {
             c.stdin.as_deref().map(String::as_str),
             Some("sk-TOPSECRET\n")
         );
-        let c = models_call("anthropic", "", Some(&ModelsAuth::Env("E".into())));
+        let c = models_call("anthropic", "", None);
+        assert_eq!(c.args, ["models", "--provider", "anthropic", "--json"]);
+        assert!(c.stdin.is_none());
+        let c = probe_call(
+            " http://h:1/v1 ",
+            None,
+            Some(&ModelsAuth::Secret("sk-X".into())),
+        );
         assert_eq!(
             c.args,
             [
                 "models",
-                "--provider",
-                "anthropic",
+                "--probe",
                 "--json",
-                "--api-key-env",
-                "E"
+                "--base-url",
+                "http://h:1/v1",
+                "--api-key-stdin"
             ]
         );
-        assert!(c.stdin.is_none());
+        assert_eq!(c.stdin.as_deref().map(String::as_str), Some("sk-X\n"));
+        assert!(!c.args.join(" ").contains("sk-X"));
+        let c = probe_call(
+            "http://h",
+            Some("anthropic"),
+            Some(&ModelsAuth::KeyName("k".into())),
+        );
+        assert!(c
+            .args
+            .ends_with(&s(&["--provider", "anthropic", "--api-key-name", "k"])));
         let c = models_call("anthropic", "", Some(&ModelsAuth::KeyName("k".into())));
         assert!(c.args.ends_with(&s(&["--api-key-name", "k"])));
         assert!(models_call("openai", "", None).stdin.is_none());
@@ -609,7 +655,7 @@ mod tests {
         let wsl = dir.join("wsl.exe");
         std::fs::write(
             &wsl,
-            format!("#!/bin/sh\n[ \"$1\" = -d ] && [ \"$2\" = Ubuntu ] && [ \"$3\" = --cd ] && [ \"$5\" = -- ] && [ \"$6\" = sh ] && [ \"$7\" = -lc ] || {{ echo bad args >&2; exit 90; }}\ncd \"$4\" || exit 91\nexport HOME={}\nexec sh -c \"$8\"\n", home.display()),
+            format!("#!/bin/sh\n[ \"$1\" = -d ] && [ \"$2\" = Ubuntu ] && [ \"$3\" = --cd ] && [ \"$5\" = --exec ] && [ \"$6\" = sh ] && [ \"$7\" = -lc ] || {{ echo bad args >&2; exit 90; }}\ncd \"$4\" || exit 91\nexport HOME={}\nexec sh -c \"$8\"\n", home.display()),
         )
         .unwrap();
         std::fs::set_permissions(&wsl, std::fs::Permissions::from_mode(0o755)).unwrap();

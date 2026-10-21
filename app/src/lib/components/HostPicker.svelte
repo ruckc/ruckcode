@@ -42,6 +42,7 @@
   let rc = $state.raw<RcStatus | null>(null);
   let checking = $state(false);
   let checkError = $state('');
+  /** A manual "Reinstall rc" is running (the automatic install runs inside `checking`). */
   let installing = $state(false);
   let progress = $state.raw<string[]>([]);
   let installError = $state('');
@@ -49,6 +50,10 @@
 
   const selected = $derived(distros.find((d) => d.name === distro));
   const matches = $derived(rc ? versionMatches(rc) : false);
+  /** Progress lines arrive only when `rc` is actually being copied/installed. */
+  const provisioning = $derived(installing || (checking && progress.length > 0));
+  /** This session installed the bundled copy (so the picker can say so). */
+  const viaBundle = $derived(progress.some((l) => l.includes('bundled rc (')));
 
   $effect(() => {
     onready?.(
@@ -86,7 +91,8 @@
     if (host === 'wsl' && untrack(() => !distros.length && !listing)) void refresh();
   });
 
-  // Check `rc` whenever the distro changes.
+  // Provision `rc` whenever the distro changes: the backend checks it and, when it is missing or
+  // differs from the app's version, installs the copy bundled with the app (no button needed).
   let checkSeq = 0;
   $effect(() => {
     const d = host === 'wsl' ? distro : '';
@@ -105,10 +111,22 @@
     void (async () => {
       try {
         api ??= await getWsl();
-        const r = await api.checkRc(d);
+        const r = await api.ensureRc(d, (line) => {
+          if (seq === checkSeq) progress = [...progress, line];
+        });
         if (seq === checkSeq) rc = r;
       } catch (e) {
-        if (seq === checkSeq) checkError = e instanceof Error ? e.message : String(e);
+        if (seq !== checkSeq) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        // Keep whatever is installed usable (a version mismatch only warns).
+        try {
+          const r = await api!.checkRc(d);
+          if (seq !== checkSeq) return;
+          rc = r;
+          installError = msg;
+        } catch {
+          if (seq === checkSeq) checkError = msg;
+        }
       } finally {
         if (seq === checkSeq) checking = false;
       }
@@ -138,14 +156,15 @@
     return () => clearTimeout(t);
   });
 
-  async function install() {
-    if (!api || !distro || installing) return;
+  /** Manual (re)install of the bundled rc, e.g. after a failure or to repair a broken copy. */
+  async function reinstall() {
+    if (!api || !distro || installing || checking) return;
     installing = true;
     installError = '';
     progress = [];
     const d = distro;
     try {
-      const r = await api.installRc(d, (line) => (progress = [...progress, line]));
+      const r = await api.installBundledRc(d, (line) => (progress = [...progress, line]));
       if (d === distro) rc = r;
     } catch (e) {
       installError = e instanceof Error ? e.message : String(e);
@@ -206,33 +225,36 @@
           class="rc"
           role="status"
           aria-label="rc status"
-          data-state={checking
-            ? 'checking'
-            : checkError
-              ? 'error'
-              : !rc?.installed
-                ? 'missing'
-                : matches
-                  ? 'ok'
-                  : 'mismatch'}
+          data-state={provisioning
+            ? 'installing'
+            : checking
+              ? 'checking'
+              : checkError
+                ? 'error'
+                : !rc?.installed
+                  ? 'missing'
+                  : matches
+                    ? 'ok'
+                    : 'mismatch'}
         >
-          {#if checking}
+          {#if provisioning}
+            <span class="muted">Installing bundled rc into {distro}…</span>
+          {:else if checking}
             <span class="muted">Checking rc in {distro}…</span>
           {:else if checkError}
             <span class="err">{checkError}</span>
           {:else if rc && !rc.installed}
             <span class="warn">rc is not installed in {distro}.</span>
           {:else if rc && matches}
-            <span class="ok">rc {rc.version} installed</span>
+            <span class="ok">rc {rc.version} {viaBundle ? '(bundled)' : 'installed'}</span>
           {:else if rc}
             <span class="warn"
-              >rc {rc.version ?? '(unknown version)'} is installed, but this app is {rc.expected}.
-              An update is recommended.</span
+              >rc {rc.version ?? '(unknown version)'} is installed, but this app is {rc.expected}.</span
             >
           {/if}
-          {#if rc && !matches && !checking}
-            <button type="button" class="small primary" disabled={installing} onclick={install}>
-              {installing ? 'Installing…' : rc.installed ? 'Update rc' : 'Install rc'}
+          {#if !checking && !installing && (rc || checkError)}
+            <button type="button" class="small" onclick={reinstall}>
+              {rc?.installed ? 'Reinstall rc' : 'Install rc'}
             </button>
           {/if}
         </div>
@@ -241,7 +263,7 @@
               '\n'
             )}</pre>
         {/if}
-        {#if installError}<p class="err" role="alert">Install failed: {installError}</p>{/if}
+        {#if installError}<p class="err" role="alert">Installing rc failed: {installError}</p>{/if}
       {/if}
     </div>
   {/if}

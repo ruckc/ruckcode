@@ -49,7 +49,7 @@ def host_triple():
     return None
 
 
-def make_dist(root: Path, sigs=True) -> Path:
+def make_dist(root: Path, sigs=True, app_files=None) -> Path:
     dist = root / "dist"
     dist.mkdir()
     for t, _l, _e in build_site.RC_TARGETS:
@@ -62,12 +62,12 @@ def make_dist(root: Path, sigs=True) -> Path:
                 tf.add(src / f"rc-{VERSION}-{t}", arcname=f"rc-{VERSION}-{t}")
         else:
             (dist / name).write_bytes(b"zip")
-    for n in APP_FILES:
+    for n in APP_FILES if app_files is None else app_files:
         (dist / n).write_bytes(n.encode() * 10)
     for p in list(dist.iterdir()):
         digest = hashlib.sha256(p.read_bytes()).hexdigest()
         (dist / f"{p.name}.sha256").write_text(f"{digest}  {p.name}\n")
-        if sigs and (p.name in UPDATER_FILES or p.name.startswith("rc-")):
+        if sigs and (p.name in UPDATER_FILES or p.name.startswith("rc-")):  # sig only for updater bundles
             (dist / f"{p.name}.sig").write_text(SIG)
     return dist
 
@@ -88,6 +88,31 @@ class BuildSite(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_windows_only_release(self):
+        """The current pipeline ships only the MSI: no darwin/linux keys or download cards."""
+        msi = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi"
+        dist = make_dist(self.tmp, app_files=[msi])
+        out, code = run_build(self.tmp, dist)
+        self.assertEqual(code, 0)
+        tauri = json.loads((out / "latest.json").read_text())
+        self.assertEqual(set(tauri["platforms"]), {"windows-x86_64", "windows-x86_64-msi"})
+        index = (out / "index.html").read_text()
+        self.assertIn(msi, index)
+        self.assertNotIn("macOS, Apple Silicon", index)
+        self.assertNotIn(".AppImage", index)
+        self.assertIn("Windows only", index)
+        # rc downloads for every target are unchanged
+        rc = json.loads((out / "rc" / "latest.json").read_text())
+        self.assertEqual(set(rc["targets"]), {t for t, _l, _e in build_site.RC_TARGETS})
+        self.assertIn("rc-%s-aarch64-apple-darwin.tar.gz" % VERSION, index)
+
+    def test_an_app_installer_without_signature_is_an_error(self):
+        msi = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi"
+        dist = make_dist(self.tmp, app_files=[msi])
+        (dist / f"{msi}.sig").unlink()
+        _out, code = run_build(self.tmp, dist)
+        self.assertNotEqual(code, 0)
 
     def test_signed_site(self):
         dist = make_dist(self.tmp)

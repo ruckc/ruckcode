@@ -88,14 +88,23 @@ export async function tauriPlatform(): Promise<string> {
   return invoke<string>('platform');
 }
 
+function withProgress(
+  command: string,
+  distro: string,
+  onProgress: (line: string) => void
+): Promise<RcStatus> {
+  const onProgressChannel = new Channel<string>();
+  onProgressChannel.onmessage = onProgress;
+  return invoke<RcStatus>(command, { distro, onProgress: onProgressChannel });
+}
+
 export const tauriWsl: WslApi = {
   listDistros: () => invoke<WslDistro[]>('wsl_list_distros'),
   checkRc: (distro) => invoke<RcStatus>('wsl_check_rc', { distro }),
-  installRc(distro, onProgress) {
-    const onProgressChannel = new Channel<string>();
-    onProgressChannel.onmessage = onProgress;
-    return invoke<RcStatus>('wsl_install_rc', { distro, onProgress: onProgressChannel });
-  },
+  installRc: (distro, onProgress) => withProgress('wsl_install_rc', distro, onProgress),
+  installBundledRc: (distro, onProgress) =>
+    withProgress('wsl_install_bundled_rc', distro, onProgress),
+  ensureRc: (distro, onProgress) => withProgress('wsl_ensure_rc', distro, onProgress),
   translatePath: (distro, path) => invoke<string>('wsl_translate_path', { distro, path })
 };
 
@@ -139,6 +148,14 @@ export const tauriSetup: SetupApi = {
     );
     return r.models;
   },
+  probe: (t, req) =>
+    invoke('setup_probe', {
+      project: t.project,
+      distro: t.distro ?? null,
+      baseUrl: req.baseUrl,
+      force: req.force ?? null,
+      auth: req.auth ?? null
+    }),
   preview: (t, plan) =>
     invoke('setup_preview', { project: t.project, distro: t.distro ?? null, plan }),
   apply: (t, plan) => invoke('setup_apply', { project: t.project, distro: t.distro ?? null, plan }),

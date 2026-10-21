@@ -5,7 +5,7 @@ for now, but the UI should stay responsive so it remains possible later.
 
 ## Decisions
 
-- **Platforms:** macOS, Windows and Linux desktop. **WSL2 on Windows is supported.**
+- **Platforms:** macOS, Windows and Linux desktop (release builds currently Windows MSI only; macOS/Linux users use `rc`). **WSL2 on Windows is supported.**
 - **The ACP client lives in TypeScript and uses the official ACP TS SDK.** The app is just
   another ACP client, like the TUI and editors, so modes, mise tasks, hooks, MCP,
   AskUserQuestion and transcripts work unchanged.
@@ -25,7 +25,7 @@ Agent connection ("agent host"), chosen per window and project:
 | Host | How |
 |------|-----|
 | Local (default) | The Tauri backend embeds `ruckcode_core::Agent` behind `ruckcode_acp` over an in-process pipe. ACP JSON-RPC lines are relayed to the webview through a Tauri `Channel`, and outgoing lines go back through a Tauri command. |
-| WSL2 (Windows) | The Tauri backend spawns `wsl.exe -d <distro> --cd <linux path> -- rc acp` and relays its stdio the same way. The app lists distros (`wsl.exe -l -v`, falling back to `-l -q`), checks for `rc` inside the distro (and offers to install it from the release archive), and translates `\\wsl$\...` paths to Linux paths. |
+| WSL2 (Windows) | The Tauri backend spawns `wsl.exe -d <distro> --cd <linux path> --exec sh -lc <script ending in exec rc acp>` and relays its stdio the same way. The app lists distros (`wsl.exe -l -v`, falling back to `-l -q`), checks for `rc` inside the distro (and installs the copy bundled in the MSI automatically), and translates `\\wsl$\...` paths to Linux paths. |
 | Subprocess (any OS, optional) | `rc acp` as a child process. Useful for running against a specific `rc` binary. |
 
 The frontend has one transport interface (`send(line)` and `onLine(cb)`) for all three hosts,
@@ -188,11 +188,21 @@ Built as planned, with these deviations and details:
   `wsl_check_rc(distro)`, `wsl_install_rc(distro, onProgress)`, `wsl_translate_path(distro, path)`,
   `wsl_to_windows_path`. Off Windows the `wsl_*` commands return "WSL2 is only available on
   Windows". All `wsl.exe` launches use `CREATE_NO_WINDOW`.
-- **Starting the agent:** `wsl.exe -d <distro> --cd <linux cwd> -- sh -lc 'PATH=$HOME/.local/bin:$PATH;
-  exec rc acp'` through the same stdio relay as the subprocess host (`spawn_command`, shared). The
-  PATH prefix makes a freshly installed `rc` visible to login shells that predate `~/.local/bin`.
-  `--` makes `wsl.exe` hand the rest of the command line to the distro's shell, which is why the
-  install script is shipped as `echo <base64> | base64 -d | sh` (no quoting or newline problems).
+- **Starting the agent:** `wsl.exe -d <distro> [--cd <linux cwd>] --exec sh -lc <wrapped>` through
+  the same stdio relay as the subprocess host (`spawn_command`, shared). Root cause of the
+  `sh: 1: Syntax error: "(" unexpected` bug: after a plain `--`, wsl.exe joins the remaining
+  arguments into ONE command line and the distro's default shell re-parses it, so our script was
+  re-split. `--exec` starts `sh` directly with the given argv. Additionally every script is passed
+  as `set -f; IFS=; eval $(printf %s <base64> | base64 -d || echo exit 127)` (`wsl::wrap_script`):
+  the payload is base64 so the argument holds no quotes or backslashes, and `eval` (not a `| sh`
+  pipe) keeps stdin and `exec` for the agent. The script starts with `PATH=$HOME/.local/bin:$PATH`
+  so a freshly installed `rc` is visible to login shells that predate `~/.local/bin`.
+- **Bundled rc (Windows MSI).** `release-app` (Windows) downloads the `release-rc` musl artifact and
+  adds it as resource `wsl/rc` via a `--config` merge. `wsl_ensure_rc` (automatic, on distro
+  selection) and `wsl_install_bundled_rc` (manual "Reinstall rc") stream that file over stdin to
+  `~/.local/bin/rc.tmp`, check SHA-256 (host-computed, `sha256sum` in the distro), `chmod`, `mv`,
+  then require `rc --version` to equal the app version. Non-x86_64 distros, or builds without the
+  resource, fall back to the Pages installer below.
 - **Install script.** Detects the arch (`uname -m`: x86_64 gets the musl static build, aarch64 the gnu
   one), downloads `rc-<ver>-<target>.tar.gz` and `.sha256` from the `v<ver>` release (`<ver>` is the
   app version; if that tag has no asset it asks the GitHub API for the latest release), verifies
@@ -209,13 +219,13 @@ Built as planned, with these deviations and details:
 - **UI.** `HostPicker` in the project header: Local | WSL2 (only when `platform()` is `windows`) |
   Custom rc (path to a binary, subprocess host). WSL2 shows the distro dropdown (default, state,
   WSL version; WSL1 and Docker Desktop distros are listed but disabled), Refresh, the `rc` status
-  (installed version, "not installed" with Install, or a version-mismatch warning with Update) with
-  live install output, and Connect stays disabled until a WSL2 distro has `rc`. A version mismatch
+  (`rc <ver> (bundled)` after the automatic install, "Installing bundled rc…" while it runs, a
+  Reinstall button) with live install output, and Connect stays disabled until a WSL2 distro has `rc`. A version mismatch
   only warns. Browse opens the native dialog at `\\wsl.localhost\<distro>\` and the result is
   translated. Recents are now objects `{path, host, distro?, rcPath?}` (old string lists migrate)
   and show a host badge; WSL entries are hidden on other platforms.
 - **Mock mode.** `?mock=1&platform=windows` pretends to be Windows and swaps in `FakeWsl`:
-  Ubuntu-24.04 (default, no rc yet), Debian (older rc 0.0.9), Alpine (WSL1) and docker-desktop
+  Ubuntu-24.04 (default, no rc yet: installed automatically), Debian (older rc 0.0.9: updated automatically), Alpine (WSL1) and docker-desktop
   (not selectable). `mock:exit <code> <stderr>` ends the fake agent with an exit message. Every
   mock connect is recorded in `window.__ruckcodeConnects` for tests.
 - **Tests.** Rust: parsers with UTF-16 fixtures, path translation, script builder and execution,
@@ -256,8 +266,8 @@ Built as planned, with these deviations and details:
   `rc init` when modes.toml is missing), review (diff) and save, then offers to reconnect the agent.
   The new key's secret is wiped from state once saved (kept on a failed save so it can be retried) and
   the keys form clears its field on submit, success or not.
-- **First run.** On Connect the app asks `setup_state`; `needsOnboarding` (no user config and no
-  `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, the TUI's rule) opens the wizard instead of connecting. Closing
+- **First run.** On Connect the app asks `setup_state`; `needsOnboarding` (no profile with a stored
+  key or keyless local endpoint; env vars do not count, the TUI's rule) opens the wizard instead of connecting. Closing
   it still connects, so users with another setup are never blocked; "Reconnect the agent now" connects
   (or reconnects, resuming sessions) with the new config.
 - **Mock mode.** `FakeSetup` (`host/fake-setup.ts`) implements everything in memory. `?setup=fresh`

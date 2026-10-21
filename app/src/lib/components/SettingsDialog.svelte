@@ -1,6 +1,6 @@
 <script lang="ts">
   import { focusTrap } from '../a11y';
-  import type { PresetInfo, SetupApi, SetupState, SetupTarget } from '../host/setup';
+  import type { EndpointSuggestion, SetupApi, SetupState, SetupTarget } from '../host/setup';
   import { SetupWizard, type SettingsTab } from '../state/wizard.svelte';
   import KeysTab from './KeysTab.svelte';
   import type { UpdateController } from '../state/updates.svelte';
@@ -36,7 +36,7 @@
   ]);
 
   let info = $state<SetupState | null>(null);
-  let presets = $state<PresetInfo[]>([]);
+  let presets = $state<EndpointSuggestion[]>([]);
   let loadError = $state<string | null>(null);
   let wizard = $state<SetupWizard | null>(null);
 
@@ -56,7 +56,7 @@
   function changed(s: SetupState) {
     info = s;
     // An untouched wizard follows changes made in other tabs (new keys, new modes.toml).
-    if (wizard && wizard.step === 'provider' && !wizard.preset) {
+    if (wizard && wizard.step === 'key' && !wizard.newKeySecret && !wizard.endpointTouched) {
       wizard = new SetupWizard(api, target, presets, s);
     }
   }

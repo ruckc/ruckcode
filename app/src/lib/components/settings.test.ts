@@ -96,14 +96,14 @@ describe('SettingsDialog', () => {
     });
     const wizardTab = await screen.findByRole('tab', { name: 'Providers & models' });
     expect(wizardTab).toHaveAttribute('aria-selected', 'true');
-    await screen.findByText('Which provider do you want to use?');
+    await screen.findByText('How should ruckcode authenticate?');
     await fireEvent.keyDown(wizardTab, { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: 'API keys' })).toHaveAttribute('aria-selected', 'true');
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect(closed).toBe(true);
   });
 
-  it('shows the first-run welcome and walks the preset step', async () => {
+  it('shows the first-run welcome and walks key -> endpoint with suggestions and validation', async () => {
     const api = new FakeSetup({ fresh: true, delayMs: 0 });
     render(SettingsDialog, {
       props: { api, target, firstRun: true, onclose: () => {}, onreconnect: () => {} }
@@ -111,9 +111,26 @@ describe('SettingsDialog', () => {
     await screen.findByText(/No model provider is configured/);
     const next = await screen.findByRole('button', { name: 'Next' });
     expect(next).toBeDisabled();
-    await fireEvent.click(screen.getByLabelText(/Ollama/));
+    expect(screen.queryByText(/environment variable/i)).toBeNull();
+    // Pasting a key (masked) enables Next and hints the endpoint from the key shape.
+    const secret = screen.getByLabelText('API key') as HTMLInputElement;
+    expect(secret.type).toBe('password');
+    await fireEvent.input(secret, { target: { value: 'sk-or-v1-abc' } });
     expect(next).toBeEnabled();
     await fireEvent.click(next);
-    expect(await screen.findByLabelText('Endpoint URL')).toHaveValue('http://localhost:11434/v1');
+    const url = await screen.findByLabelText('Endpoint URL');
+    expect(url).toHaveValue('https://openrouter.ai/api/v1');
+    // The URL is required and validated inline; chips fill it.
+    await fireEvent.input(url, { target: { value: '' } });
+    expect(next).toBeDisabled();
+    await fireEvent.input(url, { target: { value: 'localhost:11434' } });
+    expect(screen.getByTestId('endpoint-error')).toHaveTextContent(/http/);
+    expect(next).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Ollama' }));
+    expect(url).toHaveValue('http://localhost:11434/v1');
+    expect(screen.getByTestId('endpoint-error')).toHaveTextContent('');
+    expect(next).toBeEnabled();
+    for (const label of ['Anthropic', 'OpenAI', 'OpenRouter', 'LM Studio', 'vLLM'])
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   });
 });

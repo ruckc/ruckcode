@@ -24,9 +24,7 @@ impl Env {
     }
 
     fn wizard(&self) -> SetupWizard {
-        let mut ctx = SetupContext::load(self.proj.path(), Some(self.user.path()));
-        ctx.env = Box::new(|k| (k == "OPENAI_API_KEY").then(|| "sk-env".to_string()));
-        SetupWizard::new(ctx)
+        SetupWizard::new(SetupContext::load(self.proj.path(), Some(self.user.path())))
     }
 }
 
@@ -48,13 +46,28 @@ fn typ(w: &mut SetupWizard, s: &str) {
     }
 }
 
-fn models(ids: &[&str]) -> Vec<ModelInfo> {
-    ids.iter()
-        .map(|i| ModelInfo {
-            id: i.to_string(),
-            display_name: None,
-        })
-        .collect()
+fn probe_ok(kind: &str, ids: &[&str]) -> Result<setup_api::ProbeResult, String> {
+    Ok(setup_api::ProbeResult {
+        kind: Some(kind.into()),
+        models: ids
+            .iter()
+            .map(|i| setup_api::ModelView {
+                id: i.to_string(),
+                display_name: None,
+            })
+            .collect(),
+        attempts: vec![],
+        message: format!("{kind} ✓ ({} models)", ids.len()),
+    })
+}
+
+fn probe_fail(msg: &str) -> Result<setup_api::ProbeResult, String> {
+    Ok(setup_api::ProbeResult {
+        kind: None,
+        models: vec![],
+        attempts: vec![],
+        message: msg.into(),
+    })
 }
 
 fn draw(w: &SetupWizard) -> String {
@@ -71,59 +84,54 @@ fn draw(w: &SetupWizard) -> String {
     s
 }
 
-/// Advance an OpenRouter wizard with an env-var key to the Models step.
-fn to_models(w: &mut SetupWizard) -> FetchRequest {
-    // Provider: OpenRouter is the fourth preset.
-    press(
-        w,
-        &[KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Enter],
-    );
+/// Paste an OpenRouter key and walk to the Check step; returns the probe request.
+fn to_check(w: &mut SetupWizard) -> ProbeRequest {
+    assert_eq!(w.step, Step::ApiKey);
+    typ(w, "sk-or-v1-secret-1234");
+    press(w, &[KeyCode::Enter]);
     assert_eq!(w.step, Step::Endpoint);
+    // The key shape pre-fills the URL (editable).
     assert_eq!(w.endpoint.value, "https://openrouter.ai/api/v1");
-    press(w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::Auth);
-    assert_eq!(w.env_name.value, "OPENROUTER_API_KEY");
-    assert_eq!(w.auth_choice(), Some(AuthChoice::Env));
-    press(w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::ProfileName);
-    assert_eq!(w.profile_name.value, "openrouter");
     match press(w, &[KeyCode::Enter]) {
-        Effect::FetchModels(r) => r,
-        e => panic!("expected fetch, got {e:?}"),
+        Effect::Probe(r) => r,
+        e => panic!("expected probe, got {e:?}"),
     }
 }
 
+/// ... and on to the Models step with the given model ids.
+fn to_models(w: &mut SetupWizard, ids: &[&str]) {
+    let req = to_check(w);
+    w.probed(req.generation, probe_ok("openai", ids));
+    assert_eq!(press(w, &[KeyCode::Enter]), Effect::None);
+    assert_eq!(w.step, Step::Models);
+}
+
 #[test]
-fn full_walk_with_new_key_modes_and_apply() {
+fn full_walk_key_first_then_url_check_models_name_modes_apply() {
     let env = Env::new(true);
     let mut w = env.wizard();
-    assert_eq!(w.step, Step::Provider);
-    press(
-        &mut w,
-        &[KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Enter],
-    );
+    assert_eq!(w.step, Step::ApiKey);
+    // A key is required for "paste".
     press(&mut w, &[KeyCode::Enter]);
-    // Auth: new named key (row 2): keep the prefilled name, tab to the secret.
-    press(&mut w, &[KeyCode::Down, KeyCode::Down]);
-    assert_eq!(w.auth_choice(), Some(AuthChoice::New));
-    press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::Auth, "secret is required");
+    assert_eq!(w.step, Step::ApiKey);
     assert!(w.error.is_some());
-    typ(&mut w, "sk-or-secret-1234");
-    press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::ProfileName);
-    let Effect::FetchModels(req) = press(&mut w, &[KeyCode::Enter]) else {
-        panic!()
-    };
-    assert_eq!(req.api_key.as_deref(), Some("sk-or-secret-1234"));
+    let req = to_check(&mut w);
+    assert_eq!(req.api_key.as_deref(), Some("sk-or-v1-secret-1234"));
     assert_eq!(req.base_url, "https://openrouter.ai/api/v1");
-    assert_eq!(req.kind, ApiKind::Openai);
-    assert!(draw(&w).contains("fetching models"));
-    w.models_loaded(req.generation, Ok(models(&["a/one", "b/two", "c/three"])));
-    // Enter with nothing selected is refused.
+    assert_eq!(req.force, None);
+    assert!(!format!("{req:?}").contains("secret"), "{req:?}");
+    assert!(draw(&w).contains("probing"));
+    w.probed(
+        req.generation,
+        probe_ok("openai", &["a/one", "b/two", "c/three"]),
+    );
+    assert!(draw(&w).contains("openai ✓"));
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.step, Step::Models);
+    assert_eq!(w.profile_name.value, "openrouter");
+    // Nothing selected is refused; select first and third.
     press(&mut w, &[KeyCode::Enter]);
     assert!(w.error.is_some());
-    // Select first and third.
     press(
         &mut w,
         &[
@@ -134,83 +142,219 @@ fn full_walk_with_new_key_modes_and_apply() {
         ],
     );
     press(&mut w, &[KeyCode::Enter]);
-    assert!(
-        matches!(w.models, ModelsPhase::Default { .. }),
-        "{:?}",
-        w.models
-    );
+    assert!(matches!(w.models, ModelsPhase::Default { .. }));
     press(&mut w, &[KeyCode::Down, KeyCode::Enter]);
     assert_eq!(w.default_model, "c/three");
+    assert_eq!(w.step, Step::ProfileName);
+    press(&mut w, &[KeyCode::Enter]);
     assert_eq!(w.step, Step::Modes);
-    // Assign explore: chooser item 0 = default, 1 = openrouter/a/one.
     press(&mut w, &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter]);
     assert_eq!(
         w.assignments[0],
         Some(("openrouter".to_string(), "a/one".to_string()))
     );
-    assert_eq!(w.assignments[1], None);
     press(&mut w, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
     assert_eq!(w.step, Step::Review);
     assert!(!w.preview.contains("sk-or"), "{}", w.preview);
-    assert!(w.preview.contains("openrouter"), "{}", w.preview);
     let plan = w.plan();
     assert_eq!(plan.profile.models, ["a/one", "c/three"]);
+    assert_eq!(plan.profile.provider, ProviderKind::Openai);
     assert_eq!(plan.profile.api_key_name.as_deref(), Some("openrouter"));
-    assert_eq!(plan.mode_models.len(), 2);
-    assert!(plan.set_default);
+    assert_eq!(plan.profile.api_key_env, None);
+    assert_eq!(plan.key_scope, KeyScope::User);
     assert_eq!(press(&mut w, &[KeyCode::Enter]), Effect::Apply);
     let r = setup::apply(&w.plan(), Some(env.user.path()), env.proj.path()).unwrap();
     w.applied(Ok(r));
     assert!(w.done() && !w.aborted);
     let cfg = Config::load(env.proj.path(), Some(env.user.path())).unwrap();
     assert_eq!(cfg.default_profile, "openrouter");
-    assert_eq!(cfg.profiles["openrouter"].model, "c/three");
     assert_eq!(
         ruckcode_core::config::named_key(Some(env.user.path()), "openrouter").as_deref(),
-        Some("sk-or-secret-1234")
+        Some("sk-or-v1-secret-1234")
     );
+    let cfg_text = std::fs::read_to_string(env.user.path().join("config.toml")).unwrap();
+    assert!(!cfg_text.contains("secret") && !cfg_text.contains("API_KEY"));
     let modes = std::fs::read_to_string(env.proj.path().join(".ruckcode/modes.toml")).unwrap();
     assert!(modes.contains("model = \"a/one\""), "{modes}");
-    let cfg_text = std::fs::read_to_string(env.user.path().join("config.toml")).unwrap();
-    assert!(!cfg_text.contains("sk-or-secret"));
+}
+
+#[test]
+fn key_shape_hints_the_endpoint_but_never_overrides_the_users_choice() {
+    let env = Env::new(false);
+    for (key, url) in [
+        ("sk-ant-api03-x", "https://api.anthropic.com"),
+        ("sk-proj-abc", "https://api.openai.com/v1"),
+        ("sk-or-v1-x", "https://openrouter.ai/api/v1"),
+    ] {
+        let mut w = env.wizard();
+        typ(&mut w, key);
+        press(&mut w, &[KeyCode::Enter]);
+        assert_eq!(w.endpoint.value, url);
+    }
+    // Unknown shape: empty, required.
+    let mut w = env.wizard();
+    typ(&mut w, "abc123");
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.endpoint.value, "");
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.step, Step::Endpoint);
+    assert!(w.error.as_deref().unwrap().contains("required"));
+    // Back and forth keeps an edited URL.
+    w.endpoint.set("http://gpu-box:8000/v1/");
+    w.endpoint_touched = true;
+    press(&mut w, &[KeyCode::Esc]);
+    typ(&mut w, "x");
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.endpoint.value, "http://gpu-box:8000/v1/");
+}
+
+#[test]
+fn endpoint_is_validated_trimmed_and_suggestions_cycle_with_tab() {
+    let env = Env::new(false);
+    let mut w = env.wizard();
+    press(&mut w, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]); // no key
+    assert_eq!(w.auth_choice(), Some(AuthChoice::NoKey));
+    assert_eq!(w.step, Step::Endpoint);
+    assert_eq!(w.endpoint.value, "");
+    for bad in ["localhost:8000", "ftp://x", "http://", "http://a b"] {
+        w.endpoint.set(bad);
+        assert_eq!(press(&mut w, &[KeyCode::Enter]), Effect::None);
+        assert_eq!(w.step, Step::Endpoint, "{bad}");
+        assert!(w.error.is_some(), "{bad}");
+    }
+    w.endpoint.set("");
+    press(&mut w, &[KeyCode::Tab]);
+    assert_eq!(w.endpoint.value, "https://api.anthropic.com");
+    for _ in 0..3 {
+        press(&mut w, &[KeyCode::Tab]);
+    }
+    assert_eq!(w.endpoint.value, "http://localhost:11434/v1");
+    let out = draw(&w);
+    assert!(out.contains("LM Studio") && out.contains("vLLM"), "{out}");
+    w.endpoint.set("  http://localhost:11434/v1/  ");
+    let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
+        panic!()
+    };
+    assert_eq!(r.base_url, "http://localhost:11434/v1");
+    assert_eq!(r.api_key, None);
+    w.probed(r.generation, probe_ok("openai", &["llama3"]));
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.profile_name.value, "ollama");
+    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]); // single model: straight to the name
+    assert_eq!(w.step, Step::ProfileName);
+    let p = w.plan();
+    assert_eq!(p.profile.api_key_name, None);
+    assert!(p.new_key.is_none());
+    assert_eq!(
+        p.profile.base_url.as_deref(),
+        Some("http://localhost:11434/v1")
+    );
+}
+
+#[test]
+fn anthropic_flavor_default_url_is_not_stored() {
+    let env = Env::new(false);
+    let mut w = env.wizard();
+    typ(&mut w, "sk-ant-api03-zzz");
+    press(&mut w, &[KeyCode::Enter]);
+    let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
+        panic!()
+    };
+    w.probed(r.generation, probe_ok("anthropic", &["claude-a"]));
+    press(
+        &mut w,
+        &[KeyCode::Enter, KeyCode::Char(' '), KeyCode::Enter],
+    );
+    assert_eq!(w.step, Step::ProfileName);
+    assert_eq!(w.profile_name.value, "anthropic");
+    let p = w.plan();
+    assert_eq!(p.profile.provider, ProviderKind::Anthropic);
+    assert_eq!(p.profile.base_url, None);
+    assert_eq!(p.new_key.as_ref().unwrap().name, "anthropic");
+}
+
+#[test]
+fn probe_failure_retry_override_and_manual_models() {
+    let env = Env::new(false);
+    let mut w = env.wizard();
+    let req = to_check(&mut w);
+    // Stale results are ignored.
+    w.probed(req.generation + 7, probe_ok("openai", &["x"]));
+    assert_eq!(w.check, CheckPhase::Checking);
+    // Esc while checking returns to the URL; the late result can no longer land.
+    press(&mut w, &[KeyCode::Esc]);
+    assert_eq!(w.step, Step::Endpoint);
+    w.probed(req.generation, probe_ok("openai", &["x"]));
+    assert_eq!(w.step, Step::Endpoint);
+    let Effect::Probe(req) = press(&mut w, &[KeyCode::Enter]) else {
+        panic!()
+    };
+    w.probed(
+        req.generation,
+        probe_fail("The server rejected the API key (HTTP 401). Check the key."),
+    );
+    assert!(draw(&w).contains("HTTP 401"));
+    // Retry re-probes with a new generation.
+    let Effect::Probe(again) = press(&mut w, &[KeyCode::Char('r')]) else {
+        panic!()
+    };
+    assert!(again.generation > req.generation);
+    w.probed(
+        again.generation,
+        probe_fail("Neither API answered (HTTP 404). Try adding /v1."),
+    );
+    // Override forces the other flavor.
+    let Effect::Probe(forced) = press(&mut w, &[KeyCode::Char('o')]) else {
+        panic!()
+    };
+    assert_eq!(forced.force, Some(ProviderKind::Anthropic));
+    w.probed(forced.generation, probe_ok("anthropic", &["claude-a"]));
+    assert_eq!(w.kind(), ProviderKind::Anthropic);
+    assert!(draw(&w).contains("chosen manually"));
+    let Effect::Probe(back) = press(&mut w, &[KeyCode::Char('o')]) else {
+        panic!()
+    };
+    assert_eq!(back.force, Some(ProviderKind::Openai));
+    w.probed(back.generation, probe_fail("boom"));
+    // Continue by typing model ids.
+    press(&mut w, &[KeyCode::Char('m')]);
+    assert_eq!(w.step, Step::Models);
+    assert!(matches!(w.models, ModelsPhase::Manual { .. }));
+    press(&mut w, &[KeyCode::Enter]);
+    assert!(draw(&w).contains("at least one"));
+    typ(&mut w, " one , two,,one");
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.chosen, ["one", "two"]);
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.default_model, "one");
+    assert_eq!(w.plan().profile.models, ["one", "two"]);
+    assert_eq!(w.plan().profile.provider, ProviderKind::Openai);
 }
 
 #[test]
 fn esc_goes_back_and_first_step_aborts() {
     let env = Env::new(true);
     let mut w = env.wizard();
-    let req = to_models(&mut w);
-    w.models_loaded(req.generation, Ok(models(&["m1"])));
-    press(&mut w, &[KeyCode::Esc]);
-    assert_eq!(w.step, Step::ProfileName);
-    press(&mut w, &[KeyCode::Esc]);
-    assert_eq!(w.step, Step::Auth);
+    to_models(&mut w, &["m1"]);
     press(&mut w, &[KeyCode::Esc]);
     assert_eq!(w.step, Step::Endpoint);
     press(&mut w, &[KeyCode::Esc]);
-    assert_eq!(w.step, Step::Provider);
+    assert_eq!(w.step, Step::ApiKey);
     assert!(!w.aborted);
     press(&mut w, &[KeyCode::Esc]);
     assert!(w.aborted && w.done());
 }
 
 #[test]
-fn going_back_to_models_reuses_the_fetched_list() {
+fn going_back_to_models_keeps_the_list_and_selection() {
     let env = Env::new(true);
     let mut w = env.wizard();
-    let req = to_models(&mut w);
-    w.models_loaded(req.generation, Ok(models(&["m1", "m2"])));
-    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]); // m1 only -> straight to modes
-    assert_eq!(w.step, Step::Modes);
+    to_models(&mut w, &["m1", "m2"]);
+    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]); // m1 only -> name
+    assert_eq!(w.step, Step::ProfileName);
     press(&mut w, &[KeyCode::Esc]);
     assert_eq!(w.step, Step::Models);
-    press(&mut w, &[KeyCode::Esc]);
-    press(&mut w, &[KeyCode::Enter]); // profile name -> models again
-    assert_eq!(w.step, Step::Models);
-    assert!(
-        matches!(w.models, ModelsPhase::List(_)),
-        "no refetch expected"
-    );
+    assert!(matches!(w.models, ModelsPhase::List(_)));
     assert!(w.selected.contains("m1"));
 }
 
@@ -218,21 +362,14 @@ fn going_back_to_models_reuses_the_fetched_list() {
 fn multi_select_all_and_filter() {
     let env = Env::new(false);
     let mut w = env.wizard();
-    let req = to_models(&mut w);
-    w.models_loaded(
-        req.generation,
-        Ok(models(&[
-            "anthropic/claude-a",
-            "openai/gpt",
-            "openai/gpt-mini",
-        ])),
+    to_models(
+        &mut w,
+        &["anthropic/claude-a", "openai/gpt", "openai/gpt-mini"],
     );
-    // `a` with an empty filter selects all.
     press(&mut w, &[KeyCode::Char('a')]);
     assert_eq!(w.selected.len(), 3);
     press(&mut w, &[KeyCode::Char('a')]);
     assert!(w.selected.is_empty());
-    // Typing filters (and `a` is part of the filter once it is non-empty).
     typ(&mut w, "gpt");
     let ModelsPhase::List(st) = &w.models else {
         panic!()
@@ -240,12 +377,6 @@ fn multi_select_all_and_filter() {
     assert_eq!(st.visible().len(), 2);
     press(&mut w, &[KeyCode::Char(' ')]);
     assert_eq!(w.selected.iter().collect::<Vec<_>>(), ["openai/gpt"]);
-    typ(&mut w, "-mini");
-    let ModelsPhase::List(st) = &w.models else {
-        panic!()
-    };
-    assert_eq!(st.visible().len(), 1);
-    // Esc clears the filter first; `/` allows a leading `a`.
     press(&mut w, &[KeyCode::Esc]);
     let ModelsPhase::List(st) = &w.models else {
         panic!()
@@ -256,68 +387,22 @@ fn multi_select_all_and_filter() {
     let ModelsPhase::List(st) = &w.models else {
         panic!()
     };
-    assert_eq!(st.filter, "anth ");
-    assert!(st.filter_focus);
+    assert!(st.filter_focus && st.filter == "anth ");
     press(&mut w, &[KeyCode::Backspace, KeyCode::Enter]);
-    let ModelsPhase::List(st) = &w.models else {
-        panic!()
-    };
-    assert!(!st.filter_focus);
-    // ctrl+a selects all visible only.
     w.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
     assert!(w.selected.contains("anthropic/claude-a"));
     assert!(draw(&w).contains("anthropic/claude-a"));
 }
 
 #[test]
-fn fetch_error_offers_retry_and_manual_entry() {
-    let env = Env::new(false);
-    let mut w = env.wizard();
-    let req = to_models(&mut w);
-    // Stale results are ignored.
-    w.models_loaded(req.generation + 7, Ok(models(&["x"])));
-    assert_eq!(w.models, ModelsPhase::Loading);
-    w.models_loaded(req.generation, Err("HTTP 401: invalid key".into()));
-    assert!(draw(&w).contains("HTTP 401"));
-    let Effect::FetchModels(again) = press(&mut w, &[KeyCode::Char('r')]) else {
-        panic!("retry should refetch")
-    };
-    assert!(again.generation > req.generation);
-    // The old generation can no longer land.
-    w.models_loaded(req.generation, Ok(models(&["x"])));
-    assert_eq!(w.models, ModelsPhase::Loading);
-    w.models_loaded(again.generation, Err("boom".into()));
-    press(&mut w, &[KeyCode::Char('m')]);
-    assert!(matches!(w.models, ModelsPhase::Manual { .. }));
-    press(&mut w, &[KeyCode::Enter]);
-    assert!(draw(&w).contains("at least one"));
-    typ(&mut w, " one , two,,one");
-    press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.chosen, ["one", "two"]);
-    let ModelsPhase::Default { choices, .. } = &w.models else {
-        panic!()
-    };
-    assert_eq!(choices, &["one", "two"]);
-    press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.default_model, "one");
-    assert_eq!(w.plan().profile.models, ["one", "two"]);
-    // Esc from manual entry returns to the error options.
-    let mut w2 = env.wizard();
-    let req = to_models(&mut w2);
-    w2.models_loaded(req.generation, Err("nope".into()));
-    press(&mut w2, &[KeyCode::Down, KeyCode::Enter]);
-    assert!(matches!(w2.models, ModelsPhase::Manual { .. }));
-    press(&mut w2, &[KeyCode::Esc]);
-    assert!(matches!(w2.models, ModelsPhase::Error { .. }));
-}
-
-#[test]
 fn missing_modes_offers_init_or_skip() {
     let env = Env::new(false);
     let mut w = env.wizard();
-    let req = to_models(&mut w);
-    w.models_loaded(req.generation, Ok(models(&["only"])));
-    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]);
+    to_models(&mut w, &["only"]);
+    press(
+        &mut w,
+        &[KeyCode::Char(' '), KeyCode::Enter, KeyCode::Enter],
+    );
     assert_eq!(w.step, Step::Modes);
     assert!(draw(&w).contains("rc init"));
     assert_eq!(press(&mut w, &[KeyCode::Enter]), Effect::RunInit);
@@ -329,14 +414,13 @@ fn missing_modes_offers_init_or_skip() {
     assert!(matches!(w.modes_phase, ModesPhase::Assign { .. }));
     assert_eq!(w.assignments.len(), 2);
 
-    // Skip path: no mode changes in the plan.
     let mut w = env.wizard();
-    let req = to_models(&mut w);
-    w.models_loaded(req.generation, Ok(models(&["only"])));
+    to_models(&mut w, &["only"]);
     press(
         &mut w,
         &[
             KeyCode::Char(' '),
+            KeyCode::Enter,
             KeyCode::Enter,
             KeyCode::Down,
             KeyCode::Enter,
@@ -360,20 +444,19 @@ fn existing_assignments_are_prefilled_and_clearable() {
     )
     .unwrap();
     let mut w = env.wizard();
-    let req = to_models(&mut w);
-    w.models_loaded(req.generation, Ok(models(&["m"])));
-    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]);
+    to_models(&mut w, &["m"]);
+    press(
+        &mut w,
+        &[KeyCode::Char(' '), KeyCode::Enter, KeyCode::Enter],
+    );
     assert_eq!(w.assignments[0], Some(("other".into(), "fast".into())));
-    // Options include the other profile's models.
     let opts = w.model_options();
     assert!(opts.contains(&("other".into(), "slow".into())));
     assert!(opts.contains(&("openrouter".into(), "m".into())));
-    // Clear explore's assignment: chooser item 0.
     press(
         &mut w,
         &[KeyCode::Enter, KeyCode::Up, KeyCode::Up, KeyCode::Up],
     );
-    // Filter in the chooser.
     typ(&mut w, "slow");
     assert!(draw(&w).contains("other/slow"));
     press(&mut w, &[KeyCode::Down, KeyCode::Enter]);
@@ -381,7 +464,7 @@ fn existing_assignments_are_prefilled_and_clearable() {
 }
 
 #[test]
-fn profile_overwrite_prompt() {
+fn profile_overwrite_prompt_and_name_validation() {
     let env = Env::new(false);
     std::fs::write(
         env.user.path().join("config.toml"),
@@ -389,32 +472,21 @@ fn profile_overwrite_prompt() {
     )
     .unwrap();
     let mut w = env.wizard();
-    press(
-        &mut w,
-        &[
-            KeyCode::Down,
-            KeyCode::Down,
-            KeyCode::Down,
-            KeyCode::Enter,
-            KeyCode::Enter,
-            KeyCode::Enter,
-        ],
-    );
+    to_models(&mut w, &["m"]);
+    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]);
     assert_eq!(w.step, Step::ProfileName);
     assert_eq!(press(&mut w, &[KeyCode::Enter]), Effect::None);
     assert!(w.confirm_overwrite);
     assert!(draw(&w).contains("already exists"));
     press(&mut w, &[KeyCode::Char('n')]);
-    assert!(!w.confirm_overwrite);
-    // Rename instead.
     typ(&mut w, "-2");
-    assert!(matches!(
-        press(&mut w, &[KeyCode::Enter]),
-        Effect::FetchModels(_)
-    ));
+    press(&mut w, &[KeyCode::Enter]);
+    assert_eq!(w.step, Step::Modes);
+    assert_eq!(w.plan().profile_name, "openrouter-2");
     // Invalid names are refused.
     let mut w = env.wizard();
-    press(&mut w, &[KeyCode::Enter, KeyCode::Enter, KeyCode::Enter]);
+    to_models(&mut w, &["m"]);
+    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]);
     w.profile_name.set("bad name");
     press(&mut w, &[KeyCode::Enter]);
     assert_eq!(w.step, Step::ProfileName);
@@ -422,93 +494,65 @@ fn profile_overwrite_prompt() {
 }
 
 #[test]
-fn auth_options_env_existing_none_and_scope() {
+fn existing_saved_key_is_used_for_the_probe_and_the_plan() {
     let env = Env::new(false);
     ruckcode_core::keys::add_key(Some(env.user.path()), "acme", "sk-acme-0000", Some("Acme"))
         .unwrap();
+    ruckcode_core::keys::add_key(Some(env.user.path()), "openrouter", "sk-or-old", None).unwrap();
     let mut w = env.wizard();
-    // OpenAI preset: env var shown as set.
-    press(&mut w, &[KeyCode::Down, KeyCode::Enter, KeyCode::Enter]);
-    assert_eq!(w.env_name.value, "OPENAI_API_KEY");
-    assert!(w.env_is_set("OPENAI_API_KEY"));
-    assert!(draw(&w).contains("currently set"));
-    // Existing key + project scope.
     press(&mut w, &[KeyCode::Down]);
     assert_eq!(w.auth_choice(), Some(AuthChoice::Existing));
-    assert!(draw(&w).contains("acme"));
-    assert!(!draw(&w).contains("sk-acme-0000"));
-    press(&mut w, &[KeyCode::Down, KeyCode::Down, KeyCode::Down]);
-    assert_eq!(w.auth_cursor, AUTH_SCOPE_ROW);
-    press(&mut w, &[KeyCode::Right]);
-    assert_eq!(w.key_scope, KeyScope::Project);
-    press(&mut w, &[KeyCode::Up, KeyCode::Up, KeyCode::Up]);
-    assert_eq!(w.auth_choice(), Some(AuthChoice::Existing));
+    let out = draw(&w);
+    assert!(
+        out.contains("acme") && !out.contains("sk-acme-0000"),
+        "{out}"
+    );
     press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::ProfileName);
-    let p = w.plan();
-    assert_eq!(p.profile.api_key_name.as_deref(), Some("acme"));
-    assert_eq!(p.profile.api_key_env, None);
-    assert_eq!(p.key_scope, KeyScope::Project);
-    assert!(p.new_key.is_none());
-    // Fetch uses the saved key's secret.
-    let Effect::FetchModels(r) = press(&mut w, &[KeyCode::Enter]) else {
+    w.endpoint.set("https://openrouter.ai/api/v1");
+    let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
         panic!()
     };
     assert_eq!(r.api_key.as_deref(), Some("sk-acme-0000"));
-    // No key at all (Ollama preset defaults to it).
-    let mut w = env.wizard();
+    w.probed(r.generation, probe_ok("openai", &["m"]));
     press(
         &mut w,
-        &[KeyCode::Down, KeyCode::Down, KeyCode::Enter, KeyCode::Enter],
+        &[KeyCode::Enter, KeyCode::Char(' '), KeyCode::Enter],
     );
-    assert_eq!(w.auth_choice(), Some(AuthChoice::NoKey));
-    press(&mut w, &[KeyCode::Enter]);
-    let Effect::FetchModels(r) = press(&mut w, &[KeyCode::Enter]) else {
-        panic!()
-    };
-    assert_eq!(r.api_key, None);
-    assert_eq!(
-        w.plan().profile.base_url.as_deref(),
-        Some("http://localhost:11434/v1")
-    );
+    let p = w.plan();
+    assert_eq!(p.profile.api_key_name.as_deref(), Some("acme"));
+    assert!(p.new_key.is_none());
+    // A pasted key never overwrites an existing key of the same name.
+    let mut w = env.wizard();
+    to_models(&mut w, &["m"]);
+    press(&mut w, &[KeyCode::Char(' '), KeyCode::Enter]);
+    assert_eq!(w.plan().new_key.unwrap().name, "openrouter-2");
+    // No saved keys: the option explains itself.
+    let env2 = Env::new(false);
+    let mut w = env2.wizard();
+    press(&mut w, &[KeyCode::Down, KeyCode::Enter]);
+    assert_eq!(w.step, Step::ApiKey);
+    assert!(w.error.is_some());
 }
 
 #[test]
-fn anthropic_default_endpoint_is_not_stored_and_custom_requires_url() {
+fn the_secret_is_masked_and_never_in_the_preview() {
     let env = Env::new(false);
     let mut w = env.wizard();
-    assert_eq!(w.endpoint.value, "https://api.anthropic.com");
-    w.default_model = "m".into();
-    assert_eq!(w.plan().profile.base_url, None);
-    let mut w = env.wizard();
-    press(
-        &mut w,
-        &[
-            KeyCode::Down,
-            KeyCode::Down,
-            KeyCode::Down,
-            KeyCode::Down,
-            KeyCode::Enter,
-        ],
-    );
-    w.endpoint.set("localhost:8000");
-    press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::Endpoint);
-    assert!(w.error.is_some());
-    w.endpoint.set("http://gpu-box:8000/v1");
-    press(&mut w, &[KeyCode::Enter]);
-    assert_eq!(w.step, Step::Auth);
-    assert_eq!(w.profile_name.value, "gpu-box");
+    typ(&mut w, "sk-ant-TOPSECRET");
+    let out = draw(&w);
+    assert!(!out.contains("TOPSECRET") && out.contains("••••"), "{out}");
+    assert!(!out.contains("ANTHROPIC_API_KEY") && !out.contains("environment variable"));
 }
 
 #[test]
 fn ctrl_c_aborts_without_writing() {
     let env = Env::new(true);
     let mut w = env.wizard();
-    to_models(&mut w);
+    to_models(&mut w, &["m"]);
     w.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert!(w.aborted && w.finished.is_none());
     assert!(!env.user.path().join("config.toml").exists());
+    assert!(!env.user.path().join("credentials.toml").exists());
 }
 
 #[test]
@@ -517,30 +561,34 @@ fn every_step_renders() {
     let mut w = env.wizard();
     let out = draw(&w);
     assert!(
-        out.contains("step 1 of 7") && out.contains("Anthropic"),
+        out.contains("step 1 of 7") && out.contains("API key"),
         "{out}"
     );
-    press(&mut w, &[KeyCode::Enter]);
-    assert!(draw(&w).contains("step 2 of 7"));
+    typ(&mut w, "sk-ant-x");
     press(&mut w, &[KeyCode::Enter]);
     let out = draw(&w);
     assert!(
-        out.contains("step 3 of 7") && out.contains("ANTHROPIC_API_KEY"),
+        out.contains("step 2 of 7") && out.contains("Suggestions"),
         "{out}"
     );
-    press(&mut w, &[KeyCode::Down, KeyCode::Down]);
-    assert!(draw(&w).contains("secret"));
-    press(&mut w, &[KeyCode::Up, KeyCode::Up]);
-    press(&mut w, &[KeyCode::Enter]);
-    assert!(draw(&w).contains("step 4 of 7"));
-    let Effect::FetchModels(r) = press(&mut w, &[KeyCode::Enter]) else {
+    let Effect::Probe(r) = press(&mut w, &[KeyCode::Enter]) else {
         panic!()
     };
-    assert!(draw(&w).contains("step 5 of 7"));
-    w.models_loaded(r.generation, Ok(models(&["claude-a", "claude-b"])));
-    assert!(draw(&w).contains("claude-b"));
+    assert!(draw(&w).contains("step 3 of 7"));
+    w.probed(
+        r.generation,
+        probe_ok("anthropic", &["claude-a", "claude-b"]),
+    );
+    press(&mut w, &[KeyCode::Enter]);
+    let out = draw(&w);
+    assert!(
+        out.contains("step 4 of 7") && out.contains("claude-b"),
+        "{out}"
+    );
     press(&mut w, &[KeyCode::Char('a'), KeyCode::Enter]);
     assert!(draw(&w).contains("default model"));
+    press(&mut w, &[KeyCode::Enter]);
+    assert!(draw(&w).contains("step 5 of 7"));
     press(&mut w, &[KeyCode::Enter]);
     let out = draw(&w);
     assert!(
@@ -555,7 +603,6 @@ fn every_step_renders() {
         out.contains("step 7 of 7") && out.contains("config.toml"),
         "{out}"
     );
-    // Tiny terminals do not panic.
     let mut t = Terminal::new(TestBackend::new(20, 6)).unwrap();
     t.draw(|f| render::render(&w, f)).unwrap();
 }
