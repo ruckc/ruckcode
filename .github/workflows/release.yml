@@ -376,6 +376,9 @@ jobs:
           set -euo pipefail
           # The release version is injected here and never committed: Tauri takes the bundle
           # version from the merged config, RUCKCODE_VERSION feeds the app's reported version.
+          # The restored cargo cache can contain the previous release's installers; start from an
+          # empty bundle dir so the collect step only ever sees this version's files.
+          rm -rf "crates/ruckcode-app/target/${TARGET}/release/bundle"
           extra=()
           if [ -n "${SIGN_CONFIG:-}" ]; then extra+=(--config "$SIGN_CONFIG"); fi
           if [ -n "${UPDATER_CONFIG:-}" ]; then extra+=(--config "$UPDATER_CONFIG"); fi
