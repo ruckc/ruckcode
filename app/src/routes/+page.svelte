@@ -153,8 +153,11 @@
 
   /** The project the typed/connected path refers to (WSL paths translated to Linux paths). */
   async function resolveProject(): Promise<Project> {
-    const p: Project = current ?? { path: cwd.trim(), host, distro: distro || undefined };
-    if (!current && p.host === 'wsl' && p.distro) {
+    // The connected project; otherwise whatever is chosen in the picker right now (the last
+    // connected project would be stale after switching).
+    const live = chat.connected ? current : null;
+    const p: Project = live ?? { path: cwd.trim(), host, distro: distro || undefined };
+    if (!live && p.host === 'wsl' && p.distro) {
       try {
         return { ...p, path: await (await getWsl()).translatePath(p.distro, p.path) };
       } catch {
