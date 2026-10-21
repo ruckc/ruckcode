@@ -66,18 +66,16 @@ pub fn pubkey(app: &AppHandle) -> Option<String> {
 
 /// Why this installation cannot update itself, or `None` when it can. The updater swaps the app
 /// in place, which works for AppImage, MSI and macOS app bundles (the manifest has a
-/// per-bundle key for each; a legacy NSIS install, no longer shipped, still counts as updatable
-/// and receives the MSI through the generic key); a `.deb`/`.rpm` install
-/// (or an unbundled dev build) must be updated by hand from the download page.
+/// per-bundle key for each). A `.deb`/`.rpm` install, an NSIS install (no longer shipped: the
+/// generic Windows key is the MSI, which would install a second copy) or an unbundled dev build
+/// must be updated by hand from the download page.
 pub fn manual_reason(bundle: Option<&BundleType>) -> Option<&'static str> {
     match bundle {
-        Some(
-            BundleType::AppImage
-            | BundleType::Nsis
-            | BundleType::Msi
-            | BundleType::App
-            | BundleType::Dmg,
-        ) => None,
+        Some(BundleType::AppImage | BundleType::Msi | BundleType::App | BundleType::Dmg) => None,
+        Some(BundleType::Nsis) => Some(
+            "This copy was installed with the old setup.exe, which is no longer published. \
+             Uninstall it and install the MSI from the download page.",
+        ),
         Some(BundleType::Deb | BundleType::Rpm) => Some(
             "This copy was installed from a Linux package, which cannot update itself. \
              Download the new version from the download page (the AppImage updates itself).",
@@ -283,7 +281,6 @@ mod tests {
     fn only_in_place_bundles_update_themselves() {
         for ok in [
             BundleType::AppImage,
-            BundleType::Nsis,
             BundleType::Msi,
             BundleType::App,
             BundleType::Dmg,
@@ -294,6 +291,9 @@ mod tests {
             .unwrap()
             .contains("AppImage"));
         assert!(manual_reason(Some(&BundleType::Rpm)).is_some());
+        assert!(manual_reason(Some(&BundleType::Nsis))
+            .unwrap()
+            .contains("MSI"));
         assert!(manual_reason(None)
             .unwrap()
             .contains("not an installed build"));
