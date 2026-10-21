@@ -482,3 +482,30 @@ async fn cancel_notification() {
         .unwrap();
     assert_eq!(r["stopReason"], "cancelled");
 }
+
+#[tokio::test]
+async fn set_model_extension_pins_and_notifies() {
+    let env = Env::new();
+    let c = env.connect(mock([Message::assistant_text("ok")]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    c.request(
+        "_ruckcode/set_model",
+        json!({"sessionId": sid, "model": "pinned-model"}),
+    )
+    .await
+    .unwrap();
+    wait_for(|| agent_text(&env.client.updates()).contains("model set to pinned-model")).await;
+    let e = c
+        .request("_ruckcode/set_model", json!({"model": "x"}))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, -32602);
+    let e = c
+        .request(
+            "_ruckcode/set_model",
+            json!({"sessionId": "nope", "model": "x"}),
+        )
+        .await;
+    assert!(e.is_err());
+}

@@ -19,6 +19,7 @@ futures.workspace = true
 ratatui.workspace = true
 ruckcode-acp.workspace = true
 ruckcode-core.workspace = true
+ruckcode-llm.workspace = true
 ruckcode-mcp.workspace = true
 ruckcode-mise.workspace = true
 serde.workspace = true

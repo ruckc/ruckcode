@@ -115,6 +115,11 @@ pub enum Record {
         reason: String,
         initiated_by: Initiator,
     },
+    /// The user pinned (or cleared) the session model with `/model`.
+    ModelChange {
+        from: Option<String>,
+        to: Option<String>,
+    },
     Compaction {
         summary: String,
         replaced_messages: usize,
@@ -232,6 +237,8 @@ pub struct LoadedSession {
     pub messages: Vec<Message>,
     /// Mode at the end of the transcript.
     pub mode: String,
+    /// Model pinned for the session by the last `model_change` record, if any.
+    pub model: Option<String>,
     pub records: Vec<Stamped>,
 }
 
@@ -271,6 +278,7 @@ impl TranscriptReader {
         };
         let mut messages = Vec::new();
         let mut mode = meta.mode.clone();
+        let mut model = None;
         for r in &records {
             match &r.record {
                 Record::UserMessage { message, .. } | Record::AssistantMessage { message, .. } => {
@@ -278,6 +286,7 @@ impl TranscriptReader {
                 }
                 Record::Compaction { summary, .. } => messages = vec![compaction_message(summary)],
                 Record::ModeChange { to, .. } => mode = to.clone(),
+                Record::ModelChange { to, .. } => model = to.clone(),
                 _ => {}
             }
         }
@@ -285,6 +294,7 @@ impl TranscriptReader {
             meta,
             messages,
             mode,
+            model,
             records,
         })
     }

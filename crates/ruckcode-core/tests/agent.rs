@@ -962,3 +962,82 @@ async fn mode_model_and_profile_resolution() {
     let (m, _) = model_used("[modes.a]\nmodel = \"custom\"", Some("cli")).await;
     assert_eq!(m, "custom");
 }
+
+#[tokio::test]
+async fn missing_mode_profile_warns_once_and_falls_back() {
+    let env = Env::new(
+        Some("[modes.a]\nprofile = \"openrouter\"\nmodel = \"vendor/x\"\n[modes.b]\nprofile = \"p2\""),
+        Some(MODEL_CFG),
+    );
+    env.mock.push(Message::assistant_text("one"));
+    env.mock.push(Message::assistant_text("two"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let client = TestClient::with([]);
+    agent
+        .prompt(&info.id, "x".into(), client.clone())
+        .await
+        .unwrap();
+    agent
+        .prompt(&info.id, "y".into(), client.clone())
+        .await
+        .unwrap();
+    // Falls back to the default profile and its model, without erroring.
+    assert_eq!(env.mock.requests.lock().unwrap()[0].model, "m1");
+    let notices: Vec<String> = client
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            SessionEvent::Notice(n) if n.contains("isn't configured") => Some(n),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("mode `a`") && notices[0].contains("`openrouter`"));
+    assert!(notices[0].contains("rc setup"));
+}
+
+#[tokio::test]
+async fn set_session_model_pins_records_and_restores() {
+    let env = Env::new(Some("[modes.a]\nmodel = \"custom\""), Some(MODEL_CFG));
+    for t in ["1", "2", "3"] {
+        env.mock.push(Message::assistant_text(t));
+    }
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let client = TestClient::with([]);
+    agent
+        .set_session_model(&info.id, Some("pinned".into()), client.clone())
+        .await
+        .unwrap();
+    agent
+        .prompt(&info.id, "x".into(), client.clone())
+        .await
+        .unwrap();
+    assert_eq!(env.mock.requests.lock().unwrap()[0].model, "pinned");
+    assert!(env.records(&info.id).iter().any(|r| matches!(
+        r,
+        Record::ModelChange { to: Some(m), .. } if m == "pinned"
+    )));
+    // A resumed session keeps the pin.
+    let agent2 = env.agent();
+    agent2
+        .load_session(&info.id, env.cwd(), client.clone())
+        .await
+        .unwrap();
+    agent2
+        .prompt(&info.id, "y".into(), client.clone())
+        .await
+        .unwrap();
+    assert_eq!(env.mock.requests.lock().unwrap()[1].model, "pinned");
+    // Clearing falls back to the mode's model.
+    agent2
+        .set_session_model(&info.id, None, client.clone())
+        .await
+        .unwrap();
+    agent2
+        .prompt(&info.id, "z".into(), client.clone())
+        .await
+        .unwrap();
+    assert_eq!(env.mock.requests.lock().unwrap()[2].model, "custom");
+}

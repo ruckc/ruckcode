@@ -46,6 +46,12 @@ Without the capability, each question is asked via `session/request_permission`,
 `{"cwd": "/project"}` -> `{"sessions": [{"id", "createdAt", "updatedAt", "firstPrompt", "mode"}]}`,
 newest first. Used by `rc --resume`.
 
+### `_ruckcode/set_model` (client -> agent)
+
+`{"sessionId": "...", "model": "claude-haiku-5-5"}` -> `{}`. Pins the model for the session,
+overriding the mode's and profile's model (recorded in the transcript as a `model_change` record and
+announced as a notice). `model: null` or absent clears the pin. Used by the TUI's `/model`.
+
 ## MCP servers
 
 `mcpServers` on `session/new` and `session/load` are added to that session (overriding same-named

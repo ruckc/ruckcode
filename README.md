@@ -22,7 +22,7 @@ mise run install
 Configuration lives in `~/.config/ruckcode/config.toml` (user) and `.ruckcode/config.toml`
 (project, overrides user per key). The built-in defaults define two profiles, `anthropic`
 (default; reads `ANTHROPIC_API_KEY`) and `openai` (reads `OPENAI_API_KEY`), so for Anthropic you
-only need:
+only need (or just run `rc` and follow the setup wizard, see [Setup](#setup)):
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -51,6 +51,83 @@ Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` 
 `[mise] lazy_threshold` (default 12), `[permissions]` (tool name or glob such as `"mise__*"` to
 `allow` / `ask` / `deny`), and global `[[hooks.<event>]]` tables. `RUCKCODE_PROFILE` overrides
 `default_profile`; `--profile` and `--model` override per run.
+
+## Setup
+
+The first time you run interactive `rc` with no user config and no `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` (and no project `.ruckcode/config.toml`), a setup wizard starts automatically.
+Run it again any time with `rc setup` or the `/setup` slash command. Steps: provider (Anthropic,
+OpenAI, Ollama, OpenRouter, or any OpenAI-compatible URL such as vLLM / LM Studio), endpoint,
+authentication, profile name, models, models per mode, and a review of exactly what will be
+written. The wizard fetches the endpoint's model list (Space toggles, `a` selects all, typing
+filters, `/` focuses the filter; if the fetch fails you can retry or type ids by hand). `Esc` goes
+back a step, `Ctrl+C` aborts without writing anything. `-p` and `rc acp` never start the wizard; with
+no usable key they fail with an error that points at `rc setup`.
+
+What gets written, and where:
+
+- `~/.config/ruckcode/config.toml`: the `[profiles.<name>]` entry (provider, default `model`,
+  `models` available to `/model`, `base_url`, `api_key_env` or `api_key_name`) and `default_profile`.
+  Existing comments and formatting are preserved. Set `RUCKCODE_CONFIG_DIR` to use another directory.
+- `~/.config/ruckcode/credentials.toml` (mode 0600): API keys, only if you choose to save one.
+  Keys are never written to `config.toml`, the project or the repository.
+- `.ruckcode/modes.toml` (the project, shared with your team): `profile` and `model` for each mode
+  you assigned a model to. "Profile default" removes both keys. If the project has no `modes.toml`
+  the wizard offers to run `rc init` first.
+
+Scripted setup:
+
+```sh
+rc setup --non-interactive --provider anthropic --api-key-env ANTHROPIC_API_KEY \
+  --models claude-opus-5-5,claude-haiku-5-5 --mode-model explore=claude-haiku-5-5
+rc setup --non-interactive --provider ollama --models qwen2.5-coder:14b
+echo "$KEY" | rc setup --non-interactive --provider openrouter --api-key-name work --api-key-stdin \
+  --models anthropic/claude-sonnet-5 --profile openrouter
+```
+
+Flags: `--provider anthropic|openai|ollama|openrouter`, `--base-url`, `--profile` (default: the
+provider), `--models a,b` (required), `--default-model`, `--api-key-env NAME`, `--api-key-name NAME`
+(+ `--api-key-stdin` to store the secret), `--project-key` (see below), `--no-default`, and repeated
+`--mode-model MODE=MODEL` (`MODE=default` clears; the model belongs to the profile being set up).
+
+`/model` lists the profile's `models` and switches the model for the current session (stored in the
+transcript as a `model_change` record; `/model default` clears it).
+
+### Named API keys
+
+A profile finds its key in this order: `api_key_name` (a name in `credentials.toml`; a missing name
+is an error telling you to run `rc keys add NAME`), then the env var named by `api_key_env`.
+Names are references, not secrets, so they are safe to commit; profiles can share a key, and a
+project can pick its own:
+
+```toml
+# ~/.config/ruckcode/credentials.toml (0600), managed by `rc keys` / the wizard
+[keys.personal]
+api_key = "sk-ant-..."
+description = "my key"
+
+# .ruckcode/config.toml (committed): only this field is overridden, the rest of the user's
+# [profiles.anthropic] (model, max_tokens, ...) still applies.
+[profiles.anthropic]
+api_key_name = "client-acme"
+```
+
+Profiles from user and project config are merged field by field, so a project config can override
+just `api_key_name` (or `model`, ...) of a user profile. The wizard's auth step offers: an env var,
+an existing named key, a new named key (name + masked secret), or no key, and whether to save the
+reference in your profile or in this project's config.
+
+```sh
+rc keys list                       # names, masked last 4 chars, descriptions, who uses them
+rc keys add NAME [--description D] # secret from stdin or a hidden prompt
+rc keys remove NAME
+rc keys use NAME [--profile P] [--project]   # set api_key_name in user (or project) config
+```
+
+Team note: `modes.toml` references profile names. Teammates need profiles with the same names
+(run `rc setup` or copy the `[profiles.*]` block). If a mode's `profile` is not configured,
+`rc` warns at the start of the session ("mode `test` uses profile `openrouter`, which isn't
+configured") and falls back to the default profile and its model instead of failing.
 
 ## Modes
 
@@ -282,3 +359,23 @@ against a local fake SSE server and need no API keys.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Releases
+
+Every push to `main` is examined by [git-cliff](https://git-cliff.org) (config
+in `cliff.toml`). When it finds release-worthy Conventional Commits since the
+last `v*` tag (`feat` = minor, `fix`/`perf`/`refactor` = patch, breaking = major,
+or minor while below 1.0.0), the release workflow builds `rc` and publishes a
+GitHub Release `vX.Y.Z` with:
+
+- `rc-<version>-<target>.tar.gz` (`.zip` on Windows) containing `rc`, `LICENSE`, `README.md`
+- per-archive `.sha256` files and a combined `SHA256SUMS`
+- `CHANGELOG.md` and release notes generated from the commits
+
+Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`x86_64-unknown-linux-musl` (static), `aarch64-apple-darwin`,
+`x86_64-apple-darwin`, `x86_64-pc-windows-msvc`. The first release is `v0.1.0`.
+Commits containing only `docs`/`ci`/`chore`/`test`/`style`/`build`/`revert` do not
+trigger a release. The version is embedded at build time (`RUCKCODE_VERSION`), so
+`Cargo.toml` is never bumped and no changelog commit lands on `main`; local
+builds report `<pkg version>-dev+<sha>`. See `CONTRIBUTING.md` for the commit convention.

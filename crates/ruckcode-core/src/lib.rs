@@ -3,8 +3,10 @@
 pub mod agent;
 pub mod config;
 pub mod init;
+pub mod keys;
 pub mod modes;
 pub mod permissions;
+pub mod setup;
 pub mod transcript;
 
 mod prompt;

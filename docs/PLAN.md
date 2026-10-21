@@ -33,7 +33,11 @@ a duplex pipe (or as an `rc acp` subprocess for editors such as Zed) and acts as
 - Anthropic Messages API (streaming, tool use, prompt caching).
 - OpenAI-compatible Chat Completions (OpenAI, Ollama, OpenRouter, vLLM, …).
 
-Configured as profiles in `~/.config/ruckcode/config.toml`; each mode may set `profile` (which profile to use) and/or `model` (a model id) to override the session's.
+Configured as profiles in `~/.config/ruckcode/config.toml`; each mode may set `profile` (which profile to use) and/or `model` (a model id) to override the session's. A mode naming an unconfigured profile falls back to the session profile with a start-of-session notice. Profiles list their available `models` (`/model`; `_ruckcode/set_model` pins one per session, recorded as `model_change`).
+
+### Onboarding and keys
+
+`ruckcode_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_core::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (resolution: named key, then `api_key_env`). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
 
 ## Modes
 
@@ -130,3 +134,4 @@ tool calls left dangling by a crash get synthetic "interrupted" results.
 6. AskUserQuestion end-to-end, session persistence/load, compaction.
 7. Tests (mock provider, ACP round trips) and CI.
 8. MCP client (`ruckcode-mcp`), per-mode selection, ACP passthrough, `rc mcp list`.
+9. Onboarding: model discovery, setup wizard, named API keys, `/model`.

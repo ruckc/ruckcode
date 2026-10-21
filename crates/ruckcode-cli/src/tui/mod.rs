@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod render;
+pub mod setup;
 
 use std::io::{stdout, Stdout};
 use std::path::{Path, PathBuf};
@@ -51,6 +52,7 @@ pub enum UiEvent {
     TurnDone(Result<String, String>),
     Started(Started),
     ModeSet(String),
+    ModelSet(Option<String>),
     Sessions(Vec<SessionEntry>),
     Error(String),
 }
@@ -105,7 +107,7 @@ impl Handler for TuiHandler {
 
 // ---- terminal -----------------------------------------------------------------------
 
-type Term = Terminal<CrosstermBackend<Stdout>>;
+pub(crate) type Term = Terminal<CrosstermBackend<Stdout>>;
 
 fn restore_terminal() {
     let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
@@ -113,10 +115,10 @@ fn restore_terminal() {
     let _ = disable_raw_mode();
 }
 
-struct TerminalGuard;
+pub(crate) struct TerminalGuard;
 
 impl TerminalGuard {
-    fn enter() -> Result<(Term, TerminalGuard)> {
+    pub(crate) fn enter() -> Result<(Term, TerminalGuard)> {
         enable_raw_mode()?;
         let mut out = stdout();
         execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
@@ -248,6 +250,18 @@ impl Ctx {
         });
     }
 
+    fn set_model(&self, sid: &str, model: Option<String>) {
+        let (conn, tx, sid) = (self.conn.clone(), self.tx.clone(), sid.to_string());
+        tokio::spawn(async move {
+            let _ = tx.send(
+                match client::set_model(&conn, &sid, model.as_deref()).await {
+                    Ok(()) => UiEvent::ModelSet(model),
+                    Err(e) => UiEvent::Error(format!("{e:#}")),
+                },
+            );
+        });
+    }
+
     fn cancel(&self, sid: &str) {
         let _ = self
             .conn
@@ -275,8 +289,44 @@ fn model_label(cli: &Cli, cwd: &Path) -> String {
 
 // ---- main loop ------------------------------------------------------------------------------
 
+/// Models listed for the session profile, for `/model`.
+fn profile_models(cli: &Cli, cwd: &Path) -> Vec<String> {
+    let Ok(cfg) = ruckcode_core::Config::load(cwd, None) else {
+        return vec![];
+    };
+    let name = cli.profile.clone().unwrap_or(cfg.default_profile.clone());
+    let Some(p) = cfg.profiles.get(&name) else {
+        return vec![];
+    };
+    let mut v = vec![p.model.clone()];
+    v.extend(p.models.iter().filter(|m| **m != p.model).cloned());
+    v
+}
+
+/// First run: no user config, no provider key in the environment and no project config.
+fn should_onboard(cli: &Cli, cwd: &Path) -> bool {
+    cli.profile.is_none()
+        && std::env::var_os("RUCKCODE_PROFILE").is_none()
+        && !cwd.join(".ruckcode/config.toml").exists()
+        && ruckcode_core::setup::needs_onboarding(None, &ruckcode_core::setup::process_env)
+}
+
 pub async fn run(cli: &Cli) -> Result<()> {
     let cwd = cli.project_dir()?;
+    let mut events = EventStream::new();
+    let mut pre_term = None;
+    if should_onboard(cli, &cwd) {
+        let (mut term, guard) = TerminalGuard::enter()?;
+        let w = setup::SetupWizard::new(setup::SetupContext::load(&cwd, None));
+        match setup::runner::run_wizard(&mut term, &mut events, w).await? {
+            setup::runner::Outcome::Finished(_) => pre_term = Some((term, guard)),
+            setup::runner::Outcome::Aborted => {
+                drop(guard);
+                println!("setup aborted; nothing was written (run `rc setup` any time)");
+                return Ok(());
+            }
+        }
+    }
     let (tx, mut rx) = mpsc::unbounded_channel::<UiEvent>();
     let conn = crate::connect(cli, Arc::new(TuiHandler { tx: tx.clone() })).await?;
     let ctx = Ctx {
@@ -287,6 +337,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
     };
 
     let mut app = App::new(model_label(cli, &cwd));
+    app.models = profile_models(cli, &cwd);
     let mut initial_prompt = cli.prompt.clone();
 
     match cli.resume.as_deref() {
@@ -299,8 +350,10 @@ pub async fn run(cli: &Cli) -> Result<()> {
         None => ctx.start(None, true),
     }
 
-    let (mut term, _guard) = TerminalGuard::enter()?;
-    let mut events = EventStream::new();
+    let (mut term, _guard) = match pre_term {
+        Some(t) => t,
+        None => TerminalGuard::enter()?,
+    };
     let mut tick = tokio::time::interval(Duration::from_millis(100));
 
     loop {
@@ -320,6 +373,10 @@ pub async fn run(cli: &Cli) -> Result<()> {
             }
             _ = tick.tick() => app.tick = app.tick.wrapping_add(1),
         }
+        if action == Action::Setup {
+            run_setup_inline(&mut term, &mut events, &mut app, &ctx, cli, &cwd).await?;
+            continue;
+        }
         run_action(&mut app, &ctx, action);
         if app.should_quit {
             break;
@@ -329,6 +386,33 @@ pub async fn run(cli: &Cli) -> Result<()> {
         if let Some(sid) = &app.session_id {
             ctx.cancel(sid);
         }
+    }
+    Ok(())
+}
+
+/// `/setup`: run the wizard over the session; a fresh session picks up the new config.
+async fn run_setup_inline(
+    term: &mut Term,
+    events: &mut EventStream,
+    app: &mut App,
+    ctx: &Ctx,
+    cli: &Cli,
+    cwd: &Path,
+) -> Result<()> {
+    let w = setup::SetupWizard::new(setup::SetupContext::load(cwd, None));
+    match setup::runner::run_wizard(term, events, w).await? {
+        setup::runner::Outcome::Finished(r) => {
+            app.model_label = model_label(cli, cwd);
+            app.models = profile_models(cli, cwd);
+            if app.blocks.iter().any(|b| matches!(b, app::Block::User(_))) {
+                app.notice("run /clear to start a session that uses the new settings");
+            } else {
+                app.reset_for_session(None);
+                ctx.start(None, false);
+            }
+            app.notice(setup::runner::summary(&r));
+        }
+        setup::runner::Outcome::Aborted => app.notice("setup aborted; nothing was written"),
     }
     Ok(())
 }
@@ -369,6 +453,13 @@ fn handle_ui_event(
             }
         }
         UiEvent::ModeSet(m) => app.mode_id = m,
+        UiEvent::ModelSet(m) => {
+            let profile = app.model_label.split('/').next().unwrap_or("").to_string();
+            app.model_label = match m {
+                Some(m) => format!("{profile}/{m}"),
+                None => profile,
+            };
+        }
         UiEvent::Sessions(l) => app.show_sessions(l),
         UiEvent::Error(e) => {
             // Startup failures leave nothing to talk to; keep the message visible.
@@ -398,6 +489,11 @@ fn run_action(app: &mut App, ctx: &Ctx, action: Action) {
             Some(sid) => ctx.set_mode(sid, m),
             None => app.error("no active session yet"),
         },
+        Action::SetModel(m) => match &app.session_id {
+            Some(sid) => ctx.set_model(sid, m),
+            None => app.error("no active session yet"),
+        },
+        Action::Setup => {}
         Action::NewSession => {
             app.reset_for_session(None);
             ctx.start(None, false);

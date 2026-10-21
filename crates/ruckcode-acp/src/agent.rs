@@ -19,6 +19,12 @@
 //! # Extension: `_ruckcode/list_sessions` (client -> agent request)
 //!
 //! `{"cwd": "/path"}` -> `{"sessions": [{"id", "createdAt", "updatedAt", "firstPrompt", "mode"}]}`.
+//!
+//! # Extension: `_ruckcode/set_model` (client -> agent request)
+//!
+//! `{"sessionId": "...", "model": "claude-haiku-5-5"}` -> `{}`. Pins the model for this session,
+//! overriding the mode's and profile's model (recorded in the transcript as `model_change`).
+//! `model: null` (or absent) clears the pin.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -38,6 +44,7 @@ use crate::rpc::{Connection, Handler, RpcError};
 use crate::schema::*;
 
 pub const LIST_SESSIONS: &str = "_ruckcode/list_sessions";
+pub const SET_MODEL: &str = "_ruckcode/set_model";
 
 struct Shared {
     agent: Arc<Agent>,
@@ -452,6 +459,20 @@ impl Handler for AcpAgent {
                 // The agent emits `ModeChanged`, which the bridge forwards as current_mode_update.
                 self.agent()
                     .set_mode(&req.session_id, &req.mode_id, self.client())
+                    .await?;
+                Ok(json!({}))
+            }
+            SET_MODEL => {
+                let session_id = params
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| RpcError::invalid_params("missing sessionId"))?;
+                let model = params
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(String::from);
+                self.agent()
+                    .set_session_model(session_id, model, self.client())
                     .await?;
                 Ok(json!({}))
             }

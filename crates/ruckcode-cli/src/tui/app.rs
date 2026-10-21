@@ -25,6 +25,10 @@ pub enum Action {
     NewSession,
     ListSessions,
     LoadSession(String),
+    /// Pin (or with `None` clear) the session model.
+    SetModel(Option<String>),
+    /// Run the setup wizard.
+    Setup,
     Quit,
 }
 
@@ -83,10 +87,17 @@ pub struct PickerModal {
     pub selected: usize,
 }
 
+/// `/model` picker: index 0 is "profile/mode default".
+pub struct ModelPickerModal {
+    pub models: Vec<String>,
+    pub selected: usize,
+}
+
 pub enum Modal {
     Permission(PermissionModal),
     Ask(AskModal),
     Picker(PickerModal),
+    Models(ModelPickerModal),
 }
 
 pub struct App {
@@ -97,6 +108,8 @@ pub struct App {
     pub mode_id: String,
     pub modes: Vec<SessionMode>,
     pub model_label: String,
+    /// Models listed for the session profile (`/model`).
+    pub models: Vec<String>,
     pub input: String,
     pub cursor: usize,
     pub history: Vec<String>,
@@ -116,7 +129,7 @@ pub struct App {
     pub chars_streamed: usize,
 }
 
-pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/clear  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
+pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
 
 impl App {
     pub fn new(model_label: impl Into<String>) -> Self {
@@ -128,6 +141,7 @@ impl App {
             mode_id: String::new(),
             modes: vec![],
             model_label: model_label.into(),
+            models: vec![],
             input: String::new(),
             cursor: 0,
             history: vec![],
@@ -586,6 +600,26 @@ impl App {
                 }
             }
             "modes" => self.notice(self.modes_text()),
+            "setup" => return Action::Setup,
+            "model" => {
+                if arg.is_empty() {
+                    if self.models.is_empty() {
+                        self.notice(format!(
+                            "no models are listed for this profile (current: {}); use `/model <id>` or run /setup",
+                            self.model_label
+                        ));
+                    } else {
+                        self.push_modal(Modal::Models(ModelPickerModal {
+                            models: self.models.clone(),
+                            selected: 0,
+                        }));
+                    }
+                } else if arg == "default" {
+                    return Action::SetModel(None);
+                } else {
+                    return Action::SetModel(Some(arg.to_string()));
+                }
+            }
             "clear" | "new" => return Action::NewSession,
             "resume" | "sessions" => return Action::ListSessions,
             "init" => self.notice(
@@ -640,6 +674,26 @@ impl App {
             Modal::Ask(mut m) => {
                 let done = ask_key(&mut m, key);
                 (if done { None } else { Some(Modal::Ask(m)) }, Action::None)
+            }
+            Modal::Models(mut p) => {
+                let n = p.models.len() + 1;
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => p.selected = (p.selected + n - 1) % n,
+                    KeyCode::Down | KeyCode::Char('j') => p.selected = (p.selected + 1) % n,
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        self.modal = None;
+                        self.close_modal();
+                        return Action::None;
+                    }
+                    KeyCode::Enter => {
+                        let choice = p.selected.checked_sub(1).map(|i| p.models[i].clone());
+                        self.modal = None;
+                        self.close_modal();
+                        return Action::SetModel(choice);
+                    }
+                    _ => {}
+                }
+                (Some(Modal::Models(p)), Action::None)
             }
             Modal::Picker(mut p) => match picker_key(&mut p, key) {
                 PickerResult::Stay => (Some(Modal::Picker(p)), Action::None),

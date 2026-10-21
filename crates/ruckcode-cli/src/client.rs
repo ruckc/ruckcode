@@ -134,6 +134,17 @@ pub async fn set_mode(conn: &Connection, session_id: &str, mode_id: &str) -> Res
     Ok(())
 }
 
+/// Pin (`Some`) or clear (`None`) the session model.
+pub async fn set_model(conn: &Connection, session_id: &str, model: Option<&str>) -> Result<()> {
+    conn.request(
+        "_ruckcode/set_model",
+        json!({"sessionId": session_id, "model": model}),
+    )
+    .await
+    .map_err(|e| anyhow!("set_model failed: {e}"))?;
+    Ok(())
+}
+
 /// Sessions of `cwd`, newest first.
 pub async fn list_sessions(conn: &Connection, cwd: &Path) -> Result<Vec<SessionEntry>> {
     let v: Value = conn

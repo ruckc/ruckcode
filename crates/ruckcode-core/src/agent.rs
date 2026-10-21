@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{make_provider, Config, Profile};
+use crate::config::{make_provider_with, Config, Profile};
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::system_prompt;
@@ -172,6 +172,10 @@ struct SessionState {
     providers: HashMap<String, Arc<dyn Provider>>,
     started: bool,
     request_counter: u64,
+    /// Model chosen with `/model` for this session; wins over mode, profile and `--model`.
+    model_pin: Option<String>,
+    /// Whether the "profile isn't configured" notices were already sent.
+    warned_profiles: bool,
 }
 
 impl SessionState {
@@ -329,6 +333,8 @@ struct Shared {
     mode_ids: Vec<String>,
     /// Mode requested by the user while a prompt was running; applied before the next request.
     pending_mode: Mutex<Option<String>>,
+    /// Model pin requested while a prompt was running (`Some(None)` clears the pin).
+    pending_model: Mutex<Option<Option<String>>>,
 }
 
 impl Agent {
@@ -379,11 +385,16 @@ impl Agent {
             providers: HashMap::new(),
             started: false,
             request_counter: 0,
+            model_pin: None,
+            warned_profiles: false,
         })
     }
 
     /// Resolve (model id, profile) for the session's current mode. The returned profile's
     /// `model` is the effective model, so provider caching keys on it.
+    ///
+    /// A mode naming a profile that isn't configured falls back to the session profile (and
+    /// its model); `run_prompt` warns about it once at session start.
     fn model_for(&self, s: &SessionState) -> Result<(String, Profile)> {
         let mode = s.mode_def();
         let mut profile_name = mode.profile.clone();
@@ -396,6 +407,14 @@ impl Agent {
                 }
             }
         }
+        if profile_name
+            .as_ref()
+            .is_some_and(|p| !s.config.profiles.contains_key(p))
+        {
+            // The model id belongs to the missing profile's provider; don't use it elsewhere.
+            profile_name = None;
+            mode_model = None;
+        }
         let other_profile = profile_name.as_ref().is_some_and(|p| *p != s.profile);
         let mut profile = s
             .config
@@ -403,13 +422,79 @@ impl Agent {
             .clone();
         // `--model` is an id for the session profile, so it never applies to a mode that
         // picks a different profile or its own model.
-        let model = match (mode_model, &self.options.model_override) {
-            (Some(m), _) => m,
-            (None, Some(m)) if !other_profile => m.clone(),
+        let model = match (&s.model_pin, mode_model, &self.options.model_override) {
+            (Some(m), _, _) => m.clone(),
+            (None, Some(m), _) => m,
+            (None, None, Some(m)) if !other_profile => m.clone(),
             _ => profile.model.clone(),
         };
         profile.model = model.clone();
         Ok((model, profile))
+    }
+
+    /// Notices for modes whose `profile` isn't configured.
+    fn missing_profile_notices(s: &SessionState) -> Vec<String> {
+        s.modes
+            .modes
+            .iter()
+            .filter_map(|(id, m)| {
+                let p = m.profile.as_ref()?;
+                (!s.config.profiles.contains_key(p)).then(|| {
+                    format!(
+                        "mode `{id}` uses profile `{p}`, which isn't configured; falling back to \
+                         `{}` (run `rc setup` to add it)",
+                        s.profile
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Pin the model for this session (`None` clears the pin), overriding the mode's and
+    /// profile's model. Recorded in the transcript as `model_change`. If a prompt is running the
+    /// change is applied before its next model request.
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+        client: Arc<dyn Client>,
+    ) -> Result<()> {
+        let model = model
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty());
+        let session = self.session(session_id)?;
+        let shared = self.shared_for(session_id)?;
+        if let Ok(mut s) = session.try_lock() {
+            *shared.pending_model.lock().unwrap() = None;
+            Self::pin_model(&mut s, model, &client);
+            return Ok(());
+        }
+        let label = model
+            .clone()
+            .unwrap_or_else(|| "the configured default".into());
+        *shared.pending_model.lock().unwrap() = Some(model);
+        client.send_event(
+            session_id,
+            SessionEvent::Notice(format!("model will change to {label} on the next request")),
+        );
+        Ok(())
+    }
+
+    fn pin_model(s: &mut SessionState, model: Option<String>, client: &Arc<dyn Client>) {
+        if s.model_pin == model {
+            return;
+        }
+        let from = s.model_pin.take();
+        s.model_pin = model.clone();
+        s.rec(Record::ModelChange {
+            from,
+            to: model.clone(),
+        });
+        let text = match model {
+            Some(m) => format!("model set to {m} for this session"),
+            None => "model pin cleared; using the mode/profile model".into(),
+        };
+        client.send_event(&s.id, SessionEvent::Notice(text));
     }
 
     fn provider_for(&self, s: &mut SessionState, profile: &Profile) -> Result<Arc<dyn Provider>> {
@@ -423,7 +508,7 @@ impl Agent {
         if let Some(p) = s.providers.get(&key) {
             return Ok(p.clone());
         }
-        let p = make_provider(profile)?;
+        let p = make_provider_with(profile, self.options.user_config_dir.as_deref())?;
         s.providers.insert(key, p.clone());
         Ok(p)
     }
@@ -435,6 +520,7 @@ impl Agent {
             Arc::new(Shared {
                 mode_ids: s.modes.modes.iter().map(|(i, _)| i.clone()).collect(),
                 pending_mode: Mutex::new(None),
+                pending_model: Mutex::new(None),
             }),
         );
         self.sessions
@@ -521,6 +607,7 @@ impl Agent {
             .build_state(id.to_string(), cwd.clone(), mode, extra_mcp)
             .await?;
         s.started = true;
+        s.model_pin = loaded.model.clone();
         s.messages = loaded.messages.clone();
         if self.options.persist {
             s.transcript = Some(TranscriptWriter::open(&path)?);
@@ -604,6 +691,10 @@ impl Agent {
         let Ok(shared) = self.shared_for(&s.id) else {
             return;
         };
+        let pending_model = shared.pending_model.lock().unwrap().take();
+        if let Some(m) = pending_model {
+            Self::pin_model(s, m, client);
+        }
         let pending = shared.pending_mode.lock().unwrap().take();
         if let Some(to) = pending.filter(|m| *m != s.mode) {
             self.switch_mode(s, &to, "user request", Initiator::User, client, false)
@@ -766,6 +857,12 @@ impl Agent {
                 .run_hooks(s, HookEvent::SessionStart, None, &payload)
                 .await;
             notify_blocked(s, client, &out);
+        }
+        if !s.warned_profiles {
+            s.warned_profiles = true;
+            for n in Self::missing_profile_notices(s) {
+                client.send_event(&s.id, SessionEvent::Notice(n));
+            }
         }
         let payload = json!({"event": "user_prompt_submit", "session_id": s.id, "prompt": text});
         let out = self
@@ -1608,6 +1705,13 @@ fn replay(cwd: &Path, session_id: &str, records: &[transcript::Stamped], client:
             Record::ModeChange { to, .. } => {
                 client.send_event(session_id, SessionEvent::ModeChanged(to.clone()))
             }
+            Record::ModelChange { to, .. } => client.send_event(
+                session_id,
+                SessionEvent::Notice(match to {
+                    Some(m) => format!("model set to {m} for this session"),
+                    None => "model pin cleared".into(),
+                }),
+            ),
             _ => {}
         }
     }

@@ -30,6 +30,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
@@ -41,3 +42,8 @@ ruckcode-llm = { path = "crates/ruckcode-llm" }
 ruckcode-mcp = { path = "crates/ruckcode-mcp" }
 ruckcode-mise = { path = "crates/ruckcode-mise" }
 ruckcode-tools = { path = "crates/ruckcode-tools" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

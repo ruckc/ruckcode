@@ -3,7 +3,9 @@
 mod client;
 mod headless;
 mod init_cmd;
+mod keys_cmd;
 mod mcp_cmd;
+mod setup_cmd;
 mod tui;
 
 use std::path::PathBuf;
@@ -15,7 +17,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ruckcode_core::{Agent, AgentOptions};
 
 #[derive(Parser, Debug)]
-#[command(name = "rc", version, about = "ruckcode: a mode-driven coding agent")]
+#[command(name = "rc", version = env!("RC_VERSION"), about = "ruckcode: a mode-driven coding agent")]
 pub struct Cli {
     /// Initial prompt (interactive) or the prompt to run (with --print).
     pub prompt: Option<String>,
@@ -89,6 +91,13 @@ pub enum Command {
         /// Overwrite an existing modes.toml.
         #[arg(long)]
         force: bool,
+    },
+    /// Interactive setup wizard: provider, endpoint, key, models and per-mode models.
+    Setup(setup_cmd::SetupArgs),
+    /// Manage named API keys in credentials.toml.
+    Keys {
+        #[command(subcommand)]
+        action: keys_cmd::KeysAction,
     },
     /// List sessions of this project.
     Sessions,
@@ -189,7 +198,8 @@ fn init_logging(to_file: bool) {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse().normalize();
-    let interactive = cli.command.is_none() && !cli.print;
+    let interactive = (cli.command.is_none() && !cli.print)
+        || matches!(&cli.command, Some(Command::Setup(a)) if !a.non_interactive);
     init_logging(interactive);
     let result: Result<u8> = match &cli.command {
         Some(Command::Acp) => run_acp(&cli).await.map(|_| 0),
@@ -201,6 +211,8 @@ async fn main() -> ExitCode {
         }) => init_cmd::run(&cli, *minimal, modes, *diff, *force)
             .await
             .map(|_| 0),
+        Some(Command::Setup(args)) => setup_cmd::run(&cli, args).await.map(|_| 0),
+        Some(Command::Keys { action }) => keys_cmd::run(&cli, action).await.map(|_| 0),
         Some(Command::Sessions) => run_sessions(&cli).await.map(|_| 0),
         Some(Command::Mcp {
             action: McpAction::List,

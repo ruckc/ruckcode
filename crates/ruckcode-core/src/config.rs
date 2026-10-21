@@ -36,6 +36,16 @@ pub enum ProviderKind {
     Mock,
 }
 
+impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::Openai => "openai",
+            ProviderKind::Mock => "mock",
+        }
+    }
+}
+
 fn default_max_tokens() -> u32 {
     32_000
 }
@@ -46,8 +56,17 @@ fn default_context_window() -> u64 {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Profile {
+    /// The profile's key in `[profiles.<name>]`; filled in when the config is loaded.
+    #[serde(skip)]
+    pub name: String,
     pub provider: ProviderKind,
     pub model: String,
+    /// Models offered by `/model` and the setup wizard (the default `model` need not be listed).
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Reference to a named key in `credentials.toml` (`[keys.<name>]`). Not a secret.
+    #[serde(default)]
+    pub api_key_name: Option<String>,
     #[serde(default)]
     pub api_key_env: Option<String>,
     #[serde(default)]
@@ -136,12 +155,55 @@ impl Default for Config {
     }
 }
 
-/// `~/.config/ruckcode` unless overridden.
+/// Environment variable overriding the user config directory (default `~/.config/ruckcode`).
+pub const CONFIG_DIR_ENV: &str = "RUCKCODE_CONFIG_DIR";
+
+/// The user config directory: the explicit override, else `$RUCKCODE_CONFIG_DIR`, else
+/// `~/.config/ruckcode`.
 pub fn user_config_dir(over: Option<&Path>) -> Option<PathBuf> {
     match over {
         Some(p) => Some(p.to_path_buf()),
-        None => dirs::config_dir().map(|d| d.join("ruckcode")),
+        None => match std::env::var_os(CONFIG_DIR_ENV).filter(|v| !v.is_empty()) {
+            Some(d) => Some(PathBuf::from(d)),
+            None => dirs::config_dir().map(|d| d.join("ruckcode")),
+        },
     }
+}
+
+/// Path of the credentials file (`credentials.toml`) in the user config directory.
+pub fn credentials_path(user_dir: Option<&Path>) -> Option<PathBuf> {
+    user_config_dir(user_dir).map(|d| d.join("credentials.toml"))
+}
+
+/// The secret of named key `name` in `credentials.toml` (`[keys.<name>] api_key`).
+pub fn named_key(user_dir: Option<&Path>, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(credentials_path(user_dir)?).ok()?;
+    let t: toml::Table = text.parse().ok()?;
+    t.get("keys")?
+        .get(name)?
+        .get("api_key")?
+        .as_str()
+        .filter(|k| !k.is_empty())
+        .map(String::from)
+}
+
+/// Resolve a profile's API key: the named key (`api_key_name`, an error if it is missing from
+/// `credentials.toml`), else the env var named by `api_key_env`, else none.
+pub fn resolve_api_key(profile: &Profile, user_dir: Option<&Path>) -> Result<Option<String>> {
+    if let Some(name) = profile.api_key_name.as_deref() {
+        return match named_key(user_dir, name) {
+            Some(k) => Ok(Some(k)),
+            None => bail!(
+                "named key `{name}` (profile `{}`) not found in credentials.toml: run `rc keys add {name}`",
+                profile.name
+            ),
+        };
+    }
+    Ok(profile
+        .api_key_env
+        .as_deref()
+        .and_then(|v| std::env::var(v).ok())
+        .filter(|k| !k.is_empty()))
 }
 
 /// Recursively merge `over` into `base`: tables merge by key, everything else is replaced.
@@ -198,9 +260,12 @@ fn from_tables(layers: Vec<toml::Table>) -> Result<Config> {
         merge_mcp_servers(&mut merged, &mut l);
         merge(&mut merged, l);
     }
-    let cfg: Config = toml::Value::Table(merged)
+    let mut cfg: Config = toml::Value::Table(merged)
         .try_into()
         .context("invalid configuration")?;
+    for (name, p) in cfg.profiles.iter_mut() {
+        p.name = name.clone();
+    }
     if !cfg.profiles.contains_key(&cfg.default_profile) {
         bail!("default_profile `{}` is not defined", cfg.default_profile);
     }
@@ -245,27 +310,40 @@ impl Config {
     }
 }
 
-/// Instantiate the provider client for a profile.
+/// Instantiate the provider client for a profile, resolving keys without a config dir override.
 pub fn make_provider(profile: &Profile) -> Result<Arc<dyn Provider>> {
-    let key = || {
-        profile
-            .api_key_env
-            .as_deref()
-            .map(|var| std::env::var(var).with_context(|| format!("{var} is not set")))
+    make_provider_with(profile, None)
+}
+
+/// Instantiate the provider client for a profile. The API key comes from the profile's named key
+/// in `credentials.toml`, else the env var named by `api_key_env`, else none.
+pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<Arc<dyn Provider>> {
+    let key = resolve_api_key(profile, user_dir)?;
+    let missing = || {
+        let var = profile.api_key_env.as_deref().unwrap_or("an API key");
+        anyhow::anyhow!(
+            "no API key for profile `{}`: set {var} or run `rc setup` (or `rc keys add`)",
+            profile.name
+        )
     };
     Ok(match profile.provider {
         ProviderKind::Mock => Arc::new(ruckcode_llm::mock::MockProvider::demo()),
         ProviderKind::Anthropic => {
-            let key = key().context("anthropic profile needs api_key_env")??;
+            let key = key.ok_or_else(missing)?;
             Arc::new(ruckcode_llm::anthropic::Anthropic::new(
                 key,
                 profile.base_url.clone(),
             ))
         }
-        ProviderKind::Openai => Arc::new(ruckcode_llm::openai::OpenAi::new(
-            key().transpose()?,
-            profile.base_url.clone(),
-        )),
+        ProviderKind::Openai => {
+            if key.is_none() && profile.api_key_env.is_some() {
+                return Err(missing());
+            }
+            Arc::new(ruckcode_llm::openai::OpenAi::new(
+                key,
+                profile.base_url.clone(),
+            ))
+        }
     })
 }
 

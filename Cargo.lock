@@ -1591,6 +1591,7 @@ dependencies = [
  "ratatui",
  "ruckcode-acp",
  "ruckcode-core",
+ "ruckcode-llm",
  "ruckcode-mcp",
  "ruckcode-mise",
  "serde",
@@ -1624,6 +1625,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "toml_edit",
  "tracing",
  "uuid",
 ]

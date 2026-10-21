@@ -2,8 +2,11 @@
 
 pub mod anthropic;
 pub mod mock;
+pub mod models;
 pub mod openai;
 mod sse;
+
+pub use models::{list_models, ApiKind, ModelInfo};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

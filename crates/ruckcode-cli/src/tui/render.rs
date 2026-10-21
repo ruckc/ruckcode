@@ -425,6 +425,7 @@ fn render_modal(m: &Modal, f: &mut Frame, area: Rect) {
             ask_lines(a),
         ),
         Modal::Picker(p) => (" Resume a session ".to_string(), picker_lines(p)),
+        Modal::Models(p) => (" Model for this session ".to_string(), model_lines(p)),
     };
     let width = (area.width * 80 / 100).max(30).min(area.width);
     let inner_w = width.saturating_sub(2) as usize;
@@ -562,6 +563,25 @@ fn option_line(i: usize, label: &str, st: &super::app::QState, multi: bool) -> L
         ),
         sel_style(on_cursor),
     ))
+}
+
+fn model_lines(p: &super::app::ModelPickerModal) -> Vec<Line<'static>> {
+    let mut l = vec![];
+    let items =
+        std::iter::once("(mode / profile default)".to_string()).chain(p.models.iter().cloned());
+    for (i, m) in items.enumerate().take(14) {
+        let s = i == p.selected;
+        l.push(Line::from(Span::styled(
+            format!("{} {m}", if s { "❯" } else { " " }),
+            sel_style(s),
+        )));
+    }
+    l.push(Line::default());
+    l.push(Line::from(Span::styled(
+        "↑/↓ select · enter switch · esc cancel",
+        dim(),
+    )));
+    l
 }
 
 fn picker_lines(p: &PickerModal) -> Vec<Line<'static>> {
