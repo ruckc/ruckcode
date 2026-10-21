@@ -466,3 +466,27 @@ browser, mode/hook editor, and installable bundles.
 - Configure code-signing secrets (Apple, Windows) so releases stop being flagged; replace placeholder icons.
 - Linux aarch64 and ARM Windows bundles.
 - Branch protection ruleset still needs applying (see CONTRIBUTING.md).
+
+## Decision: UI toolkit (2026-10-21)
+
+**Stay on Tauri v2 until Tauri v3 is stable, then re-evaluate.**
+
+- **Mobile (iOS and Android) is a hard requirement**, even though it is out of scope for v1.
+  Whatever toolkit we use must support it without a later rewrite. Tauri v2 does, and the
+  SvelteKit UI and ACP client carry over unchanged. The mobile app is a remote ACP client of
+  `rc serve`.
+- **Known issue:** Linux pulls `glib` 0.18 through Tauri's GTK 3 stack (RUSTSEC-2024-0429).
+  It cannot be upgraded, because gtk-rs no longer publishes GTK 3 bindings and
+  webkit2gtk/wry/tao require `glib ^0.18`. The unsound `VariantStrIter` is never called. The
+  issue is ignored with this justification in `crates/ruckcode-app/.cargo/audit.toml` and
+  gated by the CI `audit` job. Revisit it on every Tauri or wry upgrade.
+- **Alternatives considered:**
+  - **gpui:** no mobile support.
+  - **gpui-toolkit:** third-party mobile backends maintained by one person, distributed as
+    source beta, with mobile unproven in a shipped app.
+  - **Slint:** a full rewrite, and iOS support is young.
+  - **Dioxus:** uses the same wry/WebKitGTK stack.
+  - **Electron:** desktop only.
+  - **Capacitor or PWA:** viable mobile shells for the SvelteKit UI if Tauri mobile
+    disappoints.
+- **When Tauri v3 ships**, check whether it leaves GTK 3 and upgrade if it does.
