@@ -18,9 +18,10 @@ name: Release
 # variable RUCKCODE_UPDATER_PUBKEY (see CONTRIBUTING.md); without them everything still builds, but
 # no updater artifacts, signatures or manifests are produced.
 
+# Releases run as the last stage of CI (ci.yml calls this workflow after every check passed on
+# main), so each push builds once. workflow_dispatch remains for redeploying Pages.
 on:
-  push:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
     inputs:
       redeploy_pages:
@@ -33,7 +34,8 @@ on:
         default: ""
 
 concurrency:
-  group: release
+  # Distinct from the caller's "release" group in ci.yml, which would otherwise deadlock.
+  group: release-run-${{ github.event_name }}
   cancel-in-progress: false
 
 permissions:

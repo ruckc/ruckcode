@@ -15,7 +15,9 @@ Releases are fully automatic and derived from commit messages, so every commit
 | `feat!:` / `fix!:` / a `BREAKING CHANGE:` footer | major bump (minor while version < 1.0.0) |
 | `docs`, `style`, `test`, `build`, `ci`, `chore`, `revert` | no release |
 
-If a push to `main` contains only non-releasing types since the last `v*` tag,
+Releases are the last stage of the CI workflow: on a push to `main`, `ci.yml` calls
+`release.yml` only after every check has passed, so each push builds once and a red commit
+never releases. If the commits since the last `v*` tag are all non-releasing types,
 no tag or release is created. The `Conventional Commits` workflow checks the PR
 title and each commit subject on every pull request; prefer squash-merging so
 the (validated) PR title is the commit on `main`.
