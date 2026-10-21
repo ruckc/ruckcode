@@ -28,18 +28,18 @@ impl Handler for Client {
         match method {
             SESSION_REQUEST_PERMISSION => {
                 let req: RequestPermissionRequest = serde_json::from_value(params).unwrap();
-                let is_question = req.tool_call.tool_call_id.starts_with("ask-");
+                let is_question = req.tool_call.tool_call_id.0.starts_with("ask-");
                 let chosen = if is_question {
                     let mut p = self.ask_pick.lock().unwrap();
                     let i = if p.is_empty() { 0 } else { p.remove(0) };
-                    req.options.get(i).map(|o| o.option_id.clone())
+                    req.options.get(i).map(|o| o.option_id.to_string())
                 } else {
                     let kind = *self.pick.lock().unwrap();
                     kind.and_then(|k| {
                         req.options
                             .iter()
                             .find(|o| o.kind == k)
-                            .map(|o| o.option_id.clone())
+                            .map(|o| o.option_id.to_string())
                     })
                 };
                 self.perms.lock().unwrap().push(req);
@@ -131,9 +131,10 @@ impl Env {
         self.client.updates.lock().unwrap()[before..]
             .iter()
             .filter_map(|n| match &n.update {
-                SessionUpdate::AgentMessageChunk {
-                    content: ContentBlock::Text { text },
-                } => Some(text.clone()),
+                SessionUpdate::AgentMessageChunk(ContentChunk {
+                    content: ContentBlock::Text(t),
+                    ..
+                }) => Some(t.text.clone()),
                 _ => None,
             })
             .collect()

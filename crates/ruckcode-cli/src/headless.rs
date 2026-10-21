@@ -7,8 +7,8 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use ruckcode_acp::schema::{
-    self, ContentBlock, RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
-    SessionUpdate, StopReason, ToolCallStatus,
+    self, ContentBlock, ContentChunk, RequestPermissionRequest, RequestPermissionResponse,
+    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallStatus,
 };
 use ruckcode_acp::{Handler, RpcError};
 use serde_json::{json, Value};
@@ -50,7 +50,7 @@ impl Handler for HeadlessHandler {
             schema::SESSION_REQUEST_PERMISSION => {
                 let req: RequestPermissionRequest = serde_json::from_value(params)
                     .map_err(|e| RpcError::invalid_params(e.to_string()))?;
-                let title = req.tool_call.title.clone().unwrap_or_default();
+                let title = req.tool_call.fields.title.clone().unwrap_or_default();
                 let allow = self.policy.allows(&title);
                 eprintln!(
                     "\x1b[2m{} {}\x1b[0m",
@@ -62,7 +62,7 @@ impl Handler for HeadlessHandler {
                     title
                 );
                 let outcome = client::pick_option(&req, allow);
-                Ok(serde_json::to_value(RequestPermissionResponse { outcome }).unwrap())
+                Ok(serde_json::to_value(RequestPermissionResponse::new(outcome)).unwrap())
             }
             schema::ASK_USER_QUESTION => {
                 Ok(serde_json::to_value(AskResponse::cancelled()).unwrap())
@@ -83,9 +83,10 @@ impl Handler for HeadlessHandler {
             return;
         };
         match n.update {
-            SessionUpdate::AgentMessageChunk {
-                content: ContentBlock::Text { text },
-            } => {
+            SessionUpdate::AgentMessageChunk(ContentChunk {
+                content: ContentBlock::Text(TextContent { text, .. }),
+                ..
+            }) => {
                 let mut out = std::io::stdout().lock();
                 let _ = out.write_all(text.as_bytes());
                 let _ = out.flush();
@@ -98,8 +99,11 @@ impl Handler for HeadlessHandler {
             SessionUpdate::ToolCall(tc) => {
                 eprintln!("\x1b[2m● {}\x1b[0m", tc.title);
             }
-            SessionUpdate::ToolCallUpdate(u) if u.status == Some(ToolCallStatus::Failed) => {
+            SessionUpdate::ToolCallUpdate(u) if u.fields.status == Some(ToolCallStatus::Failed) => {
                 eprintln!("\x1b[2m✗ tool call {} failed\x1b[0m", u.tool_call_id);
+            }
+            SessionUpdate::Notice(n) => {
+                eprintln!("\x1b[2m{}\x1b[0m", n.title);
             }
             _ => {}
         }
@@ -162,7 +166,7 @@ pub async fn run(cli: &Cli) -> Result<u8> {
     let sid = started.session_id.clone();
     let turn = conn.request(
         schema::SESSION_PROMPT,
-        json!({"sessionId": sid, "prompt": [ContentBlock::text(prompt)]}),
+        json!({"sessionId": sid, "prompt": [ContentBlock::from(prompt)]}),
     );
     tokio::pin!(turn);
     let res = tokio::select! {

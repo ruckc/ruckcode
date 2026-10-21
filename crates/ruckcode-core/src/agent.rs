@@ -64,6 +64,15 @@ pub enum SessionEvent {
     ModeChanged(String),
     /// Informational message for the user.
     Notice(String),
+    /// Token usage reported by the provider after a model request. `input_tokens` is the whole
+    /// prompt (including cached tokens), so `input + output` approximates the context in use.
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+        context_window: u64,
+    },
+    /// The effective model of the session changed (`/model` pin or a mode switch).
+    ModelChanged(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +137,10 @@ pub struct SessionInfo {
     pub id: String,
     pub current_mode: String,
     pub modes: Vec<ModeInfo>,
+    /// Effective model for the current mode (empty if it cannot be resolved).
+    pub model: String,
+    /// Models selectable for this session (the profile's `model` plus its `models`).
+    pub models: Vec<String>,
 }
 
 pub struct AgentOptions {
@@ -223,8 +236,10 @@ impl SessionState {
         self.config.hooks.merged(&self.mode_def().hooks)
     }
 
-    fn info(&self) -> SessionInfo {
+    fn info(&self, model: String, models: Vec<String>) -> SessionInfo {
         SessionInfo {
+            model,
+            models,
             id: self.id.clone(),
             current_mode: self.mode.clone(),
             modes: self
@@ -466,7 +481,7 @@ impl Agent {
         let shared = self.shared_for(session_id)?;
         if let Ok(mut s) = session.try_lock() {
             *shared.pending_model.lock().unwrap() = None;
-            Self::pin_model(&mut s, model, &client);
+            self.pin_model(&mut s, model, &client);
             return Ok(());
         }
         let label = model
@@ -480,7 +495,7 @@ impl Agent {
         Ok(())
     }
 
-    fn pin_model(s: &mut SessionState, model: Option<String>, client: &Arc<dyn Client>) {
+    fn pin_model(&self, s: &mut SessionState, model: Option<String>, client: &Arc<dyn Client>) {
         if s.model_pin == model {
             return;
         }
@@ -495,6 +510,9 @@ impl Agent {
             None => "model pin cleared; using the mode/profile model".into(),
         };
         client.send_event(&s.id, SessionEvent::Notice(text));
+        if let Ok((effective, _)) = self.model_for(s) {
+            client.send_event(&s.id, SessionEvent::ModelChanged(effective));
+        }
     }
 
     fn provider_for(&self, s: &mut SessionState, profile: &Profile) -> Result<Arc<dyn Provider>> {
@@ -513,8 +531,22 @@ impl Agent {
         Ok(p)
     }
 
+    /// Session description including the effective model and the models offered for it.
+    fn describe(&self, s: &SessionState) -> SessionInfo {
+        let model = self.model_for(s).map(|(m, _)| m).unwrap_or_default();
+        let mut models = vec![];
+        if let Ok(p) = s.config.profile(&s.profile) {
+            models.push(p.model.clone());
+            models.extend(p.models.iter().cloned());
+        }
+        models.insert(0, model.clone());
+        let mut seen = HashSet::new();
+        models.retain(|m| !m.is_empty() && seen.insert(m.clone()));
+        s.info(model, models)
+    }
+
     fn register(&self, s: SessionState) -> SessionInfo {
-        let info = s.info();
+        let info = self.describe(&s);
         self.shared.lock().unwrap().insert(
             s.id.clone(),
             Arc::new(Shared {
@@ -596,6 +628,37 @@ impl Agent {
         client: Arc<dyn Client>,
         extra_mcp: BTreeMap<String, McpServerConfig>,
     ) -> Result<SessionInfo> {
+        self.restore_session(id, cwd, Some(client), extra_mcp).await
+    }
+
+    /// Like [`load_session_with`](Self::load_session_with) but without replaying the history
+    /// (ACP `session/resume`).
+    pub async fn resume_session_with(
+        &self,
+        id: &str,
+        cwd: PathBuf,
+        extra_mcp: BTreeMap<String, McpServerConfig>,
+    ) -> Result<SessionInfo> {
+        self.restore_session(id, cwd, None, extra_mcp).await
+    }
+
+    /// Drop a session's in-memory state (MCP connections included) after cancelling any running
+    /// prompt. The transcript stays on disk, so the session can be loaded again.
+    pub fn close_session(&self, session_id: &str) -> Result<()> {
+        self.session(session_id)?;
+        self.cancel(session_id);
+        self.sessions.lock().unwrap().remove(session_id);
+        self.shared.lock().unwrap().remove(session_id);
+        Ok(())
+    }
+
+    async fn restore_session(
+        &self,
+        id: &str,
+        cwd: PathBuf,
+        replay_to: Option<Arc<dyn Client>>,
+        extra_mcp: BTreeMap<String, McpServerConfig>,
+    ) -> Result<SessionInfo> {
         let path = transcript::session_path(&cwd, id);
         let loaded = TranscriptReader::load(&path)?;
         let mode = Some(loaded.mode.clone()).filter(|m| {
@@ -624,7 +687,9 @@ impl Agent {
             s.push_interruption();
         }
         s.rec(Record::SessionResumed {});
-        replay(&cwd, id, &loaded.records, client.as_ref());
+        if let Some(client) = replay_to {
+            replay(&cwd, id, &loaded.records, client.as_ref());
+        }
         Ok(self.register(s))
     }
 
@@ -634,7 +699,7 @@ impl Agent {
 
     pub fn session_modes(&self, session_id: &str) -> Option<SessionInfo> {
         let s = self.session(session_id).ok()?;
-        let info = s.try_lock().ok().map(|s| s.info());
+        let info = s.try_lock().ok().map(|s| self.describe(&s));
         info
     }
 
@@ -693,7 +758,7 @@ impl Agent {
         };
         let pending_model = shared.pending_model.lock().unwrap().take();
         if let Some(m) = pending_model {
-            Self::pin_model(s, m, client);
+            self.pin_model(s, m, client);
         }
         let pending = shared.pending_mode.lock().unwrap().take();
         if let Some(to) = pending.filter(|m| *m != s.mode) {
@@ -729,6 +794,7 @@ impl Agent {
                     &s.id,
                     SessionEvent::Notice(format!("model changed: {old} -> {new}")),
                 );
+                client.send_event(&s.id, SessionEvent::ModelChanged(new));
             }
         }
         let payload = json!({"event": "mode_change", "session_id": s.id, "from": from, "to": to});
@@ -915,6 +981,16 @@ impl Agent {
             stats.model_requests += 1;
             stats.input_tokens += response.usage.input_tokens;
             stats.output_tokens += response.usage.output_tokens;
+            if response.usage.input_tokens + response.usage.output_tokens > 0 {
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Usage {
+                        input_tokens: response.usage.input_tokens,
+                        output_tokens: response.usage.output_tokens,
+                        context_window: profile.context_window,
+                    },
+                );
+            }
             s.request_counter += 1;
             let request_id = s.request_counter;
             s.rec(Record::AssistantMessage {

@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as UiBlock, Borders, Clear, Paragraph};
 use ratatui::Frame;
-use ruckcode_acp::schema::{PlanStatus, ToolCallStatus};
+use ruckcode_acp::schema::{PlanEntryStatus, ToolCallStatus};
 
 use super::app::{App, AskModal, Block, DiffKind, Modal, PermissionModal, PickerModal, ToolView};
 
@@ -118,6 +118,7 @@ fn tool_glyph(app: &App, s: ToolCallStatus) -> (String, Style) {
         ToolCallStatus::InProgress => (spinner(app).into(), Style::default().fg(Color::Yellow)),
         ToolCallStatus::Completed => ("✓".into(), Style::default().fg(Color::Green)),
         ToolCallStatus::Failed => ("✗".into(), Style::default().fg(Color::Red)),
+        _ => ("?".into(), dim()),
     }
 }
 
@@ -298,14 +299,15 @@ fn render_plan(app: &App, f: &mut Frame, area: Rect) {
         .take(6)
         .map(|e| {
             let (g, style) = match e.status {
-                PlanStatus::Pending => ("☐", dim()),
-                PlanStatus::InProgress => ("◐", Style::default().fg(Color::Yellow)),
-                PlanStatus::Completed => (
+                PlanEntryStatus::Pending => ("☐", dim()),
+                PlanEntryStatus::InProgress => ("◐", Style::default().fg(Color::Yellow)),
+                PlanEntryStatus::Completed => (
                     "☑",
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::CROSSED_OUT),
                 ),
+                _ => ("☐", dim()),
             };
             Line::from(vec![
                 Span::styled(format!("{g} "), style),
@@ -316,7 +318,7 @@ fn render_plan(app: &App, f: &mut Frame, area: Rect) {
     let done = app
         .plan
         .iter()
-        .filter(|e| e.status == PlanStatus::Completed)
+        .filter(|e| e.status == PlanEntryStatus::Completed)
         .count();
     let block = UiBlock::default()
         .borders(Borders::ALL)
@@ -381,10 +383,7 @@ fn render_status(app: &App, f: &mut Frame, area: Rect) {
     if let Some(id) = &app.session_id {
         left.push(Span::styled(format!(" · {id}"), dim()));
     }
-    left.push(Span::styled(
-        format!(" · ~{} tok", app.approx_tokens()),
-        dim(),
-    ));
+    left.push(Span::styled(format!(" · {}", app.tokens_label()), dim()));
     let right = if app.running {
         format!("{} esc to interrupt ", spinner(app))
     } else {
@@ -614,8 +613,9 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use ruckcode_acp::schema::{
-        ContentBlock, PermissionOption, PermissionOptionKind, PlanEntry, PlanPriority,
-        RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallUpdate,
+        ContentBlock, ContentChunk, Diff, PermissionOption, PermissionOptionKind, Plan, PlanEntry,
+        PlanEntryPriority, RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallContent,
+        ToolCallUpdate, ToolCallUpdateFields,
     };
     use tokio::sync::oneshot;
 
@@ -652,32 +652,25 @@ mod tests {
         app.session_id = Some("sess-1".into());
         app.mode_id = "implement".into();
         app.begin_turn("fix the bug".into());
-        app.handle_update(SessionUpdate::AgentMessageChunk {
-            content: ContentBlock::text("Looking now\n```\nlet x = 1;\n```"),
-        });
-        app.handle_update(SessionUpdate::ToolCall(ToolCall {
-            tool_call_id: "c".into(),
-            title: "Edit src/lib.rs".into(),
-            status: ToolCallStatus::InProgress,
-            ..Default::default()
-        }));
-        app.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate {
-            tool_call_id: "c".into(),
-            status: Some(ToolCallStatus::Completed),
-            content: Some(vec![ruckcode_acp::schema::ToolCallContent::Diff {
-                path: "src/lib.rs".into(),
-                old_text: Some("a\n".into()),
-                new_text: "b\n".into(),
-            }]),
-            ..Default::default()
-        }));
-        app.handle_update(SessionUpdate::Plan {
-            entries: vec![PlanEntry {
-                content: "write tests".into(),
-                priority: PlanPriority::High,
-                status: PlanStatus::InProgress,
-            }],
-        });
+        app.handle_update(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+            ContentBlock::from("Looking now\n```\nlet x = 1;\n```"),
+        )));
+        app.handle_update(SessionUpdate::ToolCall(
+            ToolCall::new("c", "Edit src/lib.rs").status(ToolCallStatus::InProgress),
+        ));
+        app.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "c",
+            ToolCallUpdateFields::new()
+                .status(ToolCallStatus::Completed)
+                .content(vec![ToolCallContent::Diff(
+                    Diff::new("src/lib.rs", "b\n").old_text("a\n"),
+                )]),
+        )));
+        app.handle_update(SessionUpdate::Plan(Plan::new(vec![PlanEntry::new(
+            "write tests",
+            PlanEntryPriority::High,
+            PlanEntryStatus::InProgress,
+        )])));
         let s = draw(&app, 80, 24);
         for want in [
             "fix the bug",
@@ -700,9 +693,9 @@ mod tests {
     #[test]
     fn thoughts_collapse_and_expand() {
         let mut app = App::new("m");
-        app.handle_update(SessionUpdate::AgentThoughtChunk {
-            content: ContentBlock::text("secret reasoning"),
-        });
+        app.handle_update(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+            ContentBlock::from("secret reasoning"),
+        )));
         let s = draw(&app, 60, 12);
         assert!(s.contains("thought") && !s.contains("secret reasoning"));
         app.show_thoughts = true;
@@ -714,20 +707,20 @@ mod tests {
         let mut app = App::new("m");
         let (tx, _rx) = oneshot::channel();
         app.request_permission(
-            RequestPermissionRequest {
-                session_id: "s".into(),
-                tool_call: ToolCallUpdate {
-                    tool_call_id: "c".into(),
-                    title: Some("Bash: rm -rf x".into()),
-                    raw_input: Some(serde_json::json!({"command":"rm -rf x"})),
-                    ..Default::default()
-                },
-                options: vec![PermissionOption {
-                    option_id: "a".into(),
-                    name: "Allow once".into(),
-                    kind: PermissionOptionKind::AllowOnce,
-                }],
-            },
+            RequestPermissionRequest::new(
+                "s",
+                ToolCallUpdate::new(
+                    "c",
+                    ToolCallUpdateFields::new()
+                        .title("Bash: rm -rf x")
+                        .raw_input(serde_json::json!({"command":"rm -rf x"})),
+                ),
+                vec![PermissionOption::new(
+                    "a",
+                    "Allow once",
+                    PermissionOptionKind::AllowOnce,
+                )],
+            ),
             tx,
         );
         let s = draw(&app, 80, 24);

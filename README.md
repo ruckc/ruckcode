@@ -328,8 +328,10 @@ permission requests are denied; AskUserQuestion is cancelled. Exit codes: `0` fi
 }
 ```
 
-Supported methods, notifications and the `_ruckcode/*` extensions are documented in
-[docs/ACP.md](docs/ACP.md).
+Wire types come from the official [`agent-client-protocol-schema`](https://crates.io/crates/agent-client-protocol-schema)
+crate (ACP v1, stable surface only). Supported methods (including `session/list`, `session/resume`,
+`session/close` and the `model` config option), notifications and the `_ruckcode/*` extensions are
+documented in [docs/ACP.md](docs/ACP.md).
 
 ## Workspace layout
 

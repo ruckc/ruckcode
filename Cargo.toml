@@ -9,6 +9,7 @@ license = "MIT"
 repository = "https://github.com/ruckc/ruckcode"
 
 [workspace.dependencies]
+agent-client-protocol-schema = { version = "=1.12.0", default-features = false }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }

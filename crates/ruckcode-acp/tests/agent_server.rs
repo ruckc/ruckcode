@@ -149,9 +149,10 @@ async fn wait_for(mut f: impl FnMut() -> bool) {
 fn agent_text(u: &[SessionUpdate]) -> String {
     u.iter()
         .filter_map(|u| match u {
-            SessionUpdate::AgentMessageChunk {
-                content: ContentBlock::Text { text },
-            } => Some(text.as_str()),
+            SessionUpdate::AgentMessageChunk(ContentChunk {
+                content: ContentBlock::Text(t),
+                ..
+            }) => Some(t.text.as_str()),
             _ => None,
         })
         .collect()
@@ -211,7 +212,7 @@ async fn text_prompt_streams() {
         .lock()
         .unwrap()
         .iter()
-        .all(|n| n.session_id == sid));
+        .all(|n| *n.session_id.0 == *sid));
 
     let l = c
         .request(LIST_SESSIONS, json!({"cwd":env.cwd()}))
@@ -221,8 +222,6 @@ async fn text_prompt_streams() {
     assert_eq!(l["sessions"][0]["firstPrompt"], "hi");
     assert_eq!(l["sessions"][0]["mode"], "default");
 }
-
-const LIST_SESSIONS: &str = "_ruckcode/list_sessions";
 
 #[tokio::test]
 async fn write_tool_requests_permission_and_reports_diff() {
@@ -249,9 +248,12 @@ async fn write_tool_requests_permission_and_reports_diff() {
 
     let reqs = env.client.permission_reqs.lock().unwrap().clone();
     assert_eq!(reqs.len(), 1);
-    assert_eq!(reqs[0].tool_call.tool_call_id, "t1");
-    assert_eq!(reqs[0].tool_call.kind, Some(ToolKind::Edit));
-    assert_eq!(reqs[0].tool_call.status, Some(ToolCallStatus::Pending));
+    assert_eq!(&*reqs[0].tool_call.tool_call_id.0, "t1");
+    assert_eq!(reqs[0].tool_call.fields.kind, Some(ToolKind::Edit));
+    assert_eq!(
+        reqs[0].tool_call.fields.status,
+        Some(ToolCallStatus::Pending)
+    );
     let kinds: Vec<_> = reqs[0].options.iter().map(|o| o.kind).collect();
     assert_eq!(kinds[0], PermissionOptionKind::AllowOnce);
     assert_eq!(*kinds.last().unwrap(), PermissionOptionKind::RejectOnce);
@@ -260,13 +262,13 @@ async fn write_tool_requests_permission_and_reports_diff() {
     let u = env.client.updates();
     let call = u
         .iter()
-        .position(|u| matches!(u, SessionUpdate::ToolCall(t) if t.tool_call_id == "t1"))
+        .position(|u| matches!(u, SessionUpdate::ToolCall(t) if &*t.tool_call_id.0 == "t1"))
         .expect("tool_call");
     let upd = u
         .iter()
         .position(|u| {
-            matches!(u, SessionUpdate::ToolCallUpdate(t) if t.tool_call_id == "t1"
-            && t.status == Some(ToolCallStatus::Completed))
+            matches!(u, SessionUpdate::ToolCallUpdate(t) if &*t.tool_call_id.0 == "t1"
+            && t.fields.status == Some(ToolCallStatus::Completed))
         })
         .expect("tool_call_update");
     assert!(call < upd);
@@ -279,8 +281,8 @@ async fn write_tool_requests_permission_and_reports_diff() {
     let SessionUpdate::ToolCallUpdate(tu) = &u[upd] else {
         unreachable!()
     };
-    assert!(tu.content.as_ref().unwrap().iter().any(|c| matches!(c,
-        ToolCallContent::Diff { path, old_text: None, new_text } if *path == file && new_text == "new body")));
+    assert!(tu.fields.content.as_ref().unwrap().iter().any(|c| matches!(c,
+        ToolCallContent::Diff(d) if d.path == file && d.old_text.is_none() && d.new_text == "new body")));
 }
 
 #[tokio::test]
@@ -327,8 +329,8 @@ async fn ask_user_question_via_extension() {
     wait_for(|| {
         env.client.updates().iter().any(|u| {
             matches!(u,
-            SessionUpdate::ToolCallUpdate(t) if t.status == Some(ToolCallStatus::Completed)
-            && format!("{:?}", t.content).contains("sqlite"))
+            SessionUpdate::ToolCallUpdate(t) if t.fields.status == Some(ToolCallStatus::Completed)
+            && format!("{:?}", t.fields.content).contains("sqlite"))
         })
     })
     .await;
@@ -353,15 +355,15 @@ async fn ask_user_question_fallback_and_cancel() {
         .extend([Some("opt-1".to_string()), None]);
     prompt(&c, &sid, "go").await;
     let reqs = env.client.permission_reqs.lock().unwrap().clone();
-    assert_eq!(reqs[0].tool_call.title.as_deref(), Some("Which DB?"));
-    assert_eq!(reqs[0].tool_call.kind, Some(ToolKind::Other));
+    assert_eq!(reqs[0].tool_call.fields.title.as_deref(), Some("Which DB?"));
+    assert_eq!(reqs[0].tool_call.fields.kind, Some(ToolKind::Other));
     let names: Vec<_> = reqs[0].options.iter().map(|o| o.name.as_str()).collect();
     assert_eq!(names, ["sqlite", "postgres"]);
-    assert_eq!(reqs[0].options[1].option_id, "opt-1");
+    assert_eq!(&*reqs[0].options[1].option_id.0, "opt-1");
     wait_for(|| {
         env.client.updates().iter().any(|u| {
             matches!(u,
-            SessionUpdate::ToolCallUpdate(t) if format!("{:?}", t.content).contains("postgres"))
+            SessionUpdate::ToolCallUpdate(t) if format!("{:?}", t.fields.content).contains("postgres"))
         })
     })
     .await;
@@ -371,7 +373,7 @@ async fn ask_user_question_fallback_and_cancel() {
     wait_for(|| {
         env.client.updates().iter().any(|u| {
             matches!(u,
-            SessionUpdate::ToolCallUpdate(t) if t.status == Some(ToolCallStatus::Failed))
+            SessionUpdate::ToolCallUpdate(t) if t.fields.status == Some(ToolCallStatus::Failed))
         })
     })
     .await;
@@ -399,9 +401,9 @@ async fn set_mode_emits_update() {
         .await
         .unwrap();
     wait_for(|| {
-        env.client.updates().iter().any(|u| {
-            matches!(u, SessionUpdate::CurrentModeUpdate { current_mode_id } if current_mode_id == "b")
-        })
+        env.client.updates().iter().any(
+            |u| matches!(u, SessionUpdate::CurrentModeUpdate(m) if &*m.current_mode_id.0 == "b"),
+        )
     })
     .await;
     let e = c
@@ -440,11 +442,11 @@ async fn load_session_replays() {
     let u = env2.client.updates();
     let user = u
         .iter()
-        .position(|u| matches!(u, SessionUpdate::UserMessageChunk { content: ContentBlock::Text { text } } if text == "question one"))
+        .position(|u| matches!(u, SessionUpdate::UserMessageChunk(ContentChunk { content: ContentBlock::Text(t), .. }) if t.text == "question one"))
         .expect("user chunk");
     let agent = u
         .iter()
-        .position(|u| matches!(u, SessionUpdate::AgentMessageChunk { .. }))
+        .position(|u| matches!(u, SessionUpdate::AgentMessageChunk(_)))
         .unwrap();
     assert!(user < agent);
 }
@@ -508,4 +510,310 @@ async fn set_model_extension_pins_and_notifies() {
         )
         .await;
     assert!(e.is_err());
+}
+
+// ---- standard methods, capabilities and leniency ----------------------------------------------
+
+async fn init_with(c: &Connection, caps: Value) -> Value {
+    c.request(
+        INITIALIZE,
+        json!({"protocolVersion":1,"clientCapabilities":caps}),
+    )
+    .await
+    .unwrap()
+}
+
+fn notice_texts(u: &[SessionUpdate]) -> Vec<String> {
+    u.iter()
+        .filter_map(|u| match u {
+            SessionUpdate::Notice(n) => Some(n.title.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn initialize_advertises_accurate_capabilities() {
+    let env = Env::new();
+    let c = env.connect(mock([]));
+    let r = init(&c, false).await;
+    let caps = &r["agentCapabilities"];
+    assert_eq!(caps["loadSession"], true);
+    assert_eq!(caps["promptCapabilities"]["embeddedContext"], true);
+    assert_eq!(caps["promptCapabilities"]["image"], false);
+    assert_eq!(caps["promptCapabilities"]["audio"], false);
+    assert_eq!(caps["mcpCapabilities"], json!({"http": true, "sse": false}));
+    assert_eq!(
+        caps["sessionCapabilities"],
+        json!({"list": {}, "resume": {}, "close": {}})
+    );
+    // A bare initialize (no version, no capabilities) is accepted as v1.
+    let r = c.request(INITIALIZE, json!({})).await.unwrap();
+    assert_eq!(r["protocolVersion"], 1);
+}
+
+#[tokio::test]
+async fn new_session_exposes_model_config_option() {
+    let env = Env::new();
+    let c = env.connect(mock([]));
+    init(&c, false).await;
+    let r = c
+        .request(SESSION_NEW, json!({"cwd": env.cwd()}))
+        .await
+        .unwrap();
+    let opt = &r["configOptions"][0];
+    assert_eq!(opt["id"], "model");
+    assert_eq!(opt["category"], "model");
+    assert_eq!(opt["type"], "select");
+    let current = opt["currentValue"].as_str().unwrap();
+    assert!(!current.is_empty());
+    assert!(opt["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|o| o["value"] == current));
+}
+
+#[tokio::test]
+async fn set_config_option_pins_model() {
+    let env = Env::new();
+    let c = env.connect(mock([]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    let r = c
+        .request(
+            SESSION_SET_CONFIG_OPTION,
+            json!({"sessionId": sid, "configId": "model", "value": "pinned-model"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["configOptions"][0]["currentValue"], "pinned-model");
+    wait_for(|| agent_text(&env.client.updates()).contains("model set to pinned-model")).await;
+    // The effective model change is also pushed as config_option_update.
+    wait_for(|| {
+        env.client.updates().iter().any(|u| {
+            matches!(u, SessionUpdate::ConfigOptionUpdate(c)
+                if format!("{:?}", c.config_options).contains("pinned-model"))
+        })
+    })
+    .await;
+    for bad in [
+        json!({"sessionId": sid, "configId": "nope", "value": "x"}),
+        json!({"sessionId": sid, "configId": "model", "type": "boolean", "value": true}),
+        json!({"sessionId": "missing", "configId": "model", "value": "x"}),
+    ] {
+        assert!(c.request(SESSION_SET_CONFIG_OPTION, bad).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn standard_session_list_and_legacy_alias() {
+    let env = Env::new();
+    let c = env.connect(mock([Message::assistant_text("hi")]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    prompt(&c, &sid, "first line\nsecond line").await;
+    let l = c
+        .request(SESSION_LIST, json!({"cwd": env.cwd()}))
+        .await
+        .unwrap();
+    let s = &l["sessions"][0];
+    assert_eq!(s["sessionId"], sid.as_str());
+    assert_eq!(s["cwd"], json!(env.cwd()));
+    assert_eq!(s["title"], "first line");
+    assert!(s["updatedAt"].as_str().is_some_and(|t| !t.is_empty()));
+    assert_eq!(s["_meta"]["ruckcode"]["mode"], "default");
+    assert!(l.get("nextCursor").is_none());
+    // Deprecated alias keeps its original shape.
+    let old = c
+        .request(LIST_SESSIONS, json!({"cwd": env.cwd()}))
+        .await
+        .unwrap();
+    assert_eq!(old["sessions"][0]["id"], sid.as_str());
+    assert_eq!(old["sessions"][0]["firstPrompt"], "first line\nsecond line");
+}
+
+#[tokio::test]
+async fn resume_restores_without_replay_and_close_frees_session() {
+    let env = Env::new();
+    let c = env.connect(mock([Message::assistant_text("first answer")]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    prompt(&c, &sid, "question one").await;
+
+    // Close: further use of the session fails, the transcript stays.
+    c.request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .unwrap();
+    assert!(c
+        .request(
+            SESSION_PROMPT,
+            json!({"sessionId": sid, "prompt": [{"type":"text","text":"x"}]})
+        )
+        .await
+        .is_err());
+    assert!(c
+        .request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .is_err());
+
+    // Resume on a fresh client: no history is replayed, the session works again.
+    let env2 = Env {
+        proj: env.proj,
+        user: tempfile::tempdir().unwrap(),
+        client: Arc::new(TestClient::default()),
+    };
+    let c2 = env2.connect(mock([Message::assistant_text("second answer")]));
+    init(&c2, false).await;
+    let r = c2
+        .request(SESSION_RESUME, json!({"sessionId": sid, "cwd": env2.cwd()}))
+        .await
+        .unwrap();
+    assert_eq!(r["modes"]["currentModeId"], "default");
+    assert!(r["configOptions"][0]["id"] == "model");
+    assert!(env2.client.updates().is_empty(), "resume must not replay");
+    let p = prompt(&c2, &sid, "question two").await;
+    assert_eq!(p["stopReason"], "end_turn");
+    assert_eq!(agent_text(&env2.client.updates()), "second answer");
+}
+
+#[tokio::test]
+async fn lenient_inbound_parsing() {
+    let env = Env::new();
+    let c = env.connect(mock([Message::assistant_text("ok")]));
+    init(&c, false).await;
+    // No mcpServers; a malformed / unsupported one is skipped, not fatal.
+    let r = c
+        .request(SESSION_NEW, json!({"cwd": env.cwd()}))
+        .await
+        .unwrap();
+    assert!(r["sessionId"].is_string());
+    let r = c
+        .request(
+            SESSION_NEW,
+            json!({"cwd": env.cwd(), "mcpServers": [{"type":"sse","name":"s","url":"http://x"}, 42]}),
+        )
+        .await
+        .unwrap();
+    let sid = r["sessionId"].as_str().unwrap();
+    // Unknown content block types are skipped; the known ones still reach the model.
+    let p = c
+        .request(
+            SESSION_PROMPT,
+            json!({"sessionId": sid, "prompt": [
+                {"type":"hologram","x":1},
+                {"type":"text","text":"hello"},
+                {"type":"audio","data":"AA==","mimeType":"audio/wav"}]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(p["stopReason"], "end_turn");
+    // A request without sessionId is invalid params.
+    let e = c
+        .request(SESSION_PROMPT, json!({"prompt": []}))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, -32602);
+}
+
+#[tokio::test]
+async fn notices_use_standard_update_only_for_capable_clients() {
+    for (caps, expect_notice) in [
+        (json!({}), false),
+        (json!({"session": {"notices": {}}}), true),
+        (json!({"_meta": {"ruckcode": {"notices": true}}}), true),
+    ] {
+        let env = Env::new();
+        let c = env.connect(mock([]));
+        init_with(&c, caps).await;
+        let sid = new_session(&c, &env).await;
+        c.request(
+            SET_MODEL,
+            json!({"sessionId": sid, "model": "pinned-model"}),
+        )
+        .await
+        .unwrap();
+        let u = env.client.updates();
+        if expect_notice {
+            assert_eq!(
+                notice_texts(&u),
+                ["model set to pinned-model for this session"]
+            );
+            assert!(agent_text(&u).is_empty());
+        } else {
+            assert!(notice_texts(&u).is_empty());
+            assert!(agent_text(&u).contains("model set to pinned-model"));
+        }
+    }
+}
+
+struct UsageProvider;
+#[async_trait]
+impl Provider for UsageProvider {
+    fn name(&self) -> &str {
+        "usage"
+    }
+    async fn complete(
+        &self,
+        _: ruckcode_llm::Request,
+        _: tokio::sync::mpsc::UnboundedSender<ruckcode_llm::StreamEvent>,
+    ) -> anyhow::Result<ruckcode_llm::Response> {
+        Ok(ruckcode_llm::Response {
+            message: Message::assistant_text("counted"),
+            stop_reason: ruckcode_llm::StopReason::EndTurn,
+            usage: ruckcode_llm::Usage {
+                input_tokens: 1200,
+                output_tokens: 34,
+            },
+        })
+    }
+}
+
+#[tokio::test]
+async fn usage_update_follows_model_request() {
+    let env = Env::new();
+    let c = env.connect(Arc::new(UsageProvider));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    prompt(&c, &sid, "count").await;
+    let u = env.client.updates();
+    let usage: Vec<_> = u
+        .iter()
+        .filter_map(|u| match u {
+            SessionUpdate::UsageUpdate(x) => Some((x.used, x.size)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(usage, [(1234, 200_000)]);
+}
+
+#[tokio::test]
+async fn tool_call_update_omits_empty_content() {
+    let env = Env::new();
+    let c = env.connect(mock([
+        tool_use("t1", "Bash", json!({"command": "true"})),
+        Message::assistant_text("done"),
+    ]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    env.client
+        .selections
+        .lock()
+        .unwrap()
+        .push_back(Some("allow_once".into()));
+    prompt(&c, &sid, "run").await;
+    let u = env.client.updates();
+    let progress = u
+        .iter()
+        .find_map(|u| match u {
+            SessionUpdate::ToolCallUpdate(t)
+                if t.fields.status == Some(ToolCallStatus::InProgress) =>
+            {
+                Some(t.clone())
+            }
+            _ => None,
+        })
+        .expect("in_progress update");
+    // An empty `content` array would clear what the client already shows.
+    assert!(progress.fields.content.is_none());
 }

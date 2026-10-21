@@ -16,24 +16,26 @@
 //! `other` carries free text when the user chose "Other". `cancelled: true` aborts the tool call.
 //! Without the capability, each question is posed through `session/request_permission` instead.
 //!
-//! # Extension: `_ruckcode/list_sessions` (client -> agent request)
+//! # Extension: `_ruckcode/list_sessions` (client -> agent request, deprecated)
 //!
 //! `{"cwd": "/path"}` -> `{"sessions": [{"id", "createdAt", "updatedAt", "firstPrompt", "mode"}]}`.
+//! Deprecated alias of the standard `session/list`.
 //!
 //! # Extension: `_ruckcode/set_model` (client -> agent request)
 //!
 //! `{"sessionId": "...", "model": "claude-haiku-5-5"}` -> `{}`. Pins the model for this session,
 //! overriding the mode's and profile's model (recorded in the transcript as `model_change`).
-//! `model: null` (or absent) clears the pin.
+//! `model: null` (or absent) clears the pin. The standard `session/set_config_option` with the
+//! `model` config option does the same (without the ability to clear).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use ruckcode_core::{
-    Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, SessionEvent, SessionInfo,
-    StopReason as CoreStop, ToolStatus,
+    Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, SessionEvent,
+    SessionInfo as CoreSessionInfo, StopReason as CoreStop, ToolStatus,
 };
 use ruckcode_mcp::McpServerConfig;
 use ruckcode_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
@@ -41,15 +43,15 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use crate::rpc::{Connection, Handler, RpcError};
-use crate::schema::*;
-
-pub const LIST_SESSIONS: &str = "_ruckcode/list_sessions";
-pub const SET_MODEL: &str = "_ruckcode/set_model";
+use crate::schema::{self as acp, *};
 
 struct Shared {
     agent: Arc<Agent>,
     conn: OnceLock<Connection>,
     caps: Mutex<ClientCapabilities>,
+    /// Models offered per session (for `config_option_update`), filled when a session is
+    /// created, loaded or resumed.
+    models: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl Shared {
@@ -61,10 +63,7 @@ impl Shared {
 
     fn update(&self, session_id: &str, update: SessionUpdate) {
         let Ok(conn) = self.conn() else { return };
-        let n = SessionNotification {
-            session_id: session_id.to_string(),
-            update,
-        };
+        let n = SessionNotification::new(SessionId::new(session_id), update);
         if let Ok(v) = serde_json::to_value(&n) {
             // `notify` enqueues on an unbounded channel drained by a single writer task,
             // so notifications keep the order in which they were sent.
@@ -79,18 +78,46 @@ impl Shared {
         options: Vec<PermissionOption>,
     ) -> Option<String> {
         let conn = self.conn().ok()?;
-        let req = RequestPermissionRequest {
-            session_id: session_id.to_string(),
-            tool_call,
-            options,
-        };
+        let req = RequestPermissionRequest::new(SessionId::new(session_id), tool_call, options);
         let resp: RequestPermissionResponse = conn
             .request_typed(SESSION_REQUEST_PERMISSION, &req)
             .await
             .ok()?;
         match resp.outcome {
-            RequestPermissionOutcome::Selected { option_id } => Some(option_id),
-            RequestPermissionOutcome::Cancelled => None,
+            RequestPermissionOutcome::Selected(s) => Some(s.option_id.to_string()),
+            _ => None,
+        }
+    }
+
+    fn notices_supported(&self) -> bool {
+        supports_notices(&self.caps.lock().unwrap())
+    }
+
+    fn model_option_for(&self, session_id: &str, current: &str) -> Option<SessionConfigOption> {
+        let models = self
+            .models
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default();
+        model_option(current, &models)
+    }
+
+    fn convert_event(&self, session_id: &str, ev: SessionEvent) -> Vec<SessionUpdate> {
+        match ev {
+            SessionEvent::Notice(n) if self.notices_supported() => {
+                vec![SessionUpdate::Notice(Notice::new(NoticeSeverity::Info, n))]
+            }
+            SessionEvent::ModelChanged(m) => self
+                .model_option_for(session_id, &m)
+                .map(|o| {
+                    vec![SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                        vec![o],
+                    ))]
+                })
+                .unwrap_or_default(),
+            ev => vec![convert_event(ev)],
         }
     }
 }
@@ -111,36 +138,56 @@ fn kind(k: CoreKind) -> ToolKind {
 }
 
 fn text(s: impl Into<String>) -> ContentBlock {
-    ContentBlock::text(s)
+    ContentBlock::from(s.into())
 }
 
+/// The `model` select option: `current` first if it is not among `models`.
+fn model_option(current: &str, models: &[String]) -> Option<SessionConfigOption> {
+    if current.is_empty() {
+        return None;
+    }
+    let mut ids: Vec<&str> = models.iter().map(String::as_str).collect();
+    if !ids.contains(&current) {
+        ids.insert(0, current);
+    }
+    let options: Vec<SessionConfigSelectOption> = ids
+        .into_iter()
+        .map(|m| SessionConfigSelectOption::new(m.to_string(), m))
+        .collect();
+    Some(
+        SessionConfigOption::select(MODEL_CONFIG_ID, "Model", current.to_string(), options)
+            .description("Model used for this session")
+            .category(SessionConfigOptionCategory::Model),
+    )
+}
+
+/// Event -> update for events that map one-to-one and need no connection state. (Notices are
+/// sent as message chunks here; `Shared::convert_event` upgrades them for capable clients.)
 fn convert_event(ev: SessionEvent) -> SessionUpdate {
     match ev {
-        SessionEvent::UserText(t) => SessionUpdate::UserMessageChunk { content: text(t) },
-        SessionEvent::AgentText(t) => SessionUpdate::AgentMessageChunk { content: text(t) },
-        SessionEvent::AgentThought(t) => SessionUpdate::AgentThoughtChunk { content: text(t) },
+        SessionEvent::UserText(t) => SessionUpdate::UserMessageChunk(ContentChunk::new(text(t))),
+        SessionEvent::AgentText(t) => SessionUpdate::AgentMessageChunk(ContentChunk::new(text(t))),
+        SessionEvent::AgentThought(t) => {
+            SessionUpdate::AgentThoughtChunk(ContentChunk::new(text(t)))
+        }
         SessionEvent::ToolCall {
             id,
             title,
             kind: k,
             locations,
             input,
-        } => SessionUpdate::ToolCall(ToolCall {
-            tool_call_id: id,
-            title,
-            kind: kind(k),
-            status: ToolCallStatus::Pending,
-            content: vec![],
-            locations: locations
-                .into_iter()
-                .map(|p| ToolCallLocation {
-                    path: PathBuf::from(p),
-                    line: None,
-                })
-                .collect(),
-            raw_input: Some(input),
-            raw_output: None,
-        }),
+        } => SessionUpdate::ToolCall(
+            ToolCall::new(id, title)
+                .kind(kind(k))
+                .status(ToolCallStatus::Pending)
+                .locations(
+                    locations
+                        .into_iter()
+                        .map(|p| ToolCallLocation::new(PathBuf::from(p)))
+                        .collect::<Vec<_>>(),
+                )
+                .raw_input(input),
+        ),
         SessionEvent::ToolCallUpdate {
             id,
             status,
@@ -149,43 +196,55 @@ fn convert_event(ev: SessionEvent) -> SessionUpdate {
         } => {
             let mut content = vec![];
             if let Some(o) = output.filter(|o| !o.is_empty()) {
-                content.push(ToolCallContent::Content { content: text(o) });
+                content.push(ToolCallContent::Content(Content::new(text(o))));
             }
-            content.extend(edits.into_iter().map(|e| ToolCallContent::Diff {
-                path: e.path,
-                old_text: e.old_text,
-                new_text: e.new_text,
+            content.extend(edits.into_iter().map(|e| {
+                ToolCallContent::Diff(Diff::new(e.path, e.new_text).old_text(e.old_text))
             }));
-            SessionUpdate::ToolCallUpdate(ToolCallUpdate {
-                tool_call_id: id,
-                status: Some(match status {
-                    ToolStatus::Pending => ToolCallStatus::Pending,
-                    ToolStatus::InProgress => ToolCallStatus::InProgress,
-                    ToolStatus::Completed => ToolCallStatus::Completed,
-                    ToolStatus::Failed => ToolCallStatus::Failed,
-                }),
-                content: Some(content),
-                ..Default::default()
-            })
+            let mut fields = ToolCallUpdateFields::new().status(match status {
+                ToolStatus::Pending => ToolCallStatus::Pending,
+                ToolStatus::InProgress => ToolCallStatus::InProgress,
+                ToolStatus::Completed => ToolCallStatus::Completed,
+                ToolStatus::Failed => ToolCallStatus::Failed,
+            });
+            // `content` replaces what the client shows, so an empty list must be omitted.
+            if !content.is_empty() {
+                fields = fields.content(content);
+            }
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields))
         }
-        SessionEvent::Plan(items) => SessionUpdate::Plan {
-            entries: items
+        SessionEvent::Plan(items) => SessionUpdate::Plan(Plan::new(
+            items
                 .into_iter()
-                .map(|i| PlanEntry {
-                    content: i.content,
-                    priority: PlanPriority::Medium,
-                    status: match i.status {
-                        ruckcode_tools::TodoStatus::Pending => PlanStatus::Pending,
-                        ruckcode_tools::TodoStatus::InProgress => PlanStatus::InProgress,
-                        ruckcode_tools::TodoStatus::Completed => PlanStatus::Completed,
-                    },
+                .map(|i| {
+                    PlanEntry::new(
+                        i.content,
+                        PlanEntryPriority::Medium,
+                        match i.status {
+                            ruckcode_tools::TodoStatus::Pending => PlanEntryStatus::Pending,
+                            ruckcode_tools::TodoStatus::InProgress => PlanEntryStatus::InProgress,
+                            ruckcode_tools::TodoStatus::Completed => PlanEntryStatus::Completed,
+                        },
+                    )
                 })
-                .collect(),
-        },
-        SessionEvent::ModeChanged(m) => SessionUpdate::CurrentModeUpdate { current_mode_id: m },
-        SessionEvent::Notice(n) => SessionUpdate::AgentMessageChunk {
-            content: text(format!("\n> {n}\n")),
-        },
+                .collect::<Vec<_>>(),
+        )),
+        SessionEvent::ModeChanged(m) => SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(m)),
+        SessionEvent::Notice(n) => {
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(text(format!("\n> {n}\n"))))
+        }
+        SessionEvent::Usage {
+            input_tokens,
+            output_tokens,
+            context_window,
+        } => SessionUpdate::UsageUpdate(UsageUpdate::new(
+            input_tokens + output_tokens,
+            context_window,
+        )),
+        // Handled by `Shared::convert_event`; never reaches here.
+        SessionEvent::ModelChanged(m) => {
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(text(format!("\n> model: {m}\n"))))
+        }
     }
 }
 
@@ -200,7 +259,7 @@ impl UserBridge for Bridge {
         questions: Vec<Question>,
     ) -> anyhow::Result<Vec<Answer>> {
         let sh = &self.0;
-        if sh.caps.lock().unwrap().supports_ask_user_question() {
+        if supports_ask_user_question(&sh.caps.lock().unwrap()) {
             let req = AskUserQuestionRequest {
                 session_id: session_id.to_string(),
                 questions: questions
@@ -229,19 +288,21 @@ impl UserBridge for Bridge {
                 .options
                 .iter()
                 .enumerate()
-                .map(|(i, o)| PermissionOption {
-                    option_id: format!("opt-{i}"),
-                    name: o.label.clone(),
-                    kind: PermissionOptionKind::AllowOnce,
+                .map(|(i, o)| {
+                    PermissionOption::new(
+                        format!("opt-{i}"),
+                        o.label.clone(),
+                        PermissionOptionKind::AllowOnce,
+                    )
                 })
                 .collect();
-            let tc = ToolCallUpdate {
-                tool_call_id: format!("ask-{session_id}-{qi}"),
-                title: Some(q.question.clone()),
-                kind: Some(ToolKind::Other),
-                status: Some(ToolCallStatus::Pending),
-                ..Default::default()
-            };
+            let tc = ToolCallUpdate::new(
+                format!("ask-{session_id}-{qi}"),
+                ToolCallUpdateFields::new()
+                    .title(q.question.clone())
+                    .kind(ToolKind::Other)
+                    .status(ToolCallStatus::Pending),
+            );
             let chosen = sh
                 .select(session_id, tc, options)
                 .await
@@ -265,31 +326,31 @@ impl Client for Bridge {
         session_id: &str,
         req: PermissionRequest,
     ) -> PermissionDecision {
-        let mut options = vec![PermissionOption {
-            option_id: "allow_once".into(),
-            name: "Allow".into(),
-            kind: PermissionOptionKind::AllowOnce,
-        }];
+        let mut options = vec![PermissionOption::new(
+            "allow_once",
+            "Allow",
+            PermissionOptionKind::AllowOnce,
+        )];
         if req.allow_always {
-            options.push(PermissionOption {
-                option_id: "allow_always".into(),
-                name: "Always allow".into(),
-                kind: PermissionOptionKind::AllowAlways,
-            });
+            options.push(PermissionOption::new(
+                "allow_always",
+                "Always allow",
+                PermissionOptionKind::AllowAlways,
+            ));
         }
-        options.push(PermissionOption {
-            option_id: "reject_once".into(),
-            name: "Reject".into(),
-            kind: PermissionOptionKind::RejectOnce,
-        });
-        let tc = ToolCallUpdate {
-            tool_call_id: req.tool_call_id,
-            title: Some(req.title),
-            kind: Some(kind(req.kind)),
-            status: Some(ToolCallStatus::Pending),
-            raw_input: Some(req.input),
-            ..Default::default()
-        };
+        options.push(PermissionOption::new(
+            "reject_once",
+            "Reject",
+            PermissionOptionKind::RejectOnce,
+        ));
+        let tc = ToolCallUpdate::new(
+            req.tool_call_id,
+            ToolCallUpdateFields::new()
+                .title(req.title)
+                .kind(kind(req.kind))
+                .status(ToolCallStatus::Pending)
+                .raw_input(req.input),
+        );
         match self.0.select(session_id, tc, options).await.as_deref() {
             Some("allow_once") => PermissionDecision::AllowOnce,
             Some("allow_always") => PermissionDecision::AllowAlways,
@@ -299,7 +360,9 @@ impl Client for Bridge {
     }
 
     fn send_event(&self, session_id: &str, event: SessionEvent) {
-        self.0.update(session_id, convert_event(event));
+        for u in self.0.convert_event(session_id, event) {
+            self.0.update(session_id, u);
+        }
     }
 }
 
@@ -312,25 +375,23 @@ fn parse<T: DeserializeOwned>(params: Value) -> Result<T, RpcError> {
     serde_json::from_value(params).map_err(|e| RpcError::invalid_params(e.to_string()))
 }
 
-fn mode_state(info: &SessionInfo) -> SessionModeState {
-    SessionModeState {
-        current_mode_id: info.current_mode.clone(),
-        available_modes: info
-            .modes
+fn mode_state(info: &CoreSessionInfo) -> SessionModeState {
+    SessionModeState::new(
+        info.current_mode.clone(),
+        info.modes
             .iter()
             .map(
                 |ModeInfo {
                      id,
                      name,
                      description,
-                 }| SessionMode {
-                    id: id.clone(),
-                    name: name.clone(),
-                    description: Some(description.clone()).filter(|d| !d.is_empty()),
+                 }| {
+                    SessionMode::new(id.clone(), name.clone())
+                        .description(Some(description.clone()).filter(|d| !d.is_empty()))
                 },
             )
-            .collect(),
-    }
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// ACP `mcpServers` entries as session MCP servers; unsupported ones (SSE) are skipped.
@@ -347,8 +408,27 @@ fn acp_mcp_servers(servers: &[Value]) -> BTreeMap<String, McpServerConfig> {
         .collect()
 }
 
+/// Take the raw `mcpServers` entries out of the params (leaving `[]` for the typed parse), so a
+/// malformed or unsupported entry is skipped on its own instead of failing the request.
+fn take_mcp_servers(params: &mut Value) -> Vec<Value> {
+    let Some(m) = params.as_object_mut() else {
+        return vec![];
+    };
+    match m.insert("mcpServers".into(), Value::Array(vec![])) {
+        Some(Value::Array(a)) => a,
+        _ => vec![],
+    }
+}
+
 fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, RpcError> {
     serde_json::to_value(v).map_err(|e| RpcError::internal(e.to_string()))
+}
+
+fn session_capabilities() -> SessionCapabilities {
+    SessionCapabilities::new()
+        .list(SessionListCapabilities::new())
+        .resume(SessionResumeCapabilities::new())
+        .close(SessionCloseCapabilities::new())
 }
 
 impl AcpAgent {
@@ -358,6 +438,7 @@ impl AcpAgent {
                 agent,
                 conn: OnceLock::new(),
                 caps: Mutex::default(),
+                models: Mutex::default(),
             }),
         }
     }
@@ -374,11 +455,55 @@ impl AcpAgent {
     fn agent(&self) -> &Agent {
         &self.shared.agent
     }
+
+    /// Remember the session's models and build its `configOptions`.
+    fn config_options(&self, info: &CoreSessionInfo) -> Option<Vec<SessionConfigOption>> {
+        self.shared
+            .models
+            .lock()
+            .unwrap()
+            .insert(info.id.clone(), info.models.clone());
+        model_option(&info.model, &info.models).map(|o| vec![o])
+    }
+
+    fn list_sessions(&self, req: ListSessionsRequest) -> Result<Value, RpcError> {
+        let cwd = match req.cwd {
+            Some(c) => c,
+            None => std::env::current_dir().map_err(|e| RpcError::internal(e.to_string()))?,
+        };
+        let sessions: Vec<acp::SessionInfo> = self
+            .agent()
+            .list_sessions(&cwd)?
+            .into_iter()
+            .map(|s| {
+                let Value::Object(meta) = json!({"ruckcode": {
+                    "createdAt": s.created_at, "mode": s.mode, "firstPrompt": s.first_prompt}})
+                else {
+                    unreachable!()
+                };
+                acp::SessionInfo::new(SessionId::new(s.id), cwd.clone())
+                    .title(session_title(&s.first_prompt))
+                    .updated_at(s.updated_at)
+                    .meta(meta)
+            })
+            .collect();
+        to_value(&ListSessionsResponse::new(sessions))
+    }
+}
+
+/// One-line title from the first prompt.
+fn session_title(first_prompt: &str) -> Option<String> {
+    let line = first_prompt.lines().find(|l| !l.trim().is_empty())?.trim();
+    let mut t: String = line.chars().take(80).collect();
+    if line.chars().count() > 80 {
+        t.push('…');
+    }
+    Some(t)
 }
 
 #[async_trait]
 impl Handler for AcpAgent {
-    async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+    async fn request(&self, method: &str, mut params: Value) -> Result<Value, RpcError> {
         // The connection is installed right after `Connection::new`; tolerate the tiny race.
         for _ in 0..100 {
             if self.shared.conn.get().is_some() {
@@ -388,115 +513,158 @@ impl Handler for AcpAgent {
         }
         match method {
             INITIALIZE => {
+                // Lenient: a missing version means v1.
+                if let Some(m) = params.as_object_mut() {
+                    m.entry("protocolVersion").or_insert(json!(1));
+                }
                 let req: InitializeRequest = parse(params)?;
+                if let Some(info) = &req.client_info {
+                    tracing::debug!("ACP client: {} {}", info.name, info.version);
+                }
                 *self.shared.caps.lock().unwrap() = req.client_capabilities;
-                to_value(&InitializeResponse {
-                    protocol_version: req.protocol_version.clamp(1, crate::PROTOCOL_VERSION),
-                    agent_capabilities: AgentCapabilities {
-                        load_session: true,
-                        prompt_capabilities: PromptCapabilities {
-                            image: false,
-                            audio: false,
-                            embedded_context: true,
-                        },
-                        mcp_capabilities: McpCapabilities {
-                            http: true,
-                            sse: false,
-                        },
-                    },
-                    auth_methods: vec![],
-                    agent_info: Some(Implementation {
-                        name: "ruckcode".into(),
-                        version: env!("CARGO_PKG_VERSION").into(),
-                    }),
-                })
+                to_value(
+                    &InitializeResponse::new(req.protocol_version.min(crate::PROTOCOL_VERSION))
+                        .agent_capabilities(
+                            AgentCapabilities::new()
+                                .load_session(true)
+                                .prompt_capabilities(
+                                    PromptCapabilities::new()
+                                        .image(false)
+                                        .audio(false)
+                                        .embedded_context(true),
+                                )
+                                .mcp_capabilities(McpCapabilities::new().http(true).sse(false))
+                                .session_capabilities(session_capabilities()),
+                        )
+                        .agent_info(Implementation::new("ruckcode", env!("CARGO_PKG_VERSION"))),
+                )
             }
             AUTHENTICATE => Ok(json!({})),
             SESSION_NEW => {
+                let mcp = take_mcp_servers(&mut params);
                 let req: NewSessionRequest = parse(params)?;
                 let info = self
                     .agent()
-                    .new_session_with(req.cwd, None, acp_mcp_servers(&req.mcp_servers))
+                    .new_session_with(req.cwd, None, acp_mcp_servers(&mcp))
                     .await?;
-                to_value(&NewSessionResponse {
-                    modes: Some(mode_state(&info)),
-                    session_id: info.id,
-                })
+                let mut resp = NewSessionResponse::new(SessionId::new(info.id.as_str()))
+                    .modes(mode_state(&info));
+                if let Some(o) = self.config_options(&info) {
+                    resp = resp.config_options(o);
+                }
+                to_value(&resp)
             }
             SESSION_LOAD => {
+                let mcp = take_mcp_servers(&mut params);
                 let req: LoadSessionRequest = parse(params)?;
                 let info = self
                     .agent()
                     .load_session_with(
-                        &req.session_id,
+                        &req.session_id.0,
                         req.cwd,
                         self.client(),
-                        acp_mcp_servers(&req.mcp_servers),
+                        acp_mcp_servers(&mcp),
                     )
                     .await?;
-                to_value(&LoadSessionResponse {
-                    modes: Some(mode_state(&info)),
-                })
+                let mut resp = LoadSessionResponse::new().modes(mode_state(&info));
+                if let Some(o) = self.config_options(&info) {
+                    resp = resp.config_options(o);
+                }
+                to_value(&resp)
+            }
+            SESSION_RESUME => {
+                let mcp = take_mcp_servers(&mut params);
+                let req: ResumeSessionRequest = parse(params)?;
+                let info = self
+                    .agent()
+                    .resume_session_with(&req.session_id.0, req.cwd, acp_mcp_servers(&mcp))
+                    .await?;
+                let mut resp = ResumeSessionResponse::new().modes(mode_state(&info));
+                if let Some(o) = self.config_options(&info) {
+                    resp = resp.config_options(o);
+                }
+                to_value(&resp)
+            }
+            SESSION_LIST => self.list_sessions(parse(params)?),
+            SESSION_CLOSE => {
+                let req: CloseSessionRequest = parse(params)?;
+                self.agent().close_session(&req.session_id.0)?;
+                self.shared
+                    .models
+                    .lock()
+                    .unwrap()
+                    .remove(&*req.session_id.0);
+                to_value(&CloseSessionResponse::new())
             }
             SESSION_PROMPT => {
-                let req: PromptRequest = parse(params)?;
+                // Parsed by hand so that unknown content blocks are skipped, not fatal.
+                let session_id: SessionId = parse(params["sessionId"].clone())?;
+                let blocks = parse_prompt_blocks(&params["prompt"]);
                 let stop = self
                     .agent()
-                    .prompt(&req.session_id, prompt_to_text(&req.prompt), self.client())
+                    .prompt(&session_id.0, prompt_to_text(&blocks), self.client())
                     .await?;
-                to_value(&PromptResponse {
-                    stop_reason: match stop {
-                        CoreStop::EndTurn => StopReason::EndTurn,
-                        CoreStop::MaxTokens => StopReason::MaxTokens,
-                        CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,
-                        CoreStop::Cancelled => StopReason::Cancelled,
-                        CoreStop::Refusal => StopReason::Refusal,
-                    },
-                })
+                to_value(&PromptResponse::new(match stop {
+                    CoreStop::EndTurn => StopReason::EndTurn,
+                    CoreStop::MaxTokens => StopReason::MaxTokens,
+                    CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,
+                    CoreStop::Cancelled => StopReason::Cancelled,
+                    CoreStop::Refusal => StopReason::Refusal,
+                }))
             }
             SESSION_SET_MODE => {
                 let req: SetSessionModeRequest = parse(params)?;
                 // The agent emits `ModeChanged`, which the bridge forwards as current_mode_update.
                 self.agent()
-                    .set_mode(&req.session_id, &req.mode_id, self.client())
+                    .set_mode(&req.session_id.0, &req.mode_id.0, self.client())
                     .await?;
-                Ok(json!({}))
+                to_value(&SetSessionModeResponse::new())
+            }
+            SESSION_SET_CONFIG_OPTION => {
+                let req: SetSessionConfigOptionRequest = parse(params)?;
+                if &*req.config_id.0 != MODEL_CONFIG_ID {
+                    return Err(RpcError::invalid_params(format!(
+                        "unknown config option `{}`",
+                        req.config_id
+                    )));
+                }
+                let model = req
+                    .value
+                    .as_value_id()
+                    .map(|v| v.to_string())
+                    .ok_or_else(|| RpcError::invalid_params("`model` takes a model id"))?;
+                self.agent()
+                    .set_session_model(&req.session_id.0, Some(model.clone()), self.client())
+                    .await?;
+                let options = self
+                    .shared
+                    .model_option_for(&req.session_id.0, &model)
+                    .into_iter()
+                    .collect();
+                to_value(&SetSessionConfigOptionResponse::new(options))
             }
             SET_MODEL => {
-                let session_id = params
-                    .get("sessionId")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| RpcError::invalid_params("missing sessionId"))?;
-                let model = params
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .map(String::from);
+                let req: SetModelRequest = parse(params)?;
                 self.agent()
-                    .set_session_model(session_id, model, self.client())
+                    .set_session_model(&req.session_id, req.model, self.client())
                     .await?;
                 Ok(json!({}))
             }
             LIST_SESSIONS => {
-                let cwd: PathBuf = params
-                    .get("cwd")
-                    .and_then(Value::as_str)
-                    .map(PathBuf::from)
-                    .ok_or_else(|| RpcError::invalid_params("missing cwd"))?;
-                let sessions: Vec<Value> = self
+                let req: ListSessionsExtRequest = parse(params)?;
+                let sessions = self
                     .agent()
-                    .list_sessions(&cwd)?
+                    .list_sessions(&req.cwd)?
                     .into_iter()
-                    .map(|s| {
-                        json!({
-                            "id": s.id,
-                            "createdAt": s.created_at,
-                            "updatedAt": s.updated_at,
-                            "firstPrompt": s.first_prompt,
-                            "mode": s.mode,
-                        })
+                    .map(|s| ListSessionsExtEntry {
+                        id: s.id,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        first_prompt: s.first_prompt,
+                        mode: s.mode,
                     })
                     .collect();
-                Ok(json!({ "sessions": sessions }))
+                to_value(&ListSessionsExtResponse { sessions })
             }
             m => Err(RpcError::method_not_found(m)),
         }
@@ -505,7 +673,7 @@ impl Handler for AcpAgent {
     async fn notification(&self, method: &str, params: Value) {
         if method == SESSION_CANCEL {
             if let Ok(n) = serde_json::from_value::<CancelNotification>(params) {
-                self.agent().cancel(&n.session_id);
+                self.agent().cancel(&n.session_id.0);
             }
         }
     }

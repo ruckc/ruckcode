@@ -73,7 +73,7 @@ impl Handler for TuiHandler {
                     .send(UiEvent::Permission { req, reply })
                     .map_err(|_| RpcError::internal("ui closed"))?;
                 let outcome = rx.await.unwrap_or(RequestPermissionOutcome::Cancelled);
-                Ok(serde_json::to_value(RequestPermissionResponse { outcome }).unwrap())
+                Ok(serde_json::to_value(RequestPermissionResponse::new(outcome)).unwrap())
             }
             schema::ASK_USER_QUESTION => {
                 let req: AskRequest = serde_json::from_value(params)
@@ -96,7 +96,7 @@ impl Handler for TuiHandler {
         match serde_json::from_value::<SessionNotification>(params) {
             Ok(n) => {
                 let _ = self.tx.send(UiEvent::Update {
-                    session_id: n.session_id,
+                    session_id: n.session_id.to_string(),
                     update: n.update,
                 });
             }
@@ -169,7 +169,7 @@ impl Ctx {
                 if let Some(m) = mode {
                     client::set_mode(&conn, &s.session_id, &m).await?;
                     if let Some(st) = &mut s.modes {
-                        st.current_mode_id = m;
+                        st.current_mode_id = m.into();
                     }
                 }
                 anyhow::Ok(s)
@@ -195,7 +195,7 @@ impl Ctx {
                 if let Some(m) = mode {
                     client::set_mode(&conn, &s.session_id, &m).await?;
                     if let Some(st) = &mut s.modes {
-                        st.current_mode_id = m;
+                        st.current_mode_id = m.into();
                     }
                 }
                 anyhow::Ok(s)
@@ -224,10 +224,10 @@ impl Ctx {
             let r: Result<PromptResponse, RpcError> = conn
                 .request_typed(
                     schema::SESSION_PROMPT,
-                    &schema::PromptRequest {
-                        session_id: sid,
-                        prompt: vec![schema::ContentBlock::text(text)],
-                    },
+                    &schema::PromptRequest::new(
+                        schema::SessionId::new(sid.as_str()),
+                        vec![schema::ContentBlock::from(text)],
+                    ),
                 )
                 .await;
             let _ = tx.send(UiEvent::TurnDone(match r {

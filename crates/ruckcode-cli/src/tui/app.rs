@@ -5,9 +5,9 @@ use std::collections::{HashMap, VecDeque};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ruckcode_acp::schema::{
-    ContentBlock, PermissionOption, PermissionOptionKind, PlanEntry, RequestPermissionOutcome,
-    RequestPermissionRequest, SessionMode, SessionUpdate, ToolCall, ToolCallContent,
-    ToolCallStatus, ToolCallUpdate, ToolKind,
+    ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind, PlanEntry,
+    RequestPermissionOutcome, RequestPermissionRequest, SelectedPermissionOutcome, SessionMode,
+    SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -127,6 +127,8 @@ pub struct App {
     pub should_quit: bool,
     pub queue: VecDeque<String>,
     pub chars_streamed: usize,
+    /// Real context usage from the agent's `usage_update`: (tokens used, context window).
+    pub usage: Option<(u64, u64)>,
 }
 
 pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
@@ -158,6 +160,7 @@ impl App {
             should_quit: false,
             queue: VecDeque::new(),
             chars_streamed: 0,
+            usage: None,
         }
     }
 
@@ -171,6 +174,7 @@ impl App {
         self.running = false;
         self.queue.clear();
         self.chars_streamed = 0;
+        self.usage = None;
     }
 
     pub fn set_modes(&mut self, modes: Vec<SessionMode>, current: String) {
@@ -194,14 +198,14 @@ impl App {
 
     fn text_of(c: &ContentBlock) -> Option<&str> {
         match c {
-            ContentBlock::Text { text } => Some(text),
+            ContentBlock::Text(t) => Some(&t.text),
             _ => None,
         }
     }
 
     pub fn handle_update(&mut self, u: SessionUpdate) {
         match u {
-            SessionUpdate::UserMessageChunk { content } => {
+            SessionUpdate::UserMessageChunk(ContentChunk { content, .. }) => {
                 if let Some(t) = Self::text_of(&content) {
                     match self.blocks.last_mut() {
                         Some(Block::User(s)) => s.push_str(t),
@@ -209,7 +213,7 @@ impl App {
                     }
                 }
             }
-            SessionUpdate::AgentMessageChunk { content } => {
+            SessionUpdate::AgentMessageChunk(ContentChunk { content, .. }) => {
                 if let Some(t) = Self::text_of(&content) {
                     self.chars_streamed += t.len();
                     match self.blocks.last_mut() {
@@ -218,7 +222,7 @@ impl App {
                     }
                 }
             }
-            SessionUpdate::AgentThoughtChunk { content } => {
+            SessionUpdate::AgentThoughtChunk(ContentChunk { content, .. }) => {
                 if let Some(t) = Self::text_of(&content) {
                     self.chars_streamed += t.len();
                     match self.blocks.last_mut() {
@@ -229,39 +233,46 @@ impl App {
             }
             SessionUpdate::ToolCall(tc) => self.on_tool_call(tc),
             SessionUpdate::ToolCallUpdate(up) => self.on_tool_update(up),
-            SessionUpdate::Plan { entries } => self.plan = entries,
-            SessionUpdate::CurrentModeUpdate { current_mode_id } => self.mode_id = current_mode_id,
-            SessionUpdate::AvailableCommandsUpdate { .. } => {}
+            SessionUpdate::Plan(p) => self.plan = p.entries,
+            SessionUpdate::CurrentModeUpdate(m) => self.mode_id = m.current_mode_id.to_string(),
+            SessionUpdate::Notice(n) => self.notice(n.title),
+            SessionUpdate::UsageUpdate(u) => self.usage = Some((u.used, u.size)),
+            // Commands, config options, session info, compaction: not shown.
+            _ => {}
         }
     }
 
     fn on_tool_call(&mut self, tc: ToolCall) {
         let mut view = ToolView {
-            title: tc.title,
+            title: tc.title.clone(),
             kind: tc.kind,
             status: tc.status,
             text: vec![],
             diff: vec![],
         };
         apply_content(&mut view, &tc.content);
-        match self.tool_index.get(&tc.tool_call_id) {
+        match self.tool_index.get(&*tc.tool_call_id.0) {
             Some(&i) => self.blocks[i] = Block::Tool(view),
             None => {
                 self.tool_index
-                    .insert(tc.tool_call_id.clone(), self.blocks.len());
+                    .insert(tc.tool_call_id.to_string(), self.blocks.len());
                 self.blocks.push(Block::Tool(view));
             }
         }
     }
 
     fn on_tool_update(&mut self, up: ToolCallUpdate) {
-        let idx = match self.tool_index.get(&up.tool_call_id) {
+        let idx = match self.tool_index.get(&*up.tool_call_id.0) {
             Some(&i) => i,
             None => {
                 self.tool_index
-                    .insert(up.tool_call_id.clone(), self.blocks.len());
+                    .insert(up.tool_call_id.to_string(), self.blocks.len());
                 self.blocks.push(Block::Tool(ToolView {
-                    title: up.title.clone().unwrap_or_else(|| up.tool_call_id.clone()),
+                    title: up
+                        .fields
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| up.tool_call_id.to_string()),
                     kind: ToolKind::Other,
                     status: ToolCallStatus::Pending,
                     text: vec![],
@@ -271,16 +282,16 @@ impl App {
             }
         };
         if let Block::Tool(v) = &mut self.blocks[idx] {
-            if let Some(t) = up.title {
+            if let Some(t) = up.fields.title {
                 v.title = t;
             }
-            if let Some(k) = up.kind {
+            if let Some(k) = up.fields.kind {
                 v.kind = k;
             }
-            if let Some(s) = up.status {
+            if let Some(s) = up.fields.status {
                 v.status = s;
             }
-            if let Some(c) = &up.content {
+            if let Some(c) = &up.fields.content {
                 v.text.clear();
                 v.diff.clear();
                 apply_content(v, c);
@@ -309,11 +320,13 @@ impl App {
     ) {
         let title = req
             .tool_call
+            .fields
             .title
             .clone()
             .unwrap_or_else(|| "Permission required".into());
         let summary = req
             .tool_call
+            .fields
             .raw_input
             .as_ref()
             .map(summarize_input)
@@ -390,6 +403,17 @@ impl App {
 
     pub fn approx_tokens(&self) -> usize {
         self.chars_streamed / 4
+    }
+
+    /// Status-bar token text: real usage when the agent reports it, else a rough estimate.
+    pub fn tokens_label(&self) -> String {
+        match self.usage {
+            Some((used, size)) if size > 0 => {
+                format!("{} / {} tok", compact_count(used), compact_count(size))
+            }
+            Some((used, _)) => format!("{} tok", compact_count(used)),
+            None => format!("~{} tok", self.approx_tokens()),
+        }
     }
 
     // ---- input ------------------------------------------------------------
@@ -554,10 +578,10 @@ impl App {
         let i = self
             .modes
             .iter()
-            .position(|m| m.id == self.mode_id)
+            .position(|m| *m.id.0 == *self.mode_id)
             .map(|i| (i + 1) % self.modes.len())
             .unwrap_or(0);
-        Action::SetMode(self.modes[i].id.clone())
+        Action::SetMode(self.modes[i].id.to_string())
     }
 
     fn submit(&mut self) -> Action {
@@ -592,7 +616,7 @@ impl App {
             "mode" => {
                 if arg.is_empty() {
                     self.notice(self.modes_text());
-                } else if self.modes.iter().any(|m| m.id == arg) {
+                } else if self.modes.iter().any(|m| &*m.id.0 == arg) {
                     return Action::SetMode(arg.to_string());
                 } else {
                     self.error(format!("unknown mode `{arg}`"));
@@ -642,7 +666,7 @@ impl App {
         for m in &self.modes {
             s.push_str(&format!(
                 "  {} {}{}\n",
-                if m.id == self.mode_id { "*" } else { " " },
+                if *m.id.0 == *self.mode_id { "*" } else { " " },
                 m.id,
                 m.description
                     .as_ref()
@@ -716,21 +740,32 @@ impl App {
     }
 }
 
+/// 1234 -> "1.2k", 200000 -> "200k", 1500000 -> "1.5M".
+fn compact_count(n: u64) -> String {
+    let fmt = |v: f64, unit: &str| {
+        let s = format!("{v:.1}");
+        format!("{}{unit}", s.strip_suffix(".0").unwrap_or(&s))
+    };
+    match n {
+        0..=999 => n.to_string(),
+        1_000..=999_999 => fmt(n as f64 / 1e3, "k"),
+        _ => fmt(n as f64 / 1e6, "M"),
+    }
+}
+
 fn apply_content(v: &mut ToolView, content: &[ToolCallContent]) {
     for c in content {
         match c {
-            ToolCallContent::Content {
-                content: ContentBlock::Text { text },
-            } => v.text.extend(text.lines().map(str::to_string)),
-            ToolCallContent::Diff {
-                path,
-                old_text,
-                new_text,
-            } => {
+            ToolCallContent::Content(c) => {
+                if let ContentBlock::Text(t) = &c.content {
+                    v.text.extend(t.text.lines().map(str::to_string));
+                }
+            }
+            ToolCallContent::Diff(d) => {
                 v.diff
-                    .push((DiffKind::Hunk, format!("--- {}", path.display())));
-                let old = old_text.as_deref().unwrap_or("");
-                let d = similar::TextDiff::from_lines(old, new_text);
+                    .push((DiffKind::Hunk, format!("--- {}", d.path.display())));
+                let old = d.old_text.as_deref().unwrap_or("");
+                let d = similar::TextDiff::from_lines(old, &d.new_text);
                 for ch in d.iter_all_changes() {
                     let line = ch.value().trim_end_matches('\n').to_string();
                     match ch.tag() {
@@ -802,7 +837,10 @@ fn permission_key(m: &mut PermissionModal, key: KeyEvent) -> bool {
         KeyCode::Enter => match m.options.get(m.selected) {
             Some(o) => {
                 let id = o.option_id.clone();
-                choose(m, RequestPermissionOutcome::Selected { option_id: id })
+                choose(
+                    m,
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)),
+                )
             }
             None => choose(m, RequestPermissionOutcome::Cancelled),
         },
@@ -811,7 +849,10 @@ fn permission_key(m: &mut PermissionModal, key: KeyEvent) -> bool {
             match m.options.get(i) {
                 Some(o) => {
                     let id = o.option_id.clone();
-                    choose(m, RequestPermissionOutcome::Selected { option_id: id })
+                    choose(
+                        m,
+                        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)),
+                    )
                 }
                 None => false,
             }
@@ -821,8 +862,10 @@ fn permission_key(m: &mut PermissionModal, key: KeyEvent) -> bool {
                 .options
                 .iter()
                 .find(|o| o.kind == PermissionOptionKind::RejectOnce)
-                .map(|o| RequestPermissionOutcome::Selected {
-                    option_id: o.option_id.clone(),
+                .map(|o| {
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                        o.option_id.clone(),
+                    ))
                 })
                 .unwrap_or(RequestPermissionOutcome::Cancelled);
             choose(m, outcome)
@@ -1027,7 +1070,10 @@ mod tests {
     use super::*;
     use crate::client::QuestionOption;
     use crossterm::event::KeyEventKind;
-    use ruckcode_acp::schema::{PlanPriority, PlanStatus};
+    use ruckcode_acp::schema::{
+        CurrentModeUpdate, Diff, Notice, NoticeSeverity, Plan, PlanEntryPriority, PlanEntryStatus,
+        ToolCallUpdateFields, UsageUpdate,
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1038,16 +1084,10 @@ mod tests {
         }
     }
     fn text_chunk(s: &str) -> SessionUpdate {
-        SessionUpdate::AgentMessageChunk {
-            content: ContentBlock::text(s),
-        }
+        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(s)))
     }
     fn mode(id: &str) -> SessionMode {
-        SessionMode {
-            id: id.into(),
-            name: id.into(),
-            description: None,
-        }
+        SessionMode::new(id.to_string(), id)
     }
 
     #[test]
@@ -1057,42 +1097,33 @@ mod tests {
         a.handle_update(text_chunk("lo"));
         assert_eq!(a.blocks.len(), 1);
         assert!(matches!(&a.blocks[0], Block::Agent(s) if s == "hello"));
-        a.handle_update(SessionUpdate::AgentThoughtChunk {
-            content: ContentBlock::text("hmm"),
-        });
+        a.handle_update(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+            ContentBlock::from("hmm"),
+        )));
         assert_eq!(a.blocks.len(), 2);
     }
 
     #[test]
     fn tool_call_lifecycle() {
         let mut a = App::new("m");
-        a.handle_update(SessionUpdate::ToolCall(ToolCall {
-            tool_call_id: "c1".into(),
-            title: "Read a.rs".into(),
-            kind: ToolKind::Read,
-            status: ToolCallStatus::Pending,
-            ..Default::default()
-        }));
-        a.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate {
-            tool_call_id: "c1".into(),
-            status: Some(ToolCallStatus::InProgress),
-            ..Default::default()
-        }));
-        a.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate {
-            tool_call_id: "c1".into(),
-            status: Some(ToolCallStatus::Completed),
-            content: Some(vec![
-                ToolCallContent::Content {
-                    content: ContentBlock::text("l1\nl2"),
-                },
-                ToolCallContent::Diff {
-                    path: "a.rs".into(),
-                    old_text: Some("x\n".into()),
-                    new_text: "y\n".into(),
-                },
-            ]),
-            ..Default::default()
-        }));
+        a.handle_update(SessionUpdate::ToolCall(
+            ToolCall::new("c1", "Read a.rs")
+                .kind(ToolKind::Read)
+                .status(ToolCallStatus::Pending),
+        ));
+        a.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "c1",
+            ToolCallUpdateFields::new().status(ToolCallStatus::InProgress),
+        )));
+        a.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "c1",
+            ToolCallUpdateFields::new()
+                .status(ToolCallStatus::Completed)
+                .content(vec![
+                    ToolCallContent::from("l1\nl2"),
+                    ToolCallContent::Diff(Diff::new("a.rs", "y\n").old_text("x\n")),
+                ]),
+        )));
         assert_eq!(a.blocks.len(), 1);
         let Block::Tool(t) = &a.blocks[0] else {
             panic!()
@@ -1103,29 +1134,35 @@ mod tests {
         assert!(t.diff.contains(&(DiffKind::Add, "+y".into())));
         assert!(t.diff.contains(&(DiffKind::Del, "-x".into())));
         // Update for an unknown id creates a card.
-        a.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate {
-            tool_call_id: "zz".into(),
-            status: Some(ToolCallStatus::Failed),
-            ..Default::default()
-        }));
+        a.handle_update(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "zz",
+            ToolCallUpdateFields::new().status(ToolCallStatus::Failed),
+        )));
         assert_eq!(a.blocks.len(), 2);
     }
 
     #[test]
     fn plan_and_mode_updates() {
         let mut a = App::new("m");
-        a.handle_update(SessionUpdate::Plan {
-            entries: vec![PlanEntry {
-                content: "do it".into(),
-                priority: PlanPriority::High,
-                status: PlanStatus::Pending,
-            }],
-        });
+        a.handle_update(SessionUpdate::Plan(Plan::new(vec![PlanEntry::new(
+            "do it",
+            PlanEntryPriority::High,
+            PlanEntryStatus::Pending,
+        )])));
         assert_eq!(a.plan.len(), 1);
-        a.handle_update(SessionUpdate::CurrentModeUpdate {
-            current_mode_id: "test".into(),
-        });
+        a.handle_update(SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(
+            "test",
+        )));
         assert_eq!(a.mode_id, "test");
+        // Notices arrive as their own update and usage drives the status-bar token count.
+        a.handle_update(SessionUpdate::Notice(Notice::new(
+            NoticeSeverity::Info,
+            "heads up",
+        )));
+        assert!(matches!(a.blocks.last(), Some(Block::Notice(s)) if s == "heads up"));
+        assert!(a.tokens_label().starts_with('~'));
+        a.handle_update(SessionUpdate::UsageUpdate(UsageUpdate::new(1234, 200_000)));
+        assert_eq!(a.tokens_label(), "1.2k / 200k tok");
     }
 
     #[test]
@@ -1208,26 +1245,20 @@ mod tests {
     #[test]
     fn permission_modal_select_and_escape() {
         let opts = vec![
-            PermissionOption {
-                option_id: "allow".into(),
-                name: "Allow".into(),
-                kind: PermissionOptionKind::AllowOnce,
-            },
-            PermissionOption {
-                option_id: "deny".into(),
-                name: "Deny".into(),
-                kind: PermissionOptionKind::RejectOnce,
-            },
+            PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("deny", "Deny", PermissionOptionKind::RejectOnce),
         ];
-        let req = |opts: Vec<PermissionOption>| RequestPermissionRequest {
-            session_id: "s".into(),
-            tool_call: ToolCallUpdate {
-                tool_call_id: "c".into(),
-                title: Some("Bash: ls".into()),
-                raw_input: Some(serde_json::json!({"command":"ls"})),
-                ..Default::default()
-            },
-            options: opts,
+        let req = |opts: Vec<PermissionOption>| {
+            RequestPermissionRequest::new(
+                "s",
+                ToolCallUpdate::new(
+                    "c",
+                    ToolCallUpdateFields::new()
+                        .title("Bash: ls")
+                        .raw_input(serde_json::json!({"command":"ls"})),
+                ),
+                opts,
+            )
         };
         let mut a = App::new("m");
         let (tx, mut rx) = oneshot::channel();
@@ -1237,27 +1268,21 @@ mod tests {
         assert!(a.modal.is_none());
         assert_eq!(
             rx.try_recv().unwrap(),
-            RequestPermissionOutcome::Selected {
-                option_id: "deny".into()
-            }
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("deny"))
         );
         let (tx, mut rx) = oneshot::channel();
         a.request_permission(req(opts.clone()), tx);
         a.handle_key(key(KeyCode::Char('1')));
         assert_eq!(
             rx.try_recv().unwrap(),
-            RequestPermissionOutcome::Selected {
-                option_id: "allow".into()
-            }
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("allow"))
         );
         let (tx, mut rx) = oneshot::channel();
         a.request_permission(req(opts), tx);
         a.handle_key(key(KeyCode::Esc));
         assert_eq!(
             rx.try_recv().unwrap(),
-            RequestPermissionOutcome::Selected {
-                option_id: "deny".into()
-            }
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("deny"))
         );
         let (tx, mut rx) = oneshot::channel();
         a.request_permission(req(vec![]), tx);
@@ -1411,9 +1436,7 @@ mod tests {
         a.handle_key(key(KeyCode::Enter));
         assert_eq!(
             rx.try_recv().unwrap(),
-            RequestPermissionOutcome::Selected {
-                option_id: "allow".into()
-            }
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("allow"))
         );
     }
 

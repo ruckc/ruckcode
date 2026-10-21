@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agent-client-protocol-schema.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 ruckcode-core.workspace = true
