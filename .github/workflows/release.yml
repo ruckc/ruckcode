@@ -19,6 +19,11 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Windows runners default to PowerShell, which does not expand "$VAR".
+    shell: bash
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
