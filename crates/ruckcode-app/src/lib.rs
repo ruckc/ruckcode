@@ -396,3 +396,36 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running ruckcode app");
 }
+
+#[cfg(test)]
+mod acl_tests {
+    /// Every command registered with the invoke handler must have a generated permission
+    /// (build.rs) and be granted by the default capability, or the webview gets
+    /// "Command … not allowed by ACL" at runtime.
+    #[test]
+    fn every_command_is_permitted() {
+        let lib = include_str!("lib.rs");
+        let start =
+            lib.find("generate_handler![").expect("invoke handler") + "generate_handler![".len();
+        let end = start + lib[start..].find(']').unwrap();
+        let commands: Vec<&str> = lib[start..end]
+            .split(',')
+            .map(|c| c.trim().rsplit("::").next().unwrap().trim())
+            .filter(|c| !c.is_empty())
+            .collect();
+        assert!(commands.len() > 10, "parsed {commands:?}");
+        let build = include_str!("../build.rs");
+        let capability = include_str!("../capabilities/default.json");
+        for cmd in commands {
+            assert!(
+                build.contains(&format!("\"{cmd}\"")),
+                "{cmd} missing from build.rs commands"
+            );
+            let allow = format!("\"allow-{}\"", cmd.replace('_', "-"));
+            assert!(
+                capability.contains(&allow),
+                "{cmd} not granted in capabilities/default.json"
+            );
+        }
+    }
+}

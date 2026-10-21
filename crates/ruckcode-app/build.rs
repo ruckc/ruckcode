@@ -15,6 +15,8 @@ fn main() {
             "wsl_list_distros",
             "wsl_check_rc",
             "wsl_install_rc",
+            "wsl_ensure_rc",
+            "wsl_install_bundled_rc",
             "wsl_translate_path",
             "wsl_to_windows_path",
             "setup_presets",

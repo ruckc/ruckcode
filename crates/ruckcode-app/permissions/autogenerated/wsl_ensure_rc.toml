@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wsl-ensure-rc"
+description = "Enables the wsl_ensure_rc command without any pre-configured scope."
+commands.allow = ["wsl_ensure_rc"]
+
+[[permission]]
+identifier = "deny-wsl-ensure-rc"
+description = "Denies the wsl_ensure_rc command without any pre-configured scope."
+commands.deny = ["wsl_ensure_rc"]
