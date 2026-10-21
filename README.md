@@ -470,8 +470,11 @@ or run with `--appimage-extract-and-run`), or `sudo apt install ./ruckcode-app-*
 with `sha256sum -c SHA256SUMS --ignore-missing`.
 
 **Windows scope.** Both Windows installers install **for the current user by default** (into
-`%LocalAppData%\Programs\ruckcode`, no administrator prompt), which is also what lets the app update
-itself without elevation. To install for all users (`C:\Program Files\ruckcode`, needs an administrator):
+`%LocalAppData%\Programs\ruckcode`). The `.msi` never asks for administrator rights for a per-user
+install or its updates. The `-setup.exe` uses NSIS's standard multi-user mode: standard users run it
+without a prompt, while Windows shows administrators a UAC prompt when it starts (including when the
+app updates itself) even though it still defaults to per-user. Prefer the `.msi` if you are an
+administrator and want prompt-free updates. To install for all users (`C:\Program Files\ruckcode`, needs an administrator):
 for the `.msi` run `msiexec /i ruckcode-app-<version>-x86_64-pc-windows-msvc.msi ALLUSERS=1`; for the
 `-setup.exe` run it with `/ALLUSERS` (silent: `/S /ALLUSERS`), or pick "Install for anyone using this
 computer" on its install-mode page. Updates keep the scope and location of the existing install.

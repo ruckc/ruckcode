@@ -126,17 +126,15 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_VALUENAME "CurrentUser"
   !define MULTIUSER_INSTALLMODEPAGE_SHOWUSERNAME
   !define MULTIUSER_INSTALLMODE_FUNCTION RestorePreviousInstallLocation
-  ; ruckcode: default to a per-user install (no UAC) and let the user or `/ALLUSERS` opt in to
-  ; per-machine. Upstream uses `Highest`, which makes the installer itself request elevation up
-  ; front for every administrator and defaults them to per-machine. `Standard` starts
-  ; unelevated; MultiUser.nsh re-launches elevated only when all-users is chosen (install-mode
-  ; page, `/ALLUSERS`, or an existing per-machine install being updated), also when silent.
-  ; A previous install's scope always wins over this default (see RestorePreviousInstallLocation
-  ; and the "CurrentUser"/"AllUsers" value written next to the uninstall key).
-  !define MULTIUSER_EXECUTIONLEVEL Standard
+  ; ruckcode: default to a per-user install even for administrators; `/ALLUSERS` or the
+  ; install-mode page select per-machine. NSIS's stock MultiUser.nsh requires
+  ; MULTIUSER_EXECUTIONLEVEL Admin/Power/Highest for a mixed-mode installer, so this stays at
+  ; upstream's `Highest`: administrators get a UAC prompt when the installer starts, standard
+  ; users run unelevated and can only install per-user. A previous install's scope always wins
+  ; over this default (see RestorePreviousInstallLocation and the "CurrentUser"/"AllUsers"
+  ; value written next to the uninstall key).
+  !define MULTIUSER_EXECUTIONLEVEL Highest
   !define MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER
-  !define MULTIUSER_INSTALLMODE_ALLOW_ELEVATION
-  !define MULTIUSER_INSTALLMODE_ALLOW_ELEVATION_IF_SILENT
   !include MultiUser.nsh
 !endif
 

@@ -127,8 +127,8 @@ install is updated with its own kind of package; `scripts/build_site.py` writes 
 need a choice (NSIS `both` defaults to per-machine for admins), so the repo vendors two templates,
 `crates/ruckcode-app/wix/main.wxs` (MSI: `ALLUSERS=2`, `MSIINSTALLPERUSER=1`,
 `InstallPrivileges="limited"`, `InstallerVersion=500`, `HKMU` for the optional protocol keys) and
-`crates/ruckcode-app/nsis/installer.nsi` (`installMode: both`, default current user, unelevated
-start with on-demand elevation). Every edit is marked `ruckcode:`. **When upgrading the Tauri CLI,
+`crates/ruckcode-app/nsis/installer.nsi` (`installMode: both`, `MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER`;
+execution level stays upstream's `Highest` because stock `MultiUser.nsh` requires it for mixed mode). Every edit is marked `ruckcode:`. **When upgrading the Tauri CLI,
 diff both against the new `tauri-bundler` templates** (`src/bundle/windows/msi/main.wxs`,
 `src/bundle/windows/nsis/installer.nsi` in the `tauri-bundler` crate) and re-apply the marked edits.
 The WiX `upgradeCode` in `tauri.conf.json` must never change. The release job's "Verify installers
