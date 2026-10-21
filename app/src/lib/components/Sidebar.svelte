@@ -85,9 +85,27 @@
       {/if}
     </div>
     {#if current && connected}
-      <div class="ppath muted" title={current.path}>
-        {#if hostLabel(current)}<span class="badge">{hostLabel(current)}</span>{/if}
-        {current.path}
+      <div class="prow">
+        <div class="ppath muted" title={current.path}>
+          {#if hostLabel(current)}<span class="badge">{hostLabel(current)}</span>{/if}
+          {current.path}
+        </div>
+        <button
+          type="button"
+          class="icon"
+          aria-label="Disconnect"
+          title="Disconnect"
+          onclick={ondisconnect}
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"><path d="M12 2v10" /><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /></svg
+          ></button
+        >
       </div>
     {/if}
     {#if showPicker && !showForm}
@@ -169,9 +187,6 @@
           {/each}
         </ul>
       {/if}
-    {/if}
-    {#if connected}
-      <button type="button" class="small disc" onclick={ondisconnect}>Disconnect</button>
     {/if}
   </section>
 
@@ -278,8 +293,14 @@
     letter-spacing: 0.05em;
     color: var(--muted);
   }
-  .disc {
-    justify-self: start;
+  .prow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .prow .ppath {
+    flex: 1;
+    min-width: 0;
   }
   ul {
     list-style: none;
