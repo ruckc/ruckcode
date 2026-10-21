@@ -386,6 +386,8 @@ fn render_status(app: &App, f: &mut Frame, area: Rect) {
     left.push(Span::styled(format!(" · {}", app.tokens_label()), dim()));
     let right = if app.running {
         format!("{} esc to interrupt ", spinner(app))
+    } else if let Some(v) = &app.update_available {
+        format!("update {v} available: rc self-update · /help ")
     } else {
         "shift+tab mode · /help ".to_string()
     };
@@ -644,6 +646,22 @@ mod tests {
         let (rows, c) = input_layout("abcd", 4, 2);
         assert_eq!(rows, vec!["ab", "cd", ""]);
         assert_eq!(c, (2, 0));
+    }
+
+    #[test]
+    fn status_line_announces_an_update_only_when_idle() {
+        let mut app = App::new("mock/mock");
+        assert!(!draw(&app, 100, 12).contains("self-update"));
+        app.update_available = Some("0.2.0".into());
+        let s = draw(&app, 100, 12);
+        assert!(s.contains("update 0.2.0 available: rc self-update"), "{s}");
+        // While a turn runs the interrupt hint wins the space.
+        app.begin_turn("work".into());
+        let s = draw(&app, 100, 12);
+        assert!(
+            s.contains("esc to interrupt") && !s.contains("self-update"),
+            "{s}"
+        );
     }
 
     #[test]

@@ -125,6 +125,10 @@ fn default_max_turn_requests() -> u32 {
     100
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Config {
     pub default_profile: String,
@@ -132,6 +136,10 @@ pub struct Config {
     pub compaction_threshold: f64,
     #[serde(default = "default_max_turn_requests")]
     pub max_turn_requests: u32,
+    /// Show a once-a-day "update available" hint (`rc` TUI and headless). Never contacts
+    /// anything but the release site; `RUCKCODE_NO_UPDATE_CHECK=1` also disables it.
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
     #[serde(default)]
@@ -358,6 +366,12 @@ mod tests {
         assert_eq!(c.profiles["anthropic"].model, "claude-opus-5-5");
         assert_eq!(c.profiles["openai"].provider, ProviderKind::Openai);
         assert_eq!(c.max_turn_requests, 100);
+        assert!(c.check_updates);
+        assert!(
+            !Config::from_toml_str("check_updates = false")
+                .unwrap()
+                .check_updates
+        );
         assert_eq!(c.mise.lazy_threshold, 12);
         assert_eq!(c.mcp.lazy_threshold, 20);
         assert!(c.mcp_servers.is_empty());

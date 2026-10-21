@@ -9,9 +9,6 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-/// GitHub `owner/repo` the release archives are downloaded from.
-pub const RELEASE_REPO: &str = "ruckc/ruckcode";
-
 /// `~/.local/bin` first, so a freshly installed `rc` is found even by login shells that did not
 /// add it to `PATH` (Debian/Ubuntu only do so when the directory existed at login).
 pub const PATH_PREFIX: &str = "PATH=$HOME/.local/bin:$PATH";
@@ -323,69 +320,44 @@ pub fn valid_version(v: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+')
 }
 
-/// The POSIX shell script that installs `rc` into `~/.local/bin`. It detects the architecture,
-/// downloads `rc-<version>-<target>.tar.gz` and its `.sha256` from the GitHub release `v<version>`
-/// (falling back to the latest release when that tag has no such asset), verifies the checksum
-/// and installs. Progress goes to stdout as `[rc-install] ...` lines.
-pub fn build_install_script(version: &str, repo: &str) -> Result<String, String> {
-    if !valid_version(version) {
-        return Err(format!("invalid version `{version}`"));
+/// The shared installer (`site/install.sh`, also published on the download site as `install.sh`).
+const INSTALL_TEMPLATE: &str = include_str!("../../../site/install.sh");
+
+fn valid_base_url(u: &str) -> bool {
+    (u.starts_with("https://") || u.starts_with("http://"))
+        && u.len() <= 200
+        && u.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ":/._~-".contains(c))
+}
+
+/// The POSIX shell script that installs `rc` into `~/.local/bin`: the site's `install.sh` with
+/// the site URL, the updater public key and a fallback version filled in. It resolves the latest
+/// release from `<base>/rc/latest.json` (only the latest version is hosted), downloads the
+/// archive, verifies the SHA-256 and, when `minisign` exists in the distro and a key is
+/// configured, the minisign signature. Progress goes to stdout as `[rc-install] ...` lines and
+/// failures end with `[rc-install] error: ...`.
+pub fn build_install_script(
+    base_url: &str,
+    pubkey: Option<&str>,
+    fallback_version: &str,
+) -> Result<String, String> {
+    if !valid_base_url(base_url) {
+        return Err(format!("invalid update site URL `{base_url}`"));
     }
-    if !repo
+    let pubkey = pubkey.map(str::trim).unwrap_or("");
+    if !pubkey
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || "/-_.".contains(c))
+        .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
     {
-        return Err(format!("invalid repository `{repo}`"));
+        return Err("invalid updater public key".into());
     }
-    Ok(format!(
-        r#"set -eu
-say() {{ printf '[rc-install] %s\n' "$*"; }}
-repo='{repo}'
-ver='{version}'
-arch=$(uname -m)
-case "$arch" in
-  x86_64|amd64) target=x86_64-unknown-linux-musl ;;
-  aarch64|arm64) target=aarch64-unknown-linux-gnu ;;
-  *) say "error: unsupported architecture $arch"; exit 2 ;;
-esac
-say "architecture $arch, target $target"
-if command -v curl >/dev/null 2>&1; then
-  fetch() {{ curl -fsSL --retry 2 -o "$2" "$1"; }}
-elif command -v wget >/dev/null 2>&1; then
-  fetch() {{ wget -q -O "$2" "$1"; }}
-else
-  say "error: neither curl nor wget is installed in this distro"; exit 3
-fi
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-base="https://github.com/$repo/releases/download"
-say "downloading rc-$ver-$target.tar.gz"
-if ! fetch "$base/v$ver/rc-$ver-$target.tar.gz" "$tmp/rc.tar.gz"; then
-  say "release v$ver has no such asset; looking up the latest release"
-  fetch "https://api.github.com/repos/$repo/releases/latest" "$tmp/latest.json" || {{ say "error: cannot query the latest release"; exit 5; }}
-  ver=$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{{0,1\}}\([^"]*\)".*/\1/p' "$tmp/latest.json" | head -n 1)
-  [ -n "$ver" ] || {{ say "error: could not determine the latest release"; exit 5; }}
-  say "downloading rc-$ver-$target.tar.gz (latest)"
-  fetch "$base/v$ver/rc-$ver-$target.tar.gz" "$tmp/rc.tar.gz" || {{ say "error: download failed"; exit 5; }}
-fi
-say "verifying checksum"
-fetch "$base/v$ver/rc-$ver-$target.tar.gz.sha256" "$tmp/rc.sha256" || {{ say "error: checksum download failed"; exit 5; }}
-want=$(awk '{{ print $1 }}' "$tmp/rc.sha256" | head -n 1)
-if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$tmp/rc.tar.gz" | awk '{{ print $1 }}')
-elif command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$tmp/rc.tar.gz" | awk '{{ print $1 }}')
-else say "error: no sha256sum available"; exit 3; fi
-[ -n "$want" ] && [ "$want" = "$got" ] || {{ say "error: checksum mismatch (expected $want, got $got)"; exit 4; }}
-say "extracting"
-tar -xzf "$tmp/rc.tar.gz" -C "$tmp"
-bin=$(find "$tmp" -type f -name rc | head -n 1)
-[ -n "$bin" ] || {{ say "error: archive does not contain rc"; exit 5; }}
-mkdir -p "$HOME/.local/bin"
-cp "$bin" "$HOME/.local/bin/rc.new"
-chmod 755 "$HOME/.local/bin/rc.new"
-mv -f "$HOME/.local/bin/rc.new" "$HOME/.local/bin/rc"
-say "installed $HOME/.local/bin/rc (version $ver)"
-"#
-    ))
+    if !valid_version(fallback_version) {
+        return Err(format!("invalid version `{fallback_version}`"));
+    }
+    Ok(INSTALL_TEMPLATE
+        .replace("@BASE_URL@", base_url.trim_end_matches('/'))
+        .replace("@PUBKEY@", pubkey)
+        .replace("@VERSION@", fallback_version))
 }
 
 // ---- running wsl.exe ----------------------------------------------------------------------
@@ -481,7 +453,7 @@ pub async fn check_rc_with(program: &str, distro: &str) -> Result<RcStatus, Stri
     )
     .await?;
     let text = decode_wsl_output(&out.stdout);
-    let expected = env!("CARGO_PKG_VERSION");
+    let expected = crate::app_version();
     match out.code {
         Some(0) => Ok(parse_rc_check(&text, expected)),
         // `command -v rc` failed inside the distro: not installed.
@@ -490,12 +462,19 @@ pub async fn check_rc_with(program: &str, distro: &str) -> Result<RcStatus, Stri
     }
 }
 
-/// Run the install script, reporting each output line to `progress`.
-pub async fn install_rc(distro: &str, progress: impl Fn(String)) -> Result<RcStatus, String> {
+/// Run the install script (latest `rc` from the update site), reporting each output line to
+/// `progress`. `pubkey` is the updater public key, if this build has one.
+pub async fn install_rc(
+    distro: &str,
+    pubkey: Option<&str>,
+    progress: impl Fn(String),
+) -> Result<RcStatus, String> {
     install_rc_with(
         require_windows()?,
         distro,
-        env!("CARGO_PKG_VERSION"),
+        &crate::update::base_url(),
+        pubkey,
+        crate::app_version(),
         progress,
     )
     .await
@@ -504,10 +483,12 @@ pub async fn install_rc(distro: &str, progress: impl Fn(String)) -> Result<RcSta
 pub async fn install_rc_with(
     program: &str,
     distro: &str,
-    version: &str,
+    base_url: &str,
+    pubkey: Option<&str>,
+    fallback_version: &str,
     progress: impl Fn(String),
 ) -> Result<RcStatus, String> {
-    let script = build_install_script(version, RELEASE_REPO)?;
+    let script = build_install_script(base_url, pubkey, fallback_version)?;
     let mut cmd = wsl_command(program);
     cmd.args(sh_args(distro, &encode_script(&script)))
         .stdin(Stdio::null())
@@ -817,17 +798,35 @@ mod tests {
         assert!(encode_script("echo hi\n").starts_with("echo ZWNobyBoaQo= |"));
     }
 
+    const BASE: &str = "https://example.test/ruckcode";
+
     #[test]
     fn install_script_contents_and_validation() {
-        let s = build_install_script("0.1.0", RELEASE_REPO).unwrap();
-        assert!(s.contains("ver='0.1.0'") && s.contains("repo='ruckc/ruckcode'"));
+        let s = build_install_script(BASE, Some("QUJD+/=="), "0.1.0").unwrap();
+        assert!(
+            s.contains("BASE_URL=\"${RUCKCODE_UPDATE_BASE_URL:-https://example.test/ruckcode}\"")
+        );
+        assert!(s.contains("PUBKEY='QUJD+/=='") && s.contains("DEFAULT_VERSION='0.1.0'"));
         assert!(s.contains("x86_64-unknown-linux-musl") && s.contains("aarch64-unknown-linux-gnu"));
-        assert!(s.contains("uname -m") && s.contains("sha256") && s.contains(".local/bin"));
-        assert!(s.contains("releases/download") && s.contains("releases/latest"));
+        assert!(s.contains("rc/latest.json") && s.contains("sha256") && s.contains(".local/bin"));
+        assert!(!s.contains("github.com") && !s.contains("@BASE_URL@") && !s.contains("@VERSION@"));
+        // No key: the placeholder becomes empty (checksum only).
+        assert!(build_install_script(BASE, None, "0.1.0")
+            .unwrap()
+            .contains("PUBKEY=''"));
         for bad in ["", "1.0; rm -rf /", "a b", "$(x)", "1'2"] {
-            assert!(build_install_script(bad, RELEASE_REPO).is_err(), "{bad}");
+            assert!(build_install_script(BASE, None, bad).is_err(), "{bad}");
         }
-        assert!(build_install_script("1.0.0", "a/b'c").is_err());
+        for bad in [
+            "",
+            "ftp://x",
+            "https://a/b'c",
+            "https://a b",
+            "https://x/$(id)",
+        ] {
+            assert!(build_install_script(bad, None, "1.0.0").is_err(), "{bad}");
+        }
+        assert!(build_install_script(BASE, Some("a'b"), "1.0.0").is_err());
     }
 
     fn have(tool: &str) -> bool {
@@ -843,7 +842,7 @@ mod tests {
         if !have("sh") {
             return;
         }
-        let s = build_install_script("0.1.0", RELEASE_REPO).unwrap();
+        let s = build_install_script(BASE, Some("QUJD"), "0.1.0").unwrap();
         let dir = std::env::temp_dir().join(format!("rc-wsl-syntax-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("install.sh");
@@ -861,23 +860,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// Runs the real script with a fake `curl` (no network): a good checksum installs, a bad one
-    /// is rejected, and a missing `v<ver>` asset falls back to the latest release.
+    /// Runs the real script with a fake `curl` (no network) against a site tree: the latest
+    /// version comes from `rc/latest.json`, the checksum is verified, and with a configured key
+    /// the (fake) `minisign` decides about the signature.
     #[cfg(unix)]
     #[test]
-    fn install_script_runs_against_fake_curl() {
+    fn install_script_runs_against_fake_site() {
         use std::os::unix::fs::PermissionsExt;
         if !have("sh") || !have("tar") || !have("sha256sum") {
             return;
         }
         let root = std::env::temp_dir().join(format!("rc-wsl-install-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let (bin, home, fixtures) = (root.join("bin"), root.join("home"), root.join("fx"));
-        for d in [&bin, &home, &fixtures, &root.join("pkg")] {
+        let (bin, home, site) = (root.join("bin"), root.join("home"), root.join("site"));
+        let dl = site.join("download/v9.9.9");
+        for d in [&bin, &home, &dl, &site.join("rc"), &root.join("pkg")] {
             std::fs::create_dir_all(d).unwrap();
         }
-        let rc = root.join("pkg/rc");
-        std::fs::write(&rc, "#!/bin/sh\necho rc 9.9.9\n").unwrap();
+        std::fs::write(root.join("pkg/rc"), "#!/bin/sh\necho rc 9.9.9\n").unwrap();
         let sh = |cmd: &str| {
             let o = std::process::Command::new("sh")
                 .args(["-c", cmd])
@@ -902,34 +902,36 @@ mod tests {
             "aarch64" => "aarch64-unknown-linux-gnu",
             _ => return,
         };
-        let fx = fixtures.display();
-        // Only v9.9.9 exists; "latest" points at it.
+        let archive = format!("rc-9.9.9-{target}.tar.gz");
         sh(&format!(
-            "cd {} && tar -czf {fx}/rc-9.9.9-{target}.tar.gz rc",
-            root.join("pkg").display()
+            "cd {} && tar -czf {}/{archive} rc && cd {} && sha256sum {archive} > {archive}.sha256 && echo c2ln > {archive}.sig",
+            root.join("pkg").display(),
+            dl.display(),
+            dl.display()
         ));
-        sh(&format!(
-            "cd {fx} && sha256sum rc-9.9.9-{target}.tar.gz > rc-9.9.9-{target}.tar.gz.sha256"
-        ));
-        std::fs::write(fixtures.join("latest.json"), r#"{"tag_name": "v9.9.9"}"#).unwrap();
-        let curl = bin.join("curl");
         std::fs::write(
-            &curl,
-            format!(
-                r#"#!/bin/sh
-while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; -*) shift;; *) url="$1"; shift;; esac; done
-f="{fx}/$(basename "$url")"
-case "$url" in *releases/latest) f="{fx}/latest.json";; esac
-[ -f "$f" ] || exit 22
-cp "$f" "$out"
-"#
-            ),
+            site.join("rc/latest.json"),
+            "{\n  \"version\": \"9.9.9\",\n  \"targets\": {}\n}\n",
         )
         .unwrap();
-        std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        let run_script = |ver: &str| {
-            let script = build_install_script(ver, RELEASE_REPO).unwrap();
+        let write_exe = |name: &str, body: &str| {
+            let f = bin.join(name);
+            std::fs::write(&f, body).unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        write_exe(
+            "curl",
+            &format!(
+                r#"#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; -*) shift;; *) url="$1"; shift;; esac; done
+f="{}/${{url#{BASE}/}}"
+[ -f "$f" ] || exit 22
+cp "$f" "$out"
+"#,
+                site.display()
+            ),
+        );
+        let run_script = |script: String| {
             std::process::Command::new("sh")
                 .args(["-c", &script])
                 .env("HOME", &home)
@@ -940,26 +942,54 @@ cp "$f" "$out"
                 .output()
                 .unwrap()
         };
-        // Falls back from the missing 0.1.0 tag to latest (9.9.9) and installs.
-        let out = run_script("0.1.0");
+        let plain = || build_install_script(BASE, None, "0.1.0").unwrap();
+        // Latest (9.9.9) from the manifest, checksum only.
+        let out = run_script(plain());
         let log = String::from_utf8_lossy(&out.stdout).to_string();
         assert!(out.status.success(), "{log}");
         assert!(
-            log.contains("looking up the latest") && log.contains("installed"),
+            log.contains("publishes no signing key") && log.contains("installed"),
             "{log}"
         );
+        assert!(log.contains("version 9.9.9"), "{log}");
         assert!(home.join(".local/bin/rc").exists());
-        // Exact version works directly.
-        assert!(run_script("9.9.9").status.success());
+        // Manifest missing: falls back to the baked-in version.
+        std::fs::remove_file(site.join("rc/latest.json")).unwrap();
+        let out = run_script(build_install_script(BASE, None, "9.9.9").unwrap());
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let out = run_script(plain());
+        assert_eq!(
+            out.status.code(),
+            Some(5),
+            "unknown version has no download"
+        );
+        // With a key: a fake minisign that accepts, then one that rejects.
+        write_exe("minisign", "#!/bin/sh\nexit 0\n");
+        let keyed = || build_install_script(BASE, Some("QUJD"), "9.9.9").unwrap();
+        let out = run_script(keyed());
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("signature OK"),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        write_exe("minisign", "#!/bin/sh\nexit 1\n");
+        std::fs::remove_file(home.join(".local/bin/rc")).unwrap();
+        let out = run_script(keyed());
+        assert_eq!(out.status.code(), Some(6));
+        assert!(!home.join(".local/bin/rc").exists(), "nothing installed");
         // Tampered checksum is rejected.
-        std::fs::write(
-            fixtures.join(format!("rc-9.9.9-{target}.tar.gz.sha256")),
-            "00  x\n",
-        )
-        .unwrap();
-        let out = run_script("9.9.9");
+        std::fs::write(dl.join(format!("{archive}.sha256")), "00  x\n").unwrap();
+        let out = run_script(plain_with_version());
         assert_eq!(out.status.code(), Some(4));
         assert!(String::from_utf8_lossy(&out.stdout).contains("checksum mismatch"));
         let _ = std::fs::remove_dir_all(root);
+
+        fn plain_with_version() -> String {
+            build_install_script(BASE, None, "9.9.9").unwrap()
+        }
     }
 }

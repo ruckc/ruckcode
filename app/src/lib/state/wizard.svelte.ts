@@ -34,7 +34,7 @@ export const STEP_LABEL: Record<Step, string> = {
   done: 'Done'
 };
 
-export type SettingsTab = 'providers' | 'keys' | 'project';
+export type SettingsTab = 'providers' | 'keys' | 'project' | 'updates';
 
 export type AuthKind = 'env' | 'existing' | 'new' | 'none';
 export type ModelsPhase = 'idle' | 'loading' | 'ready' | 'error';

@@ -10,6 +10,7 @@ mod modes_cmd;
 mod sessions_cmd;
 mod setup_cmd;
 mod tui;
+mod update;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -110,6 +111,8 @@ pub enum Command {
         #[command(subcommand)]
         action: modes_cmd::ModesAction,
     },
+    /// Update rc to the latest release published on the ruckcode site (verified download).
+    SelfUpdate(update::SelfUpdateArgs),
     /// List the models an endpoint offers (JSON with --json).
     Models(models_cmd::ModelsArgs),
     /// List sessions of this project.
@@ -226,6 +229,7 @@ async fn main() -> ExitCode {
             .await
             .map(|_| 0),
         Some(Command::Setup(args)) => setup_cmd::run(&cli, args).await.map(|_| 0),
+        Some(Command::SelfUpdate(args)) => update::run(args).await.map(|_| 0),
         Some(Command::Models(args)) => models_cmd::run(args).await.map(|_| 0),
         Some(Command::Modes { action }) => modes_cmd::run(&cli, action).await.map(|_| 0),
         Some(Command::Keys { action }) => keys_cmd::run(&cli, action).await.map(|_| 0),

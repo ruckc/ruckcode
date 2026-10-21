@@ -4,6 +4,7 @@ import type { LineTransport } from '../acp/transport';
 import type { ModesApi } from './modes';
 import type { SetupApi } from './setup';
 import type { TranscriptsApi } from './transcripts';
+import type { UpdateCheck, UpdatesApi } from './updates';
 import type { RcStatus, WslApi, WslDistro } from './wsl';
 
 /** True when running inside the Tauri webview (as opposed to a plain browser). */
@@ -96,6 +97,29 @@ export const tauriWsl: WslApi = {
     return invoke<RcStatus>('wsl_install_rc', { distro, onProgress: onProgressChannel });
   },
   translatePath: (distro, path) => invoke<string>('wsl_translate_path', { distro, path })
+};
+
+type UpdateDownloadEvent =
+  | { event: 'started'; data: { contentLength: number | null } }
+  | { event: 'progress'; data: { chunkLength: number } }
+  | { event: 'finished' };
+
+/** In-app updates through the Tauri backend (`update_*` commands; the plugin itself stays closed). */
+export const tauriUpdates: UpdatesApi = {
+  check: () => invoke<UpdateCheck>('update_check'),
+  async download(onProgress) {
+    const channel = new Channel<UpdateDownloadEvent>();
+    let done = 0;
+    let total: number | null = null;
+    channel.onmessage = (ev) => {
+      if (ev.event === 'started') total = ev.data.contentLength;
+      else if (ev.event === 'progress') done += ev.data.chunkLength;
+      onProgress(done, total);
+    };
+    await invoke('update_download', { onEvent: channel });
+  },
+  install: () => invoke('update_install'),
+  restart: () => invoke('update_restart')
 };
 
 /** Setup and keys through the Tauri backend (local core, or `rc --json` inside WSL). */

@@ -54,6 +54,8 @@ pub enum UiEvent {
     ModeSet(String),
     ModelSet(Option<String>),
     Sessions(Vec<SessionEntry>),
+    /// A newer `rc` is published (version), found by the daily background check.
+    UpdateAvailable(String),
     Error(String),
 }
 
@@ -269,6 +271,13 @@ impl Ctx {
     }
 }
 
+/// The `check_updates` config option (default on).
+pub fn update_checks_enabled(cwd: &Path) -> bool {
+    ruckcode_core::Config::load(cwd, None)
+        .map(|c| c.check_updates)
+        .unwrap_or(true)
+}
+
 fn model_label(cli: &Cli, cwd: &Path) -> String {
     let cfg = ruckcode_core::Config::load(cwd, None).ok();
     let profile = cli
@@ -337,6 +346,16 @@ pub async fn run(cli: &Cli) -> Result<()> {
     };
 
     let mut app = App::new(model_label(cli, &cwd));
+    let plan = crate::update::startup_plan(update_checks_enabled(&cwd));
+    app.update_available = plan.cached;
+    if plan.refresh {
+        let tx = ctx.tx.clone();
+        tokio::spawn(async move {
+            if let Some(v) = crate::update::refresh_cache().await {
+                let _ = tx.send(UiEvent::UpdateAvailable(v));
+            }
+        });
+    }
     app.models = profile_models(cli, &cwd);
     let mut initial_prompt = cli.prompt.clone();
 
@@ -424,6 +443,7 @@ fn handle_ui_event(
     ctx: &Ctx,
 ) -> Action {
     match ev {
+        UiEvent::UpdateAvailable(v) => app.update_available = Some(v),
         UiEvent::Update { session_id, update } => {
             if app.session_id.as_deref() == Some(session_id.as_str()) {
                 app.handle_update(update);

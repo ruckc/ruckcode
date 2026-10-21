@@ -13,12 +13,15 @@
     getPlatform,
     getSetup,
     getTranscripts,
+    getUpdates,
     getWsl,
     hostMode
   } from '../lib/host';
   import ModesView from '../lib/components/ModesView.svelte';
   import TranscriptsView from '../lib/components/TranscriptsView.svelte';
   import UnsavedDialog from '../lib/components/UnsavedDialog.svelte';
+  import UpdateBanner from '../lib/components/UpdateBanner.svelte';
+  import { UpdateController } from '../lib/state/updates.svelte';
   import type { ModesApi } from '../lib/host/modes';
   import type { TranscriptsApi, TranscriptTarget } from '../lib/host/transcripts';
   import type { SettingsTab } from '../lib/state/wizard.svelte';
@@ -36,6 +39,8 @@
 
   const chat = new ChatController();
   const mode = hostMode();
+  /** Set once the host reports an updater (desktop app, or `?mock=1&update=1`). */
+  let updates = $state<UpdateController | null>(null);
 
   let recent = $state<Project[]>([]);
   let cwd = $state('');
@@ -64,6 +69,14 @@
   let pendingConnect: Project | null = null;
 
   onMount(() => {
+    void getUpdates().then((api) => {
+      if (!api) return;
+      updates = new UpdateController(api, {
+        // Never restart under a running agent turn.
+        isBusy: () => Object.values(chat.sessions).some((s) => s.running)
+      });
+      updates.start();
+    });
     void getPlatform().then((p) => {
       platform = p;
       // A remembered WSL project only makes sense on Windows.
@@ -84,6 +97,7 @@
       sidebarOpen = false;
       planOpen = false;
     }
+    return () => updates?.stop();
   });
 
   const active = $derived(chat.active);
@@ -326,6 +340,10 @@
       onsettings={() => openSettings()}
     />
 
+    {#if updates}
+      <UpdateBanner {updates} openSessions={Object.keys(chat.sessions).length} {platform} />
+    {/if}
+
     {#if mode === 'none'}
       <p class="banner">
         No agent host available. Run the desktop app (<code>mise run app:dev</code>), or open this
@@ -408,6 +426,7 @@
     target={settings.target}
     bind:tab={settings.tab}
     firstRun={settings.firstRun}
+    {updates}
     onclose={closeSettings}
     onreconnect={reconnectAfterSetup}
   />

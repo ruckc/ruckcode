@@ -173,6 +173,11 @@ pub async fn run(cli: &Cli) -> Result<u8> {
         ends_newline: AtomicBool::new(true),
     });
     let conn = crate::connect(cli, handler.clone()).await?;
+    // Once-a-day update hint: shown on stderr only when it is a terminal, never delays the run.
+    let update_plan = crate::update::startup_plan(crate::tui::update_checks_enabled(&cwd));
+    let update_refresh = update_plan
+        .refresh
+        .then(|| tokio::spawn(crate::update::refresh_cache()));
 
     let started = if let Some(id) = cli.resume.as_deref().filter(|s| !s.is_empty()) {
         client::load_session(&conn, &cwd, id).await?
@@ -211,6 +216,19 @@ pub async fn run(cli: &Cli) -> Result<u8> {
         && !handler.ends_newline.load(Ordering::Relaxed)
     {
         println!();
+    }
+    if std::io::stderr().is_terminal() {
+        let mut newer = update_plan.cached;
+        if let Some(task) = update_refresh {
+            if let Ok(Ok(Some(v))) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), task).await
+            {
+                newer = Some(v);
+            }
+        }
+        if let Some(v) = newer {
+            eprintln!("rc: {}", crate::update::hint_text(&v));
+        }
     }
     let v = res
         .map_err(|e| anyhow::anyhow!("{e}"))

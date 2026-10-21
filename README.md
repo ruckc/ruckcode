@@ -11,11 +11,33 @@ agent to editors such as Zed. See [docs/PLAN.md](docs/PLAN.md) for the design.
 
 ## Install
 
+The repository is private, so GitHub Release assets are not publicly downloadable. Releases are
+published to **GitHub Pages** instead: <https://ruckc.github.io/ruckcode/> has a download page
+(desktop installers, `rc` archives, checksums, signatures, release notes) for the **latest**
+version. Older versions stay on the (private) GitHub Releases.
+
+`rc` on Linux, macOS and WSL:
+
+```sh
+curl -fsSL https://ruckc.github.io/ruckcode/install.sh | sh
+```
+
+The script picks the right archive, verifies its SHA-256 and, **if `minisign` is installed**, its
+minisign signature (without `minisign` only the checksum is verified; that detects corruption but
+not a compromised server, so install `minisign` if that matters), then installs `~/.local/bin/rc`.
+`RUCKCODE_INSTALL_DIR` changes the directory. On Windows, download `rc-<version>-x86_64-pc-windows-msvc.zip`
+from the download page. Later versions: `rc self-update` (see [Updates](#updates)).
+
+From source:
+
 ```sh
 cargo install --path crates/ruckcode-cli   # installs the `rc` binary
 # or, with mise:
 mise run install
 ```
+
+Source builds have no update signing key embedded, so `rc self-update` refuses to run there
+(rebuild with `RUCKCODE_UPDATER_PUBKEY` set, or use `--insecure-skip-signature`; see below).
 
 ## Quick start
 
@@ -48,6 +70,7 @@ base_url = "http://localhost:11434/v1"
 ```
 
 Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` (default 100),
+`check_updates` (default true; the daily update hint, see [Updates](#updates)),
 `[mise] lazy_threshold` (default 12), `[permissions]` (tool name or glob such as `"mise__*"` to
 `allow` / `ask` / `deny`), and global `[[hooks.<event>]]` tables. `RUCKCODE_PROFILE` overrides
 `default_profile`; `--profile` and `--model` override per run.
@@ -428,8 +451,9 @@ libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-ess
 
 ### Install the desktop app
 
-Each GitHub Release also carries the desktop app (`ruckcode-app-<version>-<target>.<ext>`, each with a
-`.sha256`, all listed in `SHA256SUMS`):
+Download the installer for your OS from <https://ruckc.github.io/ruckcode/> (the latest release;
+the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sha256`, all listed in
+`SHA256SUMS`, under `download/v<version>/`):
 
 | OS | File | Notes |
 |----|------|-------|
@@ -463,10 +487,12 @@ WSL2 distribution:
 
 1. Pick a distribution (the default one is preselected; WSL1 and Docker Desktop's internal distros
    are shown but cannot be chosen).
-2. If `rc` is missing in the distro, click **Install rc**. The app downloads the release archive
-   matching its own version (x86_64 musl or aarch64) from GitHub inside the distro, verifies the
-   SHA-256 and installs `~/.local/bin/rc`. A different installed version shows a warning and an
-   **Update rc** button.
+2. If `rc` is missing in the distro, click **Install rc**. Inside the distro the app runs the same
+   installer as `install.sh`: it reads the latest version from `rc/latest.json` on the download
+   site, downloads the archive (x86_64 musl or aarch64), verifies the SHA-256 and, if `minisign` is
+   installed in the distro, the signature, and installs `~/.local/bin/rc`. A different installed
+   version than the app's shows a warning and an **Update rc** button; after the Windows app
+   updates itself, opening a WSL project offers exactly that.
 3. Enter the project folder as a Windows path (`C:\Users\me\proj`, `\\wsl.localhost\Ubuntu\home\me\proj`,
    `\\wsl$\Ubuntu\...`) or a Linux path (`/home/me/proj`), or use Browse. The translated Linux path
    is shown under the field; a path in another distro is rejected. Then **Connect**.
@@ -546,6 +572,39 @@ streaming). Prompts such as `mock:write a.txt hi`, `mock:askmulti`, `mock:mode e
 The e2e task needs a Chromium that matches Playwright 1.56 (`pnpm -C app exec playwright install
 chromium`, or `PLAYWRIGHT_BROWSERS_PATH` pointing at an existing install).
 
+## Updates
+
+Only the latest version is hosted, on GitHub Pages (the repository is private, so release assets
+are not downloadable). Everything is verified with the project's minisign key (the same key
+`tauri signer` makes; the public key is built into the app and `rc`).
+
+- **Desktop app.** Checks at startup and every six hours (not in dev builds). By default it
+  downloads the update in the background with a small progress line, then shows a banner "Update
+  vX ready" with release notes and **Restart now** / **Later**. It never restarts under a running
+  agent turn: while one runs, Restart is held back (an explicit "Restart anyway" exists). Open
+  sessions end on restart and can be resumed. **Settings, Updates** has the "Automatically download
+  updates" switch (when off, you are asked before anything is downloaded) and **Check for
+  updates**. Self-updating works for the macOS app, the Windows `-setup.exe` (NSIS) installer and
+  the Linux **AppImage**. A copy installed from the `.deb` or `.msi` cannot update itself: the app
+  tells you a new version exists and links to the download page. On Windows the app can also update
+  `rc` inside WSL distros (see WSL2 above).
+- **`rc`.** `rc self-update` downloads the archive for your platform from
+  `<site>/rc/latest.json`, verifies SHA-256 **and** the minisign signature, and replaces the running
+  binary atomically (Windows too). Flags: `--check` (only report), `--version-only` (print the latest
+  version), `--yes` (no prompt), `--insecure-skip-signature` (checksum only, loud warning; for
+  builds without the key). It refuses for package-manager installs (Homebrew Cellar, `/usr/bin`,
+  Nix, snap) and tells you to use the package manager. Once a day `rc` also notes "update available"
+  (the TUI status line; headless mode on stderr only when it is a terminal; never in `rc acp`). The
+  check is one small request to the update site, cached in
+  `<cache dir>/ruckcode/update-check.json`.
+- **Turning it off.** Desktop: Settings, Updates, switch off "Automatically download updates" (it
+  still tells you when something is available). `rc`: set `RUCKCODE_NO_UPDATE_CHECK=1`, or
+  `check_updates = false` in `config.toml`, to stop the daily hint (`rc self-update` still works when
+  you run it). `RUCKCODE_UPDATE_BASE_URL` points both at another site (testing, mirrors).
+- **Not configured.** Releases built without the signing key (see CONTRIBUTING.md) publish no update
+  manifests: the app says "updates not configured" and `rc self-update` reports that no manifest is
+  published.
+
 ## Workspace layout
 
 ```
@@ -589,7 +648,31 @@ GitHub Release `vX.Y.Z` with:
 - `rc-<version>-<target>.tar.gz` (`.zip` on Windows) containing `rc`, `LICENSE`, `README.md`
 - per-archive `.sha256` files and a combined `SHA256SUMS`
 - desktop app bundles: `ruckcode-app-<version>-<target>` with `.dmg`, `.app.tar.gz` (macOS), `.msi`, `-setup.exe` (Windows), `.AppImage`, `.deb` (Linux x86_64)
+- `.sig` minisign signatures for the `rc` archives and the updater bundles (`.app.tar.gz`, `-setup.exe`, `.AppImage`), when updater signing is configured
 - `CHANGELOG.md` and release notes generated from the commits
+
+After the release is published, a `pages` job deploys the latest version to GitHub Pages
+(`https://ruckc.github.io/ruckcode/`): `index.html` (download page), `install.sh`,
+`latest.json` (Tauri updater manifest), `rc/latest.json` (manifest for `rc self-update`) and every
+artifact under `download/v<version>/`. The manifests exist only when signing is configured. To
+redeploy Pages from an existing release (for example after editing release notes, which the "Edit
+release notes" workflow does automatically for the latest release), run the Release workflow
+manually with `redeploy_pages` ticked.
+
+Manifest formats:
+
+```jsonc
+// /latest.json  (Tauri v2 static updater manifest)
+{ "version": "0.2.0", "notes": "...", "pub_date": "2026-01-02T03:04:05Z",
+  "platforms": {
+    "darwin-aarch64": { "signature": "<.sig contents>", "url": ".../ruckcode-app-0.2.0-aarch64-apple-darwin.app.tar.gz" },
+    "darwin-x86_64":  { ... }, "windows-x86_64": { "url": ".../...-setup.exe", ... },
+    "linux-x86_64":   { "url": ".../...x86_64-unknown-linux-gnu.AppImage", ... } } }
+// /rc/latest.json  (rc self-update, install.sh)
+{ "version": "0.2.0", "notes": "...", "pub_date": "...",
+  "targets": { "x86_64-unknown-linux-musl": { "url": ".../rc-0.2.0-x86_64-unknown-linux-musl.tar.gz",
+                                              "sha256": "<hex>", "signature": "<.sig contents>" }, ... } }
+```
 
 Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 `x86_64-unknown-linux-musl` (static), `aarch64-apple-darwin`,

@@ -5,6 +5,7 @@ mod host;
 mod modes;
 mod setup;
 mod transcripts;
+mod update;
 mod wsl;
 
 use host::{AgentEvent, ConnectParams, HostKind, Hosts};
@@ -82,13 +83,15 @@ async fn wsl_check_rc(distro: String) -> Result<wsl::RcStatus, String> {
     wsl::check_rc(&distro).await
 }
 
-/// Install the matching `rc` release into the distro; progress lines go to `on_progress`.
+/// Install the latest `rc` release (from the update site) into the distro; progress lines go to `on_progress`.
 #[tauri::command]
 async fn wsl_install_rc(
+    app: tauri::AppHandle,
     distro: String,
     on_progress: Channel<String>,
 ) -> Result<wsl::RcStatus, String> {
-    wsl::install_rc(&distro, move |l| {
+    let key = update::pubkey(&app);
+    wsl::install_rc(&distro, key.as_deref(), move |l| {
         let _ = on_progress.send(l);
     })
     .await
@@ -293,7 +296,9 @@ async fn modes_apply(project: String, distro: Option<String>, doc: Value) -> Res
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(update::plugin())
         .manage(Hosts::default())
+        .manage(update::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             agent_connect,
             agent_send,
@@ -321,7 +326,11 @@ pub fn run() {
             modes_get,
             modes_validate,
             modes_preview,
-            modes_apply
+            modes_apply,
+            update::update_check,
+            update::update_download,
+            update::update_install,
+            update::update_restart
         ])
         .run(tauri::generate_context!())
         .expect("error while running ruckcode app");

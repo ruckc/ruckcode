@@ -129,6 +129,8 @@ pub struct App {
     pub chars_streamed: usize,
     /// Real context usage from the agent's `usage_update`: (tokens used, context window).
     pub usage: Option<(u64, u64)>,
+    /// Newer `rc` version announced in the status line (daily check; see `update.rs`).
+    pub update_available: Option<String>,
 }
 
 pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
@@ -161,6 +163,7 @@ impl App {
             queue: VecDeque::new(),
             chars_streamed: 0,
             usage: None,
+            update_available: None,
         }
     }
 

@@ -1,6 +1,8 @@
 use tauri_build::{AppManifest, Attributes};
 
 fn main() {
+    // The updater public key is compiled in when set (CI also merges it into tauri.conf.json).
+    println!("cargo:rerun-if-env-changed=RUCKCODE_UPDATER_PUBKEY");
     // Generates `allow-<command>` permissions for our commands so capabilities can grant
     // exactly these and nothing else.
     tauri_build::try_build(
@@ -32,6 +34,10 @@ fn main() {
             "modes_validate",
             "modes_preview",
             "modes_apply",
+            "update_check",
+            "update_download",
+            "update_install",
+            "update_restart",
         ])),
     )
     .expect("failed to run tauri-build");

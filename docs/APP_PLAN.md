@@ -98,6 +98,7 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
 5. **Transcript browser. Done.** List, search, timeline, metrics, resume and export. See "Milestone 5 notes" below.
 6. **Mode/hook editor. Done.** Graphical `modes.toml` editor with comment-preserving saves, plus the new `rc modes` subcommand. See "Milestone 6 notes" below.
 7. **Release bundles. Done.** Tauri bundles in the release workflow, app metadata, and docs. See "Milestone 7 notes" below.
+8. **Updates. Done.** Signed updater artifacts, GitHub Pages distribution, in-app auto-update, `rc self-update` and a Pages-based WSL `rc` installer. See "Milestone 8 notes" below.
 
 ## Milestone 1 notes
 
@@ -408,6 +409,50 @@ Built as planned, with these deviations and details:
   metadata. The macOS and Windows jobs have not run yet; expect first-run fixes (paths under
   `target/<triple>/release/bundle`).
 
+## Milestone 8 notes
+
+Updates, designed around the fact that the repository is private (Release assets are not
+publicly downloadable) while GitHub Pages is public.
+
+- **Distribution.** The `pages` job (official `actions/configure-pages`, `upload-pages-artifact`,
+  `deploy-pages`, pinned by SHA, environment `github-pages`) deploys the latest release after
+  `publish` succeeds: `index.html`, `install.sh`, `latest.json` (Tauri static manifest),
+  `rc/latest.json`, and `download/v<version>/*`. Older versions stay on GitHub Releases only. The
+  site is built by `scripts/build_site.py` (stdlib Python, tested in `scripts/test_build_site.py`);
+  `scripts/check_site_limits.sh` fails the run above 900 MB total or 100 MB per file. A manual run of
+  the Release workflow with `redeploy_pages` rebuilds the site from the release assets.
+- **Signing.** One minisign key pair from `tauri signer generate`. Secrets
+  `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`, variable `RUCKCODE_UPDATER_PUBKEY`. App jobs add
+  `bundle.createUpdaterArtifacts` and `plugins.updater.pubkey` through `tauri build --config` only
+  when both exist; the `site` job signs the `rc` archives with `tauri signer sign --app-version`
+  and re-verifies every `.sig` with `minisign` against the public key. Without them nothing
+  changes except that no updater artifacts or manifests are produced and the apps say "updates not
+  configured". The committed `tauri.conf.json` has an empty `pubkey` and `requireSignedVersion`.
+- **Desktop app.** `tauri-plugin-updater` is registered but not exposed to the webview; the app
+  has four narrow commands (`update_check`, `update_download` with a progress `Channel`,
+  `update_install`, `update_restart`; capability grants only these). Restart uses `AppHandle::restart`,
+  so `tauri-plugin-process` is not needed. `manual_reason` turns off self-update for deb, rpm, msi
+  and unbundled builds. `UpdateController` (`state/updates.svelte.ts`) checks at startup and every
+  6 hours, downloads automatically (setting `ruckcode.autoUpdate` in localStorage), shows a subtle
+  progress line and then the "Update vX ready" banner; restart is held back while any session runs.
+  Skipped in dev and plain mock mode; `?mock=1&update=1|manual|unconfigured|uptodate|error|
+  faildownload` fakes it. Tests: vitest (controller, banner, settings tab) and Playwright
+  `e2e/updates.spec.ts`.
+- **`rc`.** `rc self-update [--check] [--yes] [--version-only] [--insecure-skip-signature]`
+  (`crates/ruckcode-cli/src/update.rs`): manifest, semver comparison, download, SHA-256, minisign
+  signature (`minisign-verify`; the signed trusted comment must carry `version:<manifest version>`
+  to stop rollback replays), extraction and `self_replace`. The key comes from
+  `RUCKCODE_UPDATER_PUBKEY` at build time (`build.rs`). Daily non-blocking hint cached in
+  `<cache>/ruckcode/update-check.json`; `RUCKCODE_NO_UPDATE_CHECK`, `check_updates` in
+  `config.toml`; never in `rc acp`. Tests use a local HTTP server and a throwaway key pair.
+- **WSL.** `wsl.rs` now fills the shared `site/install.sh` (also served as `install.sh`) with the
+  site URL and public key and runs it in the distro; it reads the latest version from
+  `rc/latest.json` (falling back to the app's own version when no manifest exists).
+- **Limits.** The Windows updater runs the NSIS installer (the process exits); `.msi` installs
+  are manual. macOS and Windows builds are still not code-signed, so first launch warnings stay.
+  The release steps for macOS and Windows updater artifacts have not run on CI yet; expect
+  first-run path fixes like in milestone 7.
+
 ## v1 complete
 
 All seven milestones are done: chat, tools and permissions, WSL2 host, setup and keys, transcript
@@ -416,7 +461,8 @@ browser, mode/hook editor, and installable bundles.
 ## Open items for later
 
 - Mobile and remote access (`rc serve`, ACP over WebSocket with token auth).
-- Auto-update (Tauri updater; needs updater signing keys and `createUpdaterArtifacts`).
+- Auto-update is done (milestone 8); remaining: a one-time key setup by the maintainer, deb/rpm
+  and MSI self-update (Tauri supports them, we only point to the download page), delta updates.
 - Configure code-signing secrets (Apple, Windows) so releases stop being flagged; replace placeholder icons.
 - Linux aarch64 and ARM Windows bundles.
 - Branch protection ruleset still needs applying (see CONTRIBUTING.md).

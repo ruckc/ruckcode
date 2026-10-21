@@ -165,6 +165,18 @@ jobs:
             target
           key: cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
+  # Release site tooling (update manifests, download page, install.sh): Python standard library and
+  # POSIX sh only.
+  site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest -v scripts/test_build_site.py
+      - run: sh -n site/install.sh
+
   # Desktop app: SvelteKit UI checks and tests, then the Tauri shell (its own Cargo workspace,
   # kept out of the root one so the jobs above need no webkit).
   app:

@@ -3,7 +3,9 @@
   import type { PresetInfo, SetupApi, SetupState, SetupTarget } from '../host/setup';
   import { SetupWizard, type SettingsTab } from '../state/wizard.svelte';
   import KeysTab from './KeysTab.svelte';
+  import type { UpdateController } from '../state/updates.svelte';
   import ProjectTab from './ProjectTab.svelte';
+  import UpdatesTab from './UpdatesTab.svelte';
   import SetupWizardView from './SetupWizardView.svelte';
 
   let {
@@ -11,6 +13,7 @@
     target,
     tab = $bindable('providers'),
     firstRun = false,
+    updates = null,
     onclose,
     onreconnect
   }: {
@@ -19,15 +22,18 @@
     tab?: SettingsTab;
     /** Opened automatically because there is no usable profile. */
     firstRun?: boolean;
+    /** The app's update controller; adds the Updates tab. */
+    updates?: UpdateController | null;
     onclose: () => void;
     onreconnect: () => void;
   } = $props();
 
-  const TABS: { id: SettingsTab; label: string }[] = [
+  const TABS: { id: SettingsTab; label: string }[] = $derived([
     { id: 'providers', label: 'Providers & models' },
     { id: 'keys', label: 'API keys' },
-    { id: 'project', label: 'Project' }
-  ];
+    { id: 'project', label: 'Project' },
+    ...(updates ? [{ id: 'updates' as const, label: 'Updates' }] : [])
+  ]);
 
   let info = $state<SetupState | null>(null);
   let presets = $state<PresetInfo[]>([]);
@@ -118,7 +124,9 @@
     </div>
 
     <div class="panel" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-      {#if loadError}
+      {#if tab === 'updates' && updates}
+        <UpdatesTab {updates} />
+      {:else if loadError}
         <p class="err" role="alert">{loadError}</p>
         <button type="button" onclick={() => load()}>Retry</button>
       {:else if !info || !wizard}

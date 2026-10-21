@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # to redeploy the Pages download page when the latest release's notes change
 
 jobs:
   edit:
@@ -32,3 +33,17 @@ jobs:
           notes="docs/releases/${TAG}.md"
           [ -f "$notes" ] || { echo "::error::missing $notes"; exit 1; }
           gh release edit "$TAG" --notes-file "$notes"
+      - name: Refresh the Pages site if this is the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # The download page and updater manifests carry the release notes. Only the latest
+          # version is hosted there, so older releases need nothing.
+          latest="$(gh release view --json tagName --jq .tagName)"
+          if [ "$latest" = "$TAG" ]; then
+            gh workflow run release.yml --ref "${GITHUB_REF_NAME}" -f redeploy_pages=true -f "tag=$TAG"
+            echo "Triggered a Pages redeploy for $TAG."
+          fi

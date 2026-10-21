@@ -7,12 +7,14 @@ import {
   tauriModes,
   tauriSetup,
   tauriTranscripts,
+  tauriUpdates,
   tauriWsl,
   type HostKind
 } from './tauri';
 import type { ModesApi } from './modes';
 import type { SetupApi } from './setup';
 import type { TranscriptsApi } from './transcripts';
+import type { UpdatesApi } from './updates';
 import type { WslApi } from './wsl';
 
 export type { HostKind };
@@ -21,6 +23,7 @@ let mockStore: import('./fake-agent').FakeStore | undefined;
 let mockWsl: WslApi | undefined;
 let mockSetup: SetupApi | undefined;
 let mockTranscripts: TranscriptsApi | undefined;
+let mockUpdates: UpdatesApi | undefined;
 let mockModes: import('./fake-modes').FakeModes | undefined;
 
 export type HostMode = 'tauri' | 'mock' | 'none';
@@ -151,4 +154,27 @@ export async function getTranscripts(): Promise<TranscriptsApi> {
     return mockTranscripts;
   }
   return tauriTranscripts;
+}
+
+/**
+ * The in-app updater, or null where updates make no sense: plain browsers and dev servers (the
+ * desktop app in `tauri dev` included). In mock mode, `?update=1` (or `manual`, `unconfigured`,
+ * `uptodate`, `error`, `faildownload`) fakes one so the banner can be exercised.
+ */
+export async function getUpdates(): Promise<UpdatesApi | null> {
+  const mode = hostMode();
+  if (mode === 'mock') {
+    const q = new URLSearchParams(location.search);
+    const u = q.get('update');
+    if (!u) return null;
+    const { FakeUpdates } = await import('./fake-updates');
+    const delay = Number(q.get('updatedelay') ?? 30);
+    mockUpdates ??= new FakeUpdates({
+      scenario: u === '1' ? 'available' : (u as import('./fake-updates').UpdateScenario),
+      delayMs: Number.isFinite(delay) ? delay : 30
+    });
+    return mockUpdates;
+  }
+  if (mode === 'tauri' && !import.meta.env.DEV) return tauriUpdates;
+  return null;
 }

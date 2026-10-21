@@ -17,6 +17,7 @@ crossterm.workspace = true
 dirs.workspace = true
 futures.workspace = true
 ratatui.workspace = true
+reqwest.workspace = true
 ruckcode-acp.workspace = true
 ruckcode-core.workspace = true
 ruckcode-llm.workspace = true
@@ -29,6 +30,15 @@ tokio.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 tracing-subscriber.workspace = true
+minisign-verify = "0.3"
+semver = "1"
+sha2 = "0.11"
+base64 = "0.23"
+flate2 = "1"
+tar = "0.4"
+self-replace = "1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+minisign = "0.10"
 tempfile.workspace = true
