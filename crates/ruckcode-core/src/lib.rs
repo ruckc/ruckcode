@@ -9,6 +9,7 @@ pub mod permissions;
 pub mod setup;
 pub mod setup_api;
 pub mod transcript;
+pub mod transcript_api;
 
 mod prompt;
 

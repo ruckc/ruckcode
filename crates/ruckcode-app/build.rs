@@ -25,6 +25,9 @@ fn main() {
             "keys_remove",
             "keys_use",
             "init_modes",
+            "transcripts_list",
+            "transcripts_read",
+            "transcripts_search",
         ])),
     )
     .expect("failed to run tauri-build");

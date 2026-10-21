@@ -6,6 +6,7 @@ mod init_cmd;
 mod keys_cmd;
 mod mcp_cmd;
 mod models_cmd;
+mod sessions_cmd;
 mod setup_cmd;
 mod tui;
 
@@ -106,7 +107,7 @@ pub enum Command {
     /// List the models an endpoint offers (JSON with --json).
     Models(models_cmd::ModelsArgs),
     /// List sessions of this project.
-    Sessions,
+    Sessions(sessions_cmd::SessionsArgs),
     /// Inspect configured MCP servers.
     Mcp {
         #[command(subcommand)]
@@ -221,7 +222,15 @@ async fn main() -> ExitCode {
         Some(Command::Setup(args)) => setup_cmd::run(&cli, args).await.map(|_| 0),
         Some(Command::Models(args)) => models_cmd::run(args).await.map(|_| 0),
         Some(Command::Keys { action }) => keys_cmd::run(&cli, action).await.map(|_| 0),
-        Some(Command::Sessions) => run_sessions(&cli).await.map(|_| 0),
+        Some(Command::Sessions(args)) => {
+            async {
+                if !sessions_cmd::run(&cli, args)? {
+                    run_sessions(&cli).await?;
+                }
+                Ok(0)
+            }
+            .await
+        }
         Some(Command::Mcp {
             action: McpAction::List,
         }) => mcp_cmd::list(&cli).await.map(|_| 0),

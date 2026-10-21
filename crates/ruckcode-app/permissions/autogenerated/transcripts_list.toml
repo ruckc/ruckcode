@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcripts-list"
+description = "Enables the transcripts_list command without any pre-configured scope."
+commands.allow = ["transcripts_list"]
+
+[[permission]]
+identifier = "deny-transcripts-list"
+description = "Denies the transcripts_list command without any pre-configured scope."
+commands.deny = ["transcripts_list"]

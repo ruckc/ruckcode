@@ -312,11 +312,30 @@ per-request metrics (model, usage, latency, time to first token, tokens/sec).
 
 ```sh
 rc sessions              # list this project's sessions
+rc sessions --json       # the same as one line of JSON (see below)
+rc sessions show <id> --json [--offset N --limit N]   # one session's records, paged
+rc sessions search <text> --json [--limit N]          # case-insensitive search over all sessions
 rc -c                    # continue the most recent session
 rc -r                    # pick a session interactively
 rc -r 20250102-030405-a1b2c3   # resume by id (also --resume=<ID>)
 rc -r "fix the bug"      # not an id: treated as the prompt, opens the picker
 ```
+
+The JSON forms are what the desktop app's transcript browser uses (inside WSL2 too). Output is one
+line of camelCase JSON; errors are a single `rc: message` line on stderr with exit code 1. Only
+`<project>/.ruckcode/sessions/` is ever read and ids are restricted to letters, digits, `-` and `_`.
+Truncated or corrupt lines are skipped and counted in `skippedLines`.
+
+- `rc sessions --json [--query TEXT]`: `[{id, createdAt, updatedAt, firstPrompt, mode, model, turns,
+  toolCalls, inputTokens, outputTokens, durationMs, sizeBytes, recordCount, skippedLines}]`, most
+  recently updated first (`--query` filters by id, first prompt, mode or model).
+- `rc sessions show <id> --json`: `{meta, records, total, offset, limit, skippedLines}` where `meta`
+  is the list row plus `cwd`, `profile`, `ruckcodeVersion`, and each record is `{index, ts, type, ...}`
+  with camelCase fields (`assistant_message` carries `usage` and `metrics`, `tool_result` carries
+  `permission`, `durationMs` and `edits` as unified diffs, and so on). `--limit` defaults to 500
+  (maximum 5000).
+- `rc sessions search <text> --json`: `[{id, recordIndex, type, snippet}]` over prompts, assistant text,
+  reasoning, tool names, inputs and outputs, diffs, hook output and compaction summaries.
 
 ## Headless mode
 
@@ -397,6 +416,24 @@ The app runs `wsl.exe -d <distro> --cd <path> -- sh -lc 'exec rc acp'` and relay
 any other host. The chosen host is remembered per recent project. If the agent exits, the app
 shows its exit code and last stderr lines and offers Reconnect. Try the UI in a browser with
 `?mock=1&platform=windows`.
+
+#### Transcript browser
+
+The **Transcripts** button in the top bar switches from the chat to a browser of the project's
+`.ruckcode/sessions/*.jsonl` (read-only). The list shows each session's first prompt, mode, model,
+age, tokens, duration, turns and tool calls (and a warning when lines had to be skipped), sortable by
+last updated, created, tokens or duration and filterable by mode and model. The search box (debounced,
+server side) finds text in prompts, replies, reasoning, tool inputs and outputs, diffs and hook
+output; picking a hit opens the session at that record, loading as many pages as needed. The detail
+view is a timeline of every record type: messages (replies as markdown, reasoning collapsed), tool
+cards with input, full output, permission decision, duration and diffs, hook runs, mode and model
+changes, compactions, turn summaries and MCP server status. Large transcripts load 200 records at a
+time (on scroll or with **Load more**). **Metrics** shows per-request latency, time to first token,
+tokens per second and token usage with per-turn totals, as inline SVG charts with table fallbacks.
+**Resume session** opens the session in the chat and **Copy as markdown** exports the transcript.
+It works for WSL2 projects through `rc sessions --json` in the distro. In the browser demo
+(`?mock=1`, optionally `&platform=windows`) it shows seeded transcripts covering every record type,
+one with about 2,000 records and one with a corrupt line.
 
 #### Settings: providers, keys and modes
 

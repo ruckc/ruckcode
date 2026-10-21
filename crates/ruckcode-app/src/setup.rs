@@ -156,15 +156,24 @@ pub fn init_call(opts: &InitInput) -> RcCall {
 
 // ---- running rc in WSL ----------------------------------------------------------------------
 
-/// The JSON document on stdout: the last line that looks like an object (login shells may print
-/// banners before `rc` runs).
+/// The JSON document on stdout: the last line that is an object or array and parses (login
+/// shells may print banners before `rc` runs).
 pub fn parse_json_output(stdout: &str) -> Result<Value, String> {
-    let line = stdout
-        .lines()
-        .rev()
-        .find(|l| l.trim_start().starts_with('{'))
-        .ok_or_else(|| format!("rc printed no JSON: {}", stdout.trim()))?;
-    serde_json::from_str(line.trim()).map_err(|e| format!("rc printed invalid JSON: {e}"))
+    let mut candidate = false;
+    for line in stdout.lines().rev() {
+        let line = line.trim();
+        if line.starts_with('{') || line.starts_with('[') {
+            candidate = true;
+            if let Ok(v) = serde_json::from_str(line) {
+                return Ok(v);
+            }
+        }
+    }
+    Err(if candidate {
+        "rc printed invalid JSON".to_string()
+    } else {
+        format!("rc printed no JSON: {}", stdout.trim())
+    })
 }
 
 /// The message of a failed `rc`: its `rc: ...` line on stderr when there is one.
@@ -230,7 +239,12 @@ fn wsl_program() -> Result<&'static str, String> {
     }
 }
 
-async fn via_wsl(distro: &str, project: &str, call: RcCall, secs: u64) -> Result<Value, String> {
+pub(crate) async fn via_wsl(
+    distro: &str,
+    project: &str,
+    call: RcCall,
+    secs: u64,
+) -> Result<Value, String> {
     run_rc(
         wsl_program()?,
         distro,
@@ -519,6 +533,9 @@ mod tests {
     fn output_parsing() {
         let v = parse_json_output("Welcome to Ubuntu\n{\"a\":1}\n").unwrap();
         assert_eq!(v["a"], 1);
+        let v = parse_json_output("[sudo] hi\n[{\"a\":1},{\"a\":2}]\n").unwrap();
+        assert_eq!(v[1]["a"], 2);
+        assert_eq!(parse_json_output("[]\n").unwrap(), serde_json::json!([]));
         assert!(parse_json_output("nothing\n").is_err());
         assert!(parse_json_output("{bad\n").is_err());
         assert_eq!(

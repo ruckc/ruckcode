@@ -5,10 +5,12 @@ import {
   pickFolder,
   tauriPlatform,
   tauriSetup,
+  tauriTranscripts,
   tauriWsl,
   type HostKind
 } from './tauri';
 import type { SetupApi } from './setup';
+import type { TranscriptsApi } from './transcripts';
 import type { WslApi } from './wsl';
 
 export type { HostKind };
@@ -16,6 +18,7 @@ export type { HostKind };
 let mockStore: import('./fake-agent').FakeStore | undefined;
 let mockWsl: WslApi | undefined;
 let mockSetup: SetupApi | undefined;
+let mockTranscripts: TranscriptsApi | undefined;
 
 export type HostMode = 'tauri' | 'mock' | 'none';
 
@@ -105,4 +108,15 @@ export async function getSetup(): Promise<SetupApi> {
     return mockSetup;
   }
   return tauriSetup;
+}
+
+/** The transcript browser API (seeded in-memory transcripts in mock mode). */
+export async function getTranscripts(): Promise<TranscriptsApi> {
+  if (hostMode() === 'mock') {
+    const { FakeTranscripts } = await import('./fake-transcripts');
+    const delay = Number(new URLSearchParams(location.search).get('transcriptdelay') ?? 60);
+    mockTranscripts ??= new FakeTranscripts({ delayMs: Number.isFinite(delay) ? delay : 60 });
+    return mockTranscripts;
+  }
+  return tauriTranscripts;
 }

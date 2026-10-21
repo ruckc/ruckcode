@@ -283,7 +283,27 @@ export class FakeAgent implements LineTransport {
       }
       case 'session/load':
       case 'session/resume': {
-        const s = sessions.get(sid);
+        let s = sessions.get(sid);
+        // Sessions browsed in the transcript view (seeded in `fake-transcripts`) can be resumed.
+        if (!s) {
+          const prompt = (await import('./fake-transcripts')).seedFirstPrompt(sid);
+          if (prompt !== null) {
+            s = {
+              id: sid,
+              cwd: null,
+              title: prompt.slice(0, 60),
+              updatedAt: new Date().toISOString(),
+              mode: 'implement',
+              model: MODELS[0],
+              history: [
+                chunk('user_message_chunk', prompt),
+                chunk('agent_message_chunk', 'Resumed from the transcript.')
+              ],
+              open: false
+            };
+            sessions.set(sid, s);
+          }
+        }
         if (!s) return this.fail(id, -32602, `unknown session ${sid}`);
         s.open = true;
         if (msg.method === 'session/load') {

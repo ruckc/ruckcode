@@ -1,21 +1,35 @@
 <script lang="ts">
-  import { buildDiff, sideBySide } from '../diff';
+  import { buildDiff, parseUnifiedDiff, sideBySide } from '../diff';
   import type { DiffContent } from '../state/reducer';
 
   let {
     diff,
+    patch,
     layout = 'unified',
     compact = false
-  }: { diff: DiffContent; layout?: 'unified' | 'split'; compact?: boolean } = $props();
+  }: {
+    /** Old and new text (live tool calls)... */
+    diff?: DiffContent;
+    /** ...or unified-diff text (stored transcripts). */
+    patch?: { path: string; text: string };
+    layout?: 'unified' | 'split';
+    compact?: boolean;
+  } = $props();
 
-  const model = $derived(buildDiff(diff.oldText, diff.newText, diff.path));
+  const path = $derived(diff?.path ?? patch?.path ?? '');
+  const isNew = $derived(diff ? diff.oldText === null : false);
+  const model = $derived(
+    patch
+      ? parseUnifiedDiff(patch.text)
+      : buildDiff(diff?.oldText ?? null, diff?.newText ?? '', path)
+  );
   const sign = { add: '+', del: '-', ctx: ' ' } as const;
 </script>
 
-<div class="diff" class:compact aria-label={`Diff of ${diff.path}`} role="group">
+<div class="diff" class:compact aria-label={`Diff of ${path}`} role="group">
   <div class="meta">
-    <code>{diff.path}</code>
-    {#if diff.oldText === null}<span class="tag">new file</span>{/if}
+    <code>{path}</code>
+    {#if isNew}<span class="tag">new file</span>{/if}
     <span class="add">+{model.added}</span>
     <span class="del">-{model.removed}</span>
   </div>

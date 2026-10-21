@@ -62,6 +62,13 @@ impl Env {
     }
 }
 
+impl Env {
+    /// Like `json` but the document may be an array.
+    fn json_any(&self, args: &[&str]) -> Value {
+        self.json(args, "")
+    }
+}
+
 const PLAN: &str = r#"{"profileName":"or","provider":"openai","baseUrl":"https://openrouter.ai/api/v1",
  "model":"a/one","models":["a/one","b/two"],"newKey":{"name":"work","secret":"sk-secret-0042","description":"w"},
  "keyScope":"user","setDefault":true,"modeModels":[{"mode":"explore","profile":"or","model":"b/two"},{"mode":"test"}]}"#;
@@ -362,4 +369,117 @@ fn models_by_env_and_name_and_errors() {
         "",
     );
     assert!(String::from_utf8_lossy(&o.stderr).contains("RC_UNSET_VAR is not set"));
+}
+
+// ---- rc sessions --json -----------------------------------------------------------------------
+
+fn write_session(e: &Env, id: &str, first_prompt: &str, extra: &[&str]) {
+    let dir = e.proj.path().join(".ruckcode/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut lines = vec![
+        format!(
+            r#"{{"ts":"2026-03-01T10:00:00.000Z","type":"session_start","id":"{id}","cwd":"/x","created_at":"2026-03-01T10:00:00.000Z","ruckcode_version":"0.1.0","profile":"p","model":"m1","mode":"plan"}}"#
+        ),
+        format!(
+            r#"{{"ts":"2026-03-01T10:00:01.000Z","type":"user_message","source":"user","message":{{"role":"user","content":[{{"type":"text","text":"{first_prompt}"}}]}}}}"#
+        ),
+        r#"{"ts":"2026-03-01T10:00:02.000Z","type":"assistant_message","request_id":1,"model":"m1","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":4},"metrics":{"duration_ms":300,"time_to_first_token_ms":50,"output_tokens_per_sec":13.3},"message":{"role":"assistant","content":[{"type":"text","text":"Found the Needle here"}]}}"#.to_string(),
+        r#"{"ts":"2026-03-01T10:00:03.000Z","type":"turn_end","stop_reason":"end_turn","duration_ms":900,"model_requests":1,"tool_calls":0,"input_tokens":10,"output_tokens":4}"#.to_string(),
+    ];
+    lines.extend(extra.iter().map(|s| s.to_string()));
+    std::fs::write(dir.join(format!("{id}.jsonl")), lines.join("\n") + "\n").unwrap();
+}
+
+#[test]
+fn sessions_list_show_search_json() {
+    let e = Env::new();
+    // No sessions at all.
+    assert_eq!(e.json_any(&["sessions", "--json"]), serde_json::json!([]));
+    write_session(&e, "20260301-100000-aaaaaa", "Fix the login bug", &[]);
+    write_session(
+        &e,
+        "20260302-100000-bbbbbb",
+        "Second session",
+        &["not json at all"],
+    );
+
+    let list = e.json_any(&["sessions", "--json"]);
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    let a = list
+        .iter()
+        .find(|s| s["id"] == "20260301-100000-aaaaaa")
+        .unwrap();
+    assert_eq!(a["firstPrompt"], "Fix the login bug");
+    assert_eq!(a["mode"], "plan");
+    assert_eq!(a["model"], "m1");
+    assert_eq!(a["turns"], 1);
+    assert_eq!(a["inputTokens"], 10);
+    assert_eq!(a["outputTokens"], 4);
+    assert_eq!(a["durationMs"], 900);
+    assert_eq!(a["toolCalls"], 0);
+    assert_eq!(a["createdAt"], "2026-03-01T10:00:00.000Z");
+    assert_eq!(a["skippedLines"], 0);
+    assert!(a["sizeBytes"].as_u64().unwrap() > 100);
+    let b = list
+        .iter()
+        .find(|s| s["id"] == "20260302-100000-bbbbbb")
+        .unwrap();
+    assert_eq!(b["skippedLines"], 1);
+
+    let q = e.json_any(&["sessions", "--json", "--query", "LOGIN"]);
+    assert_eq!(q.as_array().unwrap().len(), 1);
+
+    let show = e.json_any(&["sessions", "show", "20260301-100000-aaaaaa", "--json"]);
+    assert_eq!(show["total"], 4);
+    assert_eq!(show["records"].as_array().unwrap().len(), 4);
+    assert_eq!(show["meta"]["id"], "20260301-100000-aaaaaa");
+    assert_eq!(show["meta"]["cwd"], "/x");
+    assert_eq!(show["records"][2]["metrics"]["timeToFirstTokenMs"], 50);
+    assert_eq!(
+        show["records"][2]["content"][0]["text"],
+        "Found the Needle here"
+    );
+
+    let page = e.json_any(&[
+        "sessions",
+        "show",
+        "20260301-100000-aaaaaa",
+        "--json",
+        "--offset",
+        "1",
+        "--limit",
+        "2",
+    ]);
+    assert_eq!(page["total"], 4);
+    assert_eq!(page["offset"], 1);
+    assert_eq!(page["records"][0]["index"], 1);
+    assert_eq!(page["records"].as_array().unwrap().len(), 2);
+
+    let hits = e.json_any(&["sessions", "search", "needle", "--json"]);
+    let hits = hits.as_array().unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0]["recordIndex"], 2);
+    assert_eq!(hits[0]["type"], "assistant_message");
+    assert!(hits[0]["snippet"].as_str().unwrap().contains("Needle"));
+    let one = e.json_any(&["sessions", "search", "needle", "--json", "--limit", "1"]);
+    assert_eq!(one.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn sessions_errors_are_rc_lines() {
+    let e = Env::new();
+    write_session(&e, "20260301-100000-aaaaaa", "x", &[]);
+    for args in [
+        &["sessions", "show", "nope", "--json"][..],
+        &["sessions", "show", "../../etc/passwd", "--json"][..],
+        &["sessions", "show", "..", "--json"][..],
+    ] {
+        let o = e.rc(args, "");
+        assert_eq!(o.status.code(), Some(1), "{args:?}");
+        assert!(o.stdout.is_empty(), "{args:?}");
+        let err = String::from_utf8(o.stderr).unwrap();
+        assert!(err.starts_with("rc: "), "{err}");
+        assert_eq!(err.trim().lines().count(), 1, "{err}");
+    }
 }

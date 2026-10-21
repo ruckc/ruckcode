@@ -7,6 +7,8 @@
     disabled,
     planOpen = $bindable(),
     sidebarOpen = $bindable(),
+    view = 'chat',
+    onview,
     onmode,
     onconfig,
     onsettings
@@ -16,6 +18,8 @@
     disabled: boolean;
     planOpen: boolean;
     sidebarOpen: boolean;
+    view?: 'chat' | 'transcripts';
+    onview?: (v: 'chat' | 'transcripts') => void;
     onmode: (id: string) => void;
     onconfig: (id: string, value: string) => void;
     onsettings: () => void;
@@ -39,9 +43,25 @@
     aria-label="Toggle sidebar"
     onclick={() => (sidebarOpen = !sidebarOpen)}>&#9776;</button
   >
-  <strong class="title" {title}>{title}</strong>
+  <strong class="title" {title}>{view === 'transcripts' ? 'Transcripts' : title}</strong>
+  {#if onview}
+    <div class="views" role="group" aria-label="View">
+      <button
+        type="button"
+        class="small toggle"
+        aria-pressed={view === 'chat'}
+        onclick={() => onview('chat')}>Chat</button
+      >
+      <button
+        type="button"
+        class="small toggle"
+        aria-pressed={view === 'transcripts'}
+        onclick={() => onview('transcripts')}>Transcripts</button
+      >
+    </div>
+  {/if}
   <span class="spacer"></span>
-  {#if model}
+  {#if model && view === 'chat'}
     <label class="field">
       <span class="muted">Mode</span>
       {#if model.modes.length}
@@ -118,6 +138,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 30ch;
+  }
+  .views {
+    display: flex;
+    gap: 4px;
   }
   .spacer {
     flex: 1;

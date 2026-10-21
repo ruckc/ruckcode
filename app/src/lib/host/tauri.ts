@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { LineTransport } from '../acp/transport';
 import type { SetupApi } from './setup';
+import type { TranscriptsApi } from './transcripts';
 import type { RcStatus, WslApi, WslDistro } from './wsl';
 
 /** True when running inside the Tauri webview (as opposed to a plain browser). */
@@ -139,4 +140,29 @@ export const tauriSetup: SetupApi = {
   },
   initModes: (t, opts) =>
     invoke('init_modes', { project: t.project, distro: t.distro ?? null, opts: opts ?? null })
+};
+
+/** Transcripts through the Tauri backend (local core, or `rc sessions --json` inside WSL). */
+export const tauriTranscripts: TranscriptsApi = {
+  list: (t, query) =>
+    invoke('transcripts_list', {
+      project: t.project,
+      distro: t.distro ?? null,
+      query: query ?? null
+    }),
+  read: (t, id, opts) =>
+    invoke('transcripts_read', {
+      project: t.project,
+      distro: t.distro ?? null,
+      id,
+      offset: opts?.offset ?? null,
+      limit: opts?.limit ?? null
+    }),
+  search: (t, text, limit) =>
+    invoke('transcripts_search', {
+      project: t.project,
+      distro: t.distro ?? null,
+      text,
+      limit: limit ?? null
+    })
 };

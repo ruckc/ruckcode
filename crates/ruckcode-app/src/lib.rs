@@ -3,6 +3,7 @@
 
 mod host;
 mod setup;
+mod transcripts;
 mod wsl;
 
 use host::{AgentEvent, ConnectParams, HostKind, Hosts};
@@ -216,6 +217,41 @@ async fn init_modes(
     .await
 }
 
+// ---- transcript browser -----------------------------------------------------------------------
+//
+// Read-only. `project` is a local path or (with `distro`) a Linux path inside that WSL2 distro,
+// where `rc sessions ... --json` produces the same JSON as the local core.
+
+#[tauri::command]
+async fn transcripts_list(
+    project: String,
+    distro: Option<String>,
+    query: Option<String>,
+) -> Result<Value, String> {
+    transcripts::list(&Target::from_distro(distro), &project, query.as_deref()).await
+}
+
+#[tauri::command]
+async fn transcripts_read(
+    project: String,
+    distro: Option<String>,
+    id: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    transcripts::read(&Target::from_distro(distro), &project, &id, offset, limit).await
+}
+
+#[tauri::command]
+async fn transcripts_search(
+    project: String,
+    distro: Option<String>,
+    text: String,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    transcripts::search(&Target::from_distro(distro), &project, &text, limit).await
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -240,7 +276,10 @@ pub fn run() {
             keys_add,
             keys_remove,
             keys_use,
-            init_modes
+            init_modes,
+            transcripts_list,
+            transcripts_read,
+            transcripts_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running ruckcode app");

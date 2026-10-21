@@ -35,3 +35,28 @@ export function parseRecommended(label: string): { label: string; recommended: b
   const m = /^(.*?)\s*\(recommended\)\s*$/i.exec(label);
   return m ? { label: m[1], recommended: true } : { label, recommended: false };
 }
+
+/** `850 ms`, `2.5 s`, `1m 05s`, `1h 02m`. */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '-';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(Math.round(s - m * 60)).padStart(2, '0')}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${String(m - h * 60).padStart(2, '0')}m`;
+}
+
+/** `1,234` / `12.3k` / `1.2M` for token counts. */
+export function formatTokens(n: number): string {
+  if (n < 10_000) return n.toLocaleString('en-US');
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}

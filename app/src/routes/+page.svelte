@@ -7,7 +7,16 @@
   import PlanPanel from '../lib/components/PlanPanel.svelte';
   import Sidebar from '../lib/components/Sidebar.svelte';
   import TopBar from '../lib/components/TopBar.svelte';
-  import { browseFolder, getPlatform, getSetup, getWsl, hostMode } from '../lib/host';
+  import {
+    browseFolder,
+    getPlatform,
+    getSetup,
+    getTranscripts,
+    getWsl,
+    hostMode
+  } from '../lib/host';
+  import TranscriptsView from '../lib/components/TranscriptsView.svelte';
+  import type { TranscriptsApi, TranscriptTarget } from '../lib/host/transcripts';
   import type { SettingsTab } from '../lib/state/wizard.svelte';
   import SettingsDialog from '../lib/components/SettingsDialog.svelte';
   import type { SetupApi, SetupTarget } from '../lib/host/setup';
@@ -33,6 +42,8 @@
   let current = $state<Project | null>(null);
   let sidebarOpen = $state(true);
   let planOpen = $state(true);
+  let view = $state<'chat' | 'transcripts'>('chat');
+  let transcripts = $state<{ api: TranscriptsApi; target: TranscriptTarget } | null>(null);
   let composer: { focus(): void } | undefined = $state();
   let settings = $state<{
     api: SetupApi;
@@ -121,17 +132,54 @@
     }
   }
 
-  async function openSettings(tab: SettingsTab = 'providers') {
+  /** The project the typed/connected path refers to (WSL paths translated to Linux paths). */
+  async function resolveProject(): Promise<Project> {
     const p: Project = current ?? { path: cwd.trim(), host, distro: distro || undefined };
-    let path = p.path;
     if (!current && p.host === 'wsl' && p.distro) {
       try {
-        path = await (await getWsl()).translatePath(p.distro, path);
+        return { ...p, path: await (await getWsl()).translatePath(p.distro, p.path) };
       } catch {
         // keep as typed
       }
     }
-    settings = { api: await getSetup(), target: targetOf({ ...p, path }), tab, firstRun: false };
+    return p;
+  }
+
+  async function openSettings(tab: SettingsTab = 'providers') {
+    const p = await resolveProject();
+    settings = { api: await getSetup(), target: targetOf(p), tab, firstRun: false };
+  }
+
+  async function showView(v: 'chat' | 'transcripts') {
+    if (v === 'chat') {
+      view = 'chat';
+      return;
+    }
+    const p = await resolveProject();
+    if (!p.path) {
+      chat.error = 'Choose a project folder first.';
+      return;
+    }
+    const target = targetOf(p);
+    // A new view per project, so switching projects never shows another project's list.
+    if (
+      !transcripts ||
+      transcripts.target.project !== target.project ||
+      transcripts.target.distro !== target.distro
+    ) {
+      transcripts = { api: await getTranscripts(), target };
+    }
+    view = 'transcripts';
+  }
+
+  /** Open a stored transcript's session in chat (connecting first when needed). */
+  async function resumeSession(id: string) {
+    view = 'chat';
+    if (!chat.connected) {
+      const p = await resolveProject();
+      await connectProject(p, true);
+    }
+    if (chat.connected) await chat.openSession(id);
   }
 
   function closeSettings() {
@@ -193,7 +241,7 @@
 
 <svelte:window onkeydown={onWindowKey} />
 
-<div class="shell" class:no-sidebar={!sidebarOpen} class:no-plan={!planOpen}>
+<div class="shell" class:no-sidebar={!sidebarOpen} class:no-plan={!planOpen || view !== 'chat'}>
   {#if sidebarOpen}
     <div class="side">
       <Sidebar
@@ -229,6 +277,8 @@
       disabled={!chat.connected}
       bind:planOpen
       bind:sidebarOpen
+      {view}
+      onview={showView}
       onmode={(id) => chat.setMode(id)}
       onconfig={(id, v) => chat.setConfig(id, v)}
       onsettings={() => openSettings()}
@@ -252,7 +302,15 @@
       </div>
     {/if}
 
-    {#if active}
+    {#if view === 'transcripts' && transcripts}
+      {#key `${transcripts.target.distro ?? ''}\0${transcripts.target.project}`}
+        <TranscriptsView
+          api={transcripts.api}
+          target={transcripts.target}
+          onresume={resumeSession}
+        />
+      {/key}
+    {:else if active}
       <ChatView items={active.model.items} running={active.running} loading={active.loading} />
     {:else}
       <div class="welcome">
@@ -268,20 +326,22 @@
       </div>
     {/if}
 
-    <Composer
-      bind:this={composer}
-      disabled={!chat.connected || !active || active.loading}
-      running={active?.running ?? false}
-      queue={active?.queue ?? []}
-      history={chat.history}
-      {placeholder}
-      onsend={(t) => chat.send(t)}
-      oncancel={() => chat.cancel()}
-      onunqueue={(i) => chat.unqueue(i)}
-    />
+    {#if view === 'chat'}
+      <Composer
+        bind:this={composer}
+        disabled={!chat.connected || !active || active.loading}
+        running={active?.running ?? false}
+        queue={active?.queue ?? []}
+        history={chat.history}
+        {placeholder}
+        onsend={(t) => chat.send(t)}
+        oncancel={() => chat.cancel()}
+        onunqueue={(i) => chat.unqueue(i)}
+      />
+    {/if}
   </div>
 
-  {#if planOpen}
+  {#if planOpen && view === 'chat'}
     <div class="planp"><PlanPanel plan={active?.model.plan ?? []} /></div>
   {/if}
 </div>

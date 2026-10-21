@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissions for the main window: the agent relay commands and the folder picker.",
   "windows": ["main"],
-  "permissions": ["allow-agent-connect", "allow-agent-send", "allow-agent-disconnect", "allow-platform", "allow-app-version", "allow-wsl-list-distros", "allow-wsl-check-rc", "allow-wsl-install-rc", "allow-wsl-translate-path", "allow-wsl-to-windows-path", "allow-setup-presets", "allow-setup-state", "allow-list-models", "allow-setup-preview", "allow-setup-apply", "allow-keys-list", "allow-keys-add", "allow-keys-remove", "allow-keys-use", "allow-init-modes", "dialog:allow-open"]
+  "permissions": ["allow-agent-connect", "allow-agent-send", "allow-agent-disconnect", "allow-platform", "allow-app-version", "allow-wsl-list-distros", "allow-wsl-check-rc", "allow-wsl-install-rc", "allow-wsl-translate-path", "allow-wsl-to-windows-path", "allow-setup-presets", "allow-setup-state", "allow-list-models", "allow-setup-preview", "allow-setup-apply", "allow-keys-list", "allow-keys-add", "allow-keys-remove", "allow-keys-use", "allow-init-modes", "allow-transcripts-list", "allow-transcripts-read", "allow-transcripts-search", "dialog:allow-open"]
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcripts-read"
+description = "Enables the transcripts_read command without any pre-configured scope."
+commands.allow = ["transcripts_read"]
+
+[[permission]]
+identifier = "deny-transcripts-read"
+description = "Denies the transcripts_read command without any pre-configured scope."
+commands.deny = ["transcripts_read"]

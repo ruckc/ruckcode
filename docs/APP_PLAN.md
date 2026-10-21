@@ -95,7 +95,7 @@ modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`
    stdio relay. See "Milestone 3 notes" below.
 4. **Setup and keys UI. Done.** Settings dialog with the setup wizard, keys manager and project tab,
    plus the JSON outputs for the CLI subcommands. See "Milestone 4 notes" below.
-5. **Transcript browser.**
+5. **Transcript browser. Done.** List, search, timeline, metrics, resume and export. See "Milestone 5 notes" below.
 6. **Mode/hook editor**, including the new `rc modes` subcommand.
 7. **Release bundles** in CI, and documentation.
 
@@ -270,6 +270,50 @@ Built as planned, with these deviations and details:
   `rc models`). vitest: wizard state machine, keys form and dialog. Playwright: `e2e/setup.spec.ts`.
 - **Not verifiable without Windows.** The real `wsl.exe` quoting for these calls (same helper shape as
   the agent start).
+
+## Milestone 5 notes
+
+- **Shared backend.** `ruckcode_core::transcript_api` (new, camelCase JSON, same approach as
+  `setup_api`): `list(project, query?)`, `read(project, id, {offset, limit})` and
+  `search(project, text, limit)`. Transcripts are streamed line by line; one pass computes both the
+  summary and the requested page. Summaries are cached in-process by (mtime, size). Unreadable lines
+  (truncated tail, corruption, invalid UTF-8) are skipped and counted (`skippedLines`); record indexes
+  count readable records only, so paging stays consistent. Ids must match `[A-Za-z0-9_-]{1,128}`, the
+  resolved file must sit directly inside `<project>/.ruckcode/sessions/` (symlinks that leave it are
+  refused and unlisted), and tests cover `..`, separators, NUL and symlink escapes. Normalized
+  records are `{index, ts, type, ...camelCase fields}` with message content as `text`, `thinking`,
+  `redacted_thinking`, `tool_use` and `tool_result` blocks (thinking signatures are dropped).
+- **CLI.** `rc sessions --json [--query]`, `rc sessions show <id> --json [--offset --limit]`,
+  `rc sessions search <text> --json [--limit]` (single-line JSON, errors `rc: msg` and exit 1).
+  The plain `rc sessions` text listing still goes through the agent. Tests in `json_cli.rs`.
+- **Tauri.** `transcripts_list`, `transcripts_read`, `transcripts_search` (each `project`, `distro?`;
+  permissions `allow-transcripts-*`). Local calls run the core on a blocking thread; WSL runs
+  `rc sessions ... --json` through the M4 helper (`setup::via_wsl`). The helper's JSON parser now
+  accepts arrays (the last stdout line that is an object or array and parses). Rust tests include a
+  stand-in `wsl.exe` returning arrays.
+- **UI.** A Chat | Transcripts toggle in the top bar (`TranscriptsView`; the plan panel and composer
+  are hidden in that view). State lives in `TranscriptsController` (`state/transcripts.svelte.ts`):
+  sort/filter (client side), debounced server-side search with stale-answer protection, paged
+  detail (200 records; the end sentinel loads more on scroll, plus a Load more button), `jump(index)`
+  that loads through a record and focuses it, `loadAll` (used by Metrics and the markdown export).
+  `transcripts/timeline.ts` maps records to items (a `tool_call` and its `tool_result` become one card;
+  orphans from paging show "result not loaded"), `metrics.ts` computes per-request/turn values,
+  `list.ts` sorts and filters. Stored edits are unified diffs, so `DiffView` gained a `patch` prop
+  fed by `parseUnifiedDiff`. Charts are inline SVG (request duration bars with TTFT overlay,
+  cumulative input and output token lines) using theme variables, no animation, with `role="img"`
+  labels and per-request and per-turn tables as the accessible fallback. Rendering is paged rather
+  than virtualized. Resume connects first when needed, then opens the session with `session/load`.
+- **Mock mode.** `FakeTranscripts` (`host/fake-transcripts.ts`): five seeded sessions (every record
+  type; plan; explore; one with 1,996 records; one with a skipped line). `?transcriptdelay=<ms>`.
+  The fake agent can load/resume these ids, and `window.__ruckcodeTranscriptCalls` records
+  `{op, project, distro}` for WSL tests.
+- **Tests.** Rust: core unit tests (summaries, paging, search, corrupt lines, traversal), CLI JSON
+  tests, app crate (rc call lines, local commands, stand-in `wsl.exe`). vitest: timeline mapping for
+  every record type, markdown export, metrics, list helpers, controller, `TranscriptsView`.
+  Playwright: `e2e/transcripts.spec.ts`.
+- **Deviations.** Metrics need every record, so opening the Metrics tab loads the rest of a large
+  transcript. Search returns one hit per record (the first matching field). Unknown future record
+  types count as skipped lines rather than being shown.
 
 ## Open items for later
 
