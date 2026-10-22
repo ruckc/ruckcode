@@ -264,6 +264,17 @@ export class FakeAgent implements LineTransport {
           modes: this.modeState(s),
           configOptions: this.configOptions(s)
         });
+        this.update(sessionId, {
+          sessionUpdate: 'available_commands_update',
+          availableCommands: [
+            { name: 'clear', description: 'Clear the conversation history and start fresh' },
+            {
+              name: 'compact',
+              description: 'Summarize the conversation to free up context',
+              input: { hint: 'optional instructions for the summary' }
+            }
+          ]
+        });
         break;
       }
       case 'session/list': {
@@ -393,6 +404,17 @@ export class FakeAgent implements LineTransport {
       );
     }
     if (input.startsWith('mock:crash')) return this.crash();
+    if (/^\/(clear|compact)\b/.test(input.trim())) {
+      const clear = input.trim() === '/clear';
+      this.update(sid, {
+        sessionUpdate: 'notice',
+        severity: 'info',
+        title: clear
+          ? 'conversation cleared; the model starts fresh'
+          : 'conversation compacted (2 messages summarized)'
+      });
+      return this.respond(id, { stopReason: 'end_turn' });
+    }
     if (input.startsWith('mock:error')) return this.fail(id, -32000, 'mock agent failure');
 
     await this.text(sid, 'agent_thought_chunk', 'Looking at the request. ');

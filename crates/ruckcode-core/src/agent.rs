@@ -817,6 +817,11 @@ impl Agent {
             .unwrap()
             .insert(session_id.to_string(), cancel.clone());
         let mut s = session.lock().await;
+        if let Some(cmd) = Command::parse(&text) {
+            let r = self.run_command(&mut s, cmd, &client, &cancel).await;
+            self.cancels.lock().unwrap().remove(session_id);
+            return r;
+        }
         let mut stats = TurnStats {
             started: Instant::now(),
             model_requests: 0,
@@ -1444,7 +1449,7 @@ impl Agent {
         cancel: &CancellationToken,
         system: &str,
     ) {
-        let Ok((model, profile)) = self.model_for(s) else {
+        let Ok((_, profile)) = self.model_for(s) else {
             return;
         };
         let chars = serde_json::to_string(&s.messages).map_or(0, |j| j.len()) + system.len();
@@ -1454,15 +1459,35 @@ impl Agent {
         {
             return;
         }
-        let Ok(provider) = self.provider_for(s, &profile) else {
-            return;
+        if let Err(e) = self.compact(s, client, cancel, system, None).await {
+            client.send_event(
+                &s.id,
+                SessionEvent::Notice(format!("context compaction failed: {e:#}")),
+            );
+        }
+    }
+
+    /// Replace the history with a model-written summary (`/compact`, or automatically near the
+    /// context limit). `instructions` steer what the summary keeps. Returns how many messages
+    /// were replaced, or `None` when cancelled or the model returned nothing.
+    async fn compact(
+        &self,
+        s: &mut SessionState,
+        client: &Arc<dyn Client>,
+        cancel: &CancellationToken,
+        system: &str,
+        instructions: Option<&str>,
+    ) -> Result<Option<usize>> {
+        let (model, profile) = self.model_for(s)?;
+        let provider = self.provider_for(s, &profile)?;
+        let prompt = match instructions.map(str::trim).filter(|i| !i.is_empty()) {
+            Some(i) => format!("{SUMMARY_PROMPT}\n\nAdditional instructions from the user: {i}"),
+            None => SUMMARY_PROMPT.to_string(),
         };
         let mut messages = normalize_messages(&s.messages);
         match messages.last_mut() {
-            Some(m) if m.role == Role::User => m.content.push(ContentBlock::Text {
-                text: SUMMARY_PROMPT.into(),
-            }),
-            _ => messages.push(Message::user_text(SUMMARY_PROMPT)),
+            Some(m) if m.role == Role::User => m.content.push(ContentBlock::Text { text: prompt }),
+            _ => messages.push(Message::user_text(prompt)),
         }
         let request = Request {
             model,
@@ -1474,20 +1499,13 @@ impl Agent {
         };
         let (tx, _rx) = unbounded_channel();
         let response = tokio::select! {
-            _ = cancel.cancelled() => return,
-            r = provider.complete(request, tx) => r,
+            _ = cancel.cancelled() => return Ok(None),
+            r = provider.complete(request, tx) => r?,
         };
-        let summary = match response {
-            Ok(r) if !r.message.text().trim().is_empty() => r.message.text(),
-            Ok(_) => return,
-            Err(e) => {
-                client.send_event(
-                    &s.id,
-                    SessionEvent::Notice(format!("context compaction failed: {e:#}")),
-                );
-                return;
-            }
-        };
+        let summary = response.message.text();
+        if summary.trim().is_empty() {
+            return Ok(None);
+        }
         let replaced = s.messages.len();
         s.messages = vec![compaction_message(&summary)];
         s.rec(Record::Compaction {
@@ -1500,6 +1518,90 @@ impl Agent {
                 "conversation compacted ({replaced} messages summarized)"
             )),
         );
+        Ok(Some(replaced))
+    }
+
+    /// `/clear` and `/compact [instructions]`, handled by the agent instead of the model.
+    async fn run_command(
+        &self,
+        s: &mut SessionState,
+        cmd: Command,
+        client: &Arc<dyn Client>,
+        cancel: &CancellationToken,
+    ) -> Result<StopReason> {
+        match cmd {
+            Command::Clear => {
+                let cleared = s.messages.len();
+                s.messages.clear();
+                s.rec(Record::HistoryCleared {
+                    cleared_messages: cleared,
+                });
+                client.send_event(&s.id, SessionEvent::Plan(vec![]));
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Notice("conversation cleared; the model starts fresh".into()),
+                );
+            }
+            Command::Compact(instructions) => {
+                if s.messages.is_empty() {
+                    client.send_event(&s.id, SessionEvent::Notice("nothing to compact yet".into()));
+                } else {
+                    let system = system_prompt(&s.cwd, &s.modes, &s.mode).await;
+                    match self
+                        .compact(s, client, cancel, &system, instructions.as_deref())
+                        .await
+                    {
+                        Ok(Some(_)) => {}
+                        Ok(None) if cancel.is_cancelled() => return Ok(StopReason::Cancelled),
+                        Ok(None) => client.send_event(
+                            &s.id,
+                            SessionEvent::Notice("compaction produced no summary".into()),
+                        ),
+                        Err(e) => client.send_event(
+                            &s.id,
+                            SessionEvent::Notice(format!("compaction failed: {e:#}")),
+                        ),
+                    }
+                }
+            }
+        }
+        Ok(StopReason::EndTurn)
+    }
+}
+
+/// Slash commands the agent handles itself (advertised to clients as available commands).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Command {
+    Clear,
+    Compact(Option<String>),
+}
+
+impl Command {
+    /// Name, description and argument hint of every command.
+    pub const ALL: [(&'static str, &'static str, Option<&'static str>); 2] = [
+        (
+            "clear",
+            "Clear the conversation history and start fresh",
+            None,
+        ),
+        (
+            "compact",
+            "Summarize the conversation to free up context",
+            Some("optional instructions for the summary"),
+        ),
+    ];
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let rest = text.trim().strip_prefix('/')?;
+        let (name, arg) = match rest.split_once(char::is_whitespace) {
+            Some((n, a)) => (n, Some(a.trim().to_string()).filter(|a| !a.is_empty())),
+            None => (rest, None),
+        };
+        match name {
+            "clear" if arg.is_none() => Some(Self::Clear),
+            "compact" => Some(Self::Compact(arg)),
+            _ => None,
+        }
     }
 }
 

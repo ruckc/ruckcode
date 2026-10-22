@@ -77,6 +77,15 @@ export interface ChatModel {
   config: Record<string, string>;
   configOptions: ConfigOptionView[];
   title: string | null;
+  /** Slash commands the agent handles (`/clear`, `/compact`, ...). */
+  commands: CommandInfo[];
+}
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  /** Hint for the free-text argument, when the command takes one. */
+  hint: string | null;
 }
 
 export function emptyModel(): ChatModel {
@@ -88,7 +97,8 @@ export function emptyModel(): ChatModel {
     usage: null,
     config: {},
     configOptions: [],
-    title: null
+    title: null,
+    commands: []
   };
 }
 
@@ -219,6 +229,13 @@ export function applyUpdate(m: ChatModel, u: SessionUpdate): void {
       break;
     case 'config_option_update':
       setConfigOptions(m, u.configOptions);
+      break;
+    case 'available_commands_update':
+      m.commands = (u.availableCommands ?? []).map((c) => ({
+        name: c.name,
+        description: c.description,
+        hint: c.input && 'hint' in c.input ? c.input.hint : null
+      }));
       break;
     case 'session_info_update':
       if (typeof u.title === 'string') m.title = u.title;

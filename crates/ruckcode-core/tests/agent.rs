@@ -692,6 +692,90 @@ async fn compaction_replaces_history() {
     )));
 }
 
+#[tokio::test]
+async fn slash_compact_summarizes_on_demand_with_instructions() {
+    let env = Env::new(None, None);
+    env.mock.push(Message::assistant_text("r1"));
+    env.mock.push(Message::assistant_text("THE SUMMARY"));
+    env.mock.push(Message::assistant_text("r2"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    agent
+        .prompt(&info.id, "p1".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    agent
+        .prompt(
+            &info.id,
+            "/compact keep the API notes".into(),
+            TestClient::with([]),
+        )
+        .await
+        .unwrap();
+    agent
+        .prompt(&info.id, "p2".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    let reqs = env.mock.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    let ask = reqs[1].messages.last().unwrap().text();
+    assert!(ask.contains("keep the API notes"), "{ask}");
+    assert!(reqs[1].tools.is_empty());
+    let m = &reqs[2].messages;
+    assert_eq!(m.len(), 1);
+    assert!(m[0].text().contains("THE SUMMARY") && m[0].text().contains("p2"));
+    assert!(!m[0].text().contains("p1"));
+}
+
+#[tokio::test]
+async fn slash_clear_forgets_history_also_after_reload() {
+    let env = Env::new(None, None);
+    env.mock.push(Message::assistant_text("r1"));
+    env.mock.push(Message::assistant_text("r2"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    agent
+        .prompt(&info.id, "p1".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    agent
+        .prompt(&info.id, "/clear".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    agent
+        .prompt(&info.id, "p2".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    let reqs = env.mock.requests.lock().unwrap();
+    // `/clear` itself never reaches the model.
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[1].messages.len(), 1);
+    assert_eq!(reqs[1].messages[0].text(), "p2");
+    drop(reqs);
+    let loaded = TranscriptReader::load(&ruckcode_core::transcript::session_path(
+        &env.cwd(),
+        &info.id,
+    ))
+    .unwrap();
+    assert_eq!(loaded.messages.len(), 2);
+    assert_eq!(loaded.messages[0].text(), "p2");
+}
+
+#[test]
+fn slash_commands_parse() {
+    use ruckcode_core::Command;
+    assert_eq!(Command::parse(" /clear "), Some(Command::Clear));
+    assert_eq!(Command::parse("/compact"), Some(Command::Compact(None)));
+    assert_eq!(
+        Command::parse("/compact  keep tests"),
+        Some(Command::Compact(Some("keep tests".into())))
+    );
+    // Not commands: prose, unknown names, /clear with text.
+    assert_eq!(Command::parse("please /clear this"), None);
+    assert_eq!(Command::parse("/clearly"), None);
+    assert_eq!(Command::parse("/clear the cache"), None);
+}
+
 /// First call sleeps (so tests can interleave), the rest are served by a mock.
 struct DelayedFirst {
     delay_ms: u64,

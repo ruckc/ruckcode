@@ -248,7 +248,7 @@ fn strip_additions(mut a: Value) -> Value {
         evs.retain(|e| {
             !matches!(
                 e["params"]["update"]["sessionUpdate"].as_str(),
-                Some("usage_update" | "config_option_update")
+                Some("usage_update" | "config_option_update" | "available_commands_update")
             )
         });
     }

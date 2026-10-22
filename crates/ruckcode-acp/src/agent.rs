@@ -72,6 +72,31 @@ impl Shared {
         }
     }
 
+    /// Tell the client which slash commands the agent handles (`/clear`, `/compact`). Sent just
+    /// after the session/new|load|resume response so the client already knows the session.
+    fn advertise_commands(self: &Arc<Self>, session_id: String) {
+        let shared = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let commands = ruckcode_core::Command::ALL
+                .iter()
+                .map(|(name, desc, hint)| {
+                    let c = AvailableCommand::new(*name, *desc);
+                    match hint {
+                        Some(h) => c.input(AvailableCommandInput::Unstructured(
+                            UnstructuredCommandInput::new(*h),
+                        )),
+                        None => c,
+                    }
+                })
+                .collect();
+            shared.update(
+                &session_id,
+                SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
+            );
+        });
+    }
+
     async fn select(
         &self,
         session_id: &str,
@@ -541,6 +566,7 @@ impl Handler for AcpAgent {
                     .agent()
                     .new_session_with(req.cwd, None, acp_mcp_servers(&mcp))
                     .await?;
+                self.shared.advertise_commands(info.id.to_string());
                 let mut resp = NewSessionResponse::new(SessionId::new(info.id.as_str()))
                     .modes(mode_state(&info));
                 if let Some(o) = self.config_options(&info) {
@@ -560,6 +586,7 @@ impl Handler for AcpAgent {
                         acp_mcp_servers(&mcp),
                     )
                     .await?;
+                self.shared.advertise_commands(info.id.to_string());
                 let mut resp = LoadSessionResponse::new().modes(mode_state(&info));
                 if let Some(o) = self.config_options(&info) {
                     resp = resp.config_options(o);
@@ -573,6 +600,7 @@ impl Handler for AcpAgent {
                     .agent()
                     .resume_session_with(&req.session_id.0, req.cwd, acp_mcp_servers(&mcp))
                     .await?;
+                self.shared.advertise_commands(info.id.to_string());
                 let mut resp = ResumeSessionResponse::new().modes(mode_state(&info));
                 if let Some(o) = self.config_options(&info) {
                     resp = resp.config_options(o);

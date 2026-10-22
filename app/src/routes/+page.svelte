@@ -358,6 +358,7 @@
         queue={active?.queue ?? []}
         history={chat.history}
         {placeholder}
+        commands={active?.model.commands ?? []}
         onsend={(t) => chat.send(t)}
         oncancel={() => chat.cancel()}
         onunqueue={(i) => chat.unqueue(i)}

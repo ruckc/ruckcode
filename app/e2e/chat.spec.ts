@@ -184,3 +184,22 @@ test('recent projects are remembered across reloads', async ({ page }) => {
   await expect(page.getByRole('button', { name: /project/ }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent projects' })).toBeVisible();
 });
+
+test('slash commands: suggestions, /compact and /clear', async ({ page }) => {
+  await openApp(page);
+  await send(page, 'hello there');
+  await expect(page.getByTestId('assistant-msg')).toContainText('You said: hello there.');
+  const prompt = page.getByRole('textbox', { name: 'Prompt' }).first();
+  await prompt.fill('/');
+  const list = page.getByRole('listbox', { name: 'Commands' });
+  await expect(list.getByRole('option')).toHaveCount(2);
+  await prompt.fill('/co');
+  await expect(list.getByRole('option')).toHaveCount(1);
+  await prompt.press('Tab');
+  await expect(prompt).toHaveValue('/compact ');
+  await prompt.press('Enter');
+  await expect(page.getByText('conversation compacted')).toBeVisible();
+  await send(page, '/clear');
+  await expect(page.getByTestId('user-msg')).toHaveCount(0);
+  await expect(page.getByText('conversation cleared')).toBeVisible();
+});

@@ -73,6 +73,8 @@ export class ChatController {
   history = $state.raw<string[]>([]);
 
   private client: AcpClient | null = null;
+  /** Sessions closed here: late updates for them (e.g. available commands) are dropped. */
+  private closed = new Set<string>();
   private opts: ConnectOptions | null = null;
   private canLoad = true;
 
@@ -230,6 +232,7 @@ export class ChatController {
   // ---- sessions ---------------------------------------------------------------------
 
   private onUpdate(n: SessionNotification): void {
+    if (this.closed.has(n.sessionId)) return;
     const v = this.sessions[n.sessionId] ?? (this.sessions[n.sessionId] = newView(n.sessionId));
     applyUpdate(v.model, n.update);
   }
@@ -281,6 +284,7 @@ export class ChatController {
   /** Show a session: switch to it if open, else load it from storage (replaying history). */
   async openSession(id: string): Promise<void> {
     if (!this.client) return;
+    this.closed.delete(id);
     if (this.sessions[id]) {
       this.activeId = id;
       return;
@@ -310,6 +314,7 @@ export class ChatController {
     const v = this.sessions[id];
     if (!v) return;
     this.cancelDialogs(id);
+    this.closed.add(id);
     delete this.sessions[id];
     if (this.activeId === id) this.activeId = Object.keys(this.sessions).at(-1) ?? null;
     try {
@@ -341,7 +346,13 @@ export class ChatController {
   private async runTurn(v: SessionView, text: string): Promise<void> {
     const client = this.client;
     if (!client) return;
-    v.model.items.push({ kind: 'user', text });
+    if (/^\/clear\s*$/.test(text.trim())) {
+      // The agent forgets the history; so does the view.
+      v.model.items = [];
+      v.model.plan = [];
+    } else {
+      v.model.items.push({ kind: 'user', text });
+    }
     v.running = true;
     try {
       const res = await client.prompt(v.id, text);

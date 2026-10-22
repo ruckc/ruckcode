@@ -1,10 +1,13 @@
 <script lang="ts">
+  import type { CommandInfo } from '../state/reducer';
+
   let {
     disabled,
     running,
     queue,
     history,
     placeholder,
+    commands = [],
     onsend,
     oncancel,
     onunqueue
@@ -14,6 +17,8 @@
     queue: string[];
     history: string[];
     placeholder: string;
+    /** Slash commands offered while typing `/...`. */
+    commands?: CommandInfo[];
     onsend: (text: string) => void;
     oncancel: () => void;
     onunqueue: (index: number) => void;
@@ -24,6 +29,26 @@
   /** Position in `history` while recalling (history.length = not recalling). */
   let cursor = $state(-1);
   let draft = '';
+
+  /** Commands matching a `/name` being typed (before any argument). */
+  const matches = $derived.by(() => {
+    const m = /^\/(\S*)$/.exec(text);
+    if (!m || cursor !== -1) return [];
+    return commands.filter((c) => c.name.startsWith(m[1]));
+  });
+  let pick = $state(0);
+  $effect(() => {
+    void matches;
+    pick = 0;
+  });
+
+  function complete(c: CommandInfo) {
+    text = `/${c.name}${c.hint ? ' ' : ''}`;
+    queueMicrotask(() => {
+      input?.focus();
+      input?.setSelectionRange(text.length, text.length);
+    });
+  }
 
   export function focus() {
     input?.focus();
@@ -58,6 +83,25 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    if (matches.length) {
+      const c = matches[pick];
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const d = e.key === 'ArrowDown' ? 1 : -1;
+        pick = (pick + d + matches.length) % matches.length;
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && text !== `/${c.name}`)) {
+        e.preventDefault();
+        complete(c);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        text = '';
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -99,6 +143,24 @@
       {/each}
     </ol>
   {/if}
+  {#if matches.length}
+    <ul class="cmds" role="listbox" aria-label="Commands">
+      {#each matches as c, i (c.name)}
+        <li role="option" aria-selected={i === pick}>
+          <button
+            type="button"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => complete(c)}
+          >
+            <code>/{c.name}</code>
+            {#if c.hint}<span class="muted">[{c.hint}]</span>{/if}
+            <span class="muted desc">{c.description}</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
   <div class="row">
     <textarea
       bind:this={input}
@@ -127,10 +189,37 @@
       </button>
     </div>
   </div>
-  <p class="hint muted">Enter to send, Shift+Enter for a new line, Up/Down for history.</p>
+  <p class="hint muted">
+    Enter to send, Shift+Enter for a new line, Up/Down for history, / for commands.
+  </p>
 </form>
 
 <style>
+  .cmds {
+    list-style: none;
+    margin: 0 0 6px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+  .cmds button {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    width: 100%;
+    border: 0;
+    background: none;
+    text-align: left;
+    min-height: 0;
+    padding: 4px 8px;
+  }
+  .cmds li[aria-selected='true'] button {
+    background: var(--code-bg);
+  }
+  .desc {
+    margin-left: auto;
+  }
   .composer {
     padding: 8px 12px 6px;
     border-top: 1px solid var(--border);

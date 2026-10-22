@@ -124,6 +124,10 @@ pub enum Record {
         summary: String,
         replaced_messages: usize,
     },
+    /// `/clear`: the history before this record is not sent to the model again.
+    HistoryCleared {
+        cleared_messages: usize,
+    },
     TurnEnd {
         stop_reason: String,
         duration_ms: u64,
@@ -287,6 +291,7 @@ impl TranscriptReader {
                     messages.push(message.clone())
                 }
                 Record::Compaction { summary, .. } => messages = vec![compaction_message(summary)],
+                Record::HistoryCleared { .. } => messages.clear(),
                 Record::ModeChange { to, .. } => mode = to.clone(),
                 Record::ModelChange { to, .. } => model = to.clone(),
                 _ => {}

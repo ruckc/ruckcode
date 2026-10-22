@@ -133,7 +133,7 @@ pub struct App {
     pub update_available: Option<String>,
 }
 
-pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
+pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  clear the conversation (the model starts fresh)\n/compact [instructions]  summarize the conversation to free up context\n/new  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
 
 impl App {
     pub fn new(model_label: impl Into<String>) -> Self {
@@ -647,7 +647,22 @@ impl App {
                     return Action::SetModel(Some(arg.to_string()));
                 }
             }
-            "clear" | "new" => return Action::NewSession,
+            "new" => return Action::NewSession,
+            // Handled by the agent (history cleared / summarized in place).
+            "clear" | "compact" => {
+                if self.running {
+                    self.notice(format!("/{name} runs when the agent is done; try again then"));
+                    return Action::None;
+                }
+                if name == "clear" {
+                    self.blocks.clear();
+                    self.tool_index.clear();
+                    self.plan.clear();
+                }
+                let text = format!("/{cmd}").trim().to_string();
+                self.running = true;
+                return Action::Submit(text);
+            }
             "resume" | "sessions" => return Action::ListSessions,
             "init" => self.notice(
                 "Run `rc init` in your shell to generate .ruckcode/modes.toml (add --minimal for plan/build/verify).",
@@ -1236,8 +1251,21 @@ mod tests {
             a.blocks.iter().rev().nth(1),
             Some(Block::Error(_))
         ));
-        typ(&mut a, "/clear");
+        typ(&mut a, "/new");
         assert_eq!(a.handle_key(key(KeyCode::Enter)), Action::NewSession);
+        typ(&mut a, "/compact keep the API notes");
+        assert_eq!(
+            a.handle_key(key(KeyCode::Enter)),
+            Action::Submit("/compact keep the API notes".into())
+        );
+        a.end_turn(None, Some("end_turn"));
+        typ(&mut a, "/clear");
+        assert_eq!(
+            a.handle_key(key(KeyCode::Enter)),
+            Action::Submit("/clear".into())
+        );
+        assert!(a.blocks.is_empty());
+        a.end_turn(None, Some("end_turn"));
         typ(&mut a, "/resume");
         assert_eq!(a.handle_key(key(KeyCode::Enter)), Action::ListSessions);
         typ(&mut a, "/quit");

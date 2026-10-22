@@ -16,8 +16,8 @@ pub mod transcript_api;
 mod prompt;
 
 pub use agent::{
-    Agent, AgentOptions, Client, ModeInfo, PermissionDecision, PermissionRequest, SessionEvent,
-    SessionInfo, StopReason, ToolStatus,
+    Agent, AgentOptions, Client, Command, ModeInfo, PermissionDecision, PermissionRequest,
+    SessionEvent, SessionInfo, StopReason, ToolStatus,
 };
 pub use config::{Config, Profile, ProviderKind};
 pub use modes::{ModeDef, ModeSet};
