@@ -484,6 +484,7 @@ release; the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sh
 | OS | File | Notes |
 |----|------|-------|
 | Windows 10/11 x64 | `...-x86_64-pc-windows-msvc.msi` | per-user by default, no administrator needed (see below); includes `rc` for WSL2 |
+| Windows 10/11 x64 (no installer) | `...-x86_64-pc-windows-msvc-portable.zip` | portable: unzip and run `ruckcode.exe`; for machines where policy blocks installers (see below) |
 | macOS, Linux | not available yet | use `rc` (`curl -fsSL https://ruckc.github.io/ruckcode/install.sh \| sh`) |
 
 Release builds are **unsigned** until signing secrets are configured: Windows SmartScreen shows
@@ -495,6 +496,14 @@ default** (into `%LocalAppData%\Programs\ruckcode`) and never asks for administr
 install or for its updates. To install for all users (`C:\Program Files\ruckcode`, needs an
 administrator) run `msiexec /i ruckcode-app-<version>-x86_64-pc-windows-msvc.msi ALLUSERS=1`. Updates
 keep the scope and location of the existing install and are prompt-free for per-user installs.
+
+**Portable zip (no installer).** If policy blocks installers, download
+`ruckcode-app-<version>-x86_64-pc-windows-msvc-portable.zip`, unzip it anywhere you can write (for
+example `%LocalAppData%\ruckcode`) and run `ruckcode-app-<version>\ruckcode.exe`. It needs no
+administrator rights and writes nothing outside your user profile. It relies on the system
+**WebView2 runtime** (preinstalled on Windows 10/11), is not code-signed (SmartScreen may show
+"unknown publisher" on first launch: More info, then Run anyway) and does not update itself:
+download a newer zip and replace the folder. It includes the same bundled `rc` for WSL2.
 
 On Windows, install the app on Windows itself (not inside WSL2) and choose the WSL2 host to run the
 agent in a distribution; the MSI carries a matching `rc` and the app installs it there for you.
@@ -682,8 +691,8 @@ GitHub Release `vX.Y.Z` with:
 
 - `rc-<version>-<target>.tar.gz` (`.zip` on Windows) containing `rc`, `LICENSE`, `README.md`
 - per-archive `.sha256` files and a combined `SHA256SUMS`
-- desktop app bundles: `ruckcode-app-<version>-<target>` with `.dmg`, `.app.tar.gz` (macOS), `.msi` (Windows), `.AppImage`, `.deb` (Linux x86_64)
-- `.sig` minisign signatures for the `rc` archives and the updater bundles (`.app.tar.gz`, `.msi`, `.AppImage`), when updater signing is configured
+- desktop app bundles: `ruckcode-app-<version>-<target>` with `.dmg`, `.app.tar.gz` (macOS), `.msi` and `-portable.zip` (Windows), `.AppImage`, `.deb` (Linux x86_64)
+- `.sig` minisign signatures for the `rc` archives and the updater bundles (`.app.tar.gz`, `.msi`, `-portable.zip`, `.AppImage`), when updater signing is configured
 - `CHANGELOG.md` and release notes generated from the commits
 
 After the release is published, a `release-pages` job deploys the latest version to GitHub Pages

@@ -64,6 +64,19 @@ pub fn pubkey(app: &AppHandle) -> Option<String> {
     })
 }
 
+const PORTABLE_REASON: &str = "This is the portable build, which cannot update itself. \
+     Download the new zip from the download page and replace this folder.";
+
+/// The portable zip ships a `portable.txt` next to the exe. Its exe is the same binary the MSI
+/// is built from (so it reports the MSI bundle type); the marker keeps it from running the MSI
+/// updater, which would install a second copy.
+fn is_portable() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("portable.txt")))
+        .is_some_and(|m| m.is_file())
+}
+
 /// Why this installation cannot update itself, or `None` when it can. The updater swaps the app
 /// in place, which works for AppImage, MSI and macOS app bundles (the manifest has a
 /// per-bundle key for each). A `.deb`/`.rpm` install, an NSIS install (no longer shipped: the
@@ -159,7 +172,11 @@ pub async fn update_check(
         .map_err(err)?;
     match updater.check().await {
         Ok(Some(update)) => {
-            let manual = manual_reason(tauri::utils::platform::bundle_type().as_ref());
+            let manual = if is_portable() {
+                Some(PORTABLE_REASON)
+            } else {
+                manual_reason(tauri::utils::platform::bundle_type().as_ref())
+            };
             let result = CheckResult::Available {
                 version: update.version.clone(),
                 current: update.current_version.clone(),

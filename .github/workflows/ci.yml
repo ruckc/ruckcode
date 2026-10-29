@@ -398,6 +398,21 @@ jobs:
             ~/.cargo/git/db
             crates/ruckcode-app/target
           key: cargo-app-windows-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('crates/ruckcode-app/Cargo.lock', '.github/workflows/ci.yml') }}
+      # Prove the portable zip packaging works on PRs (the release job does the same on main).
+      - name: Build the app exe (no installer)
+        run: pnpm -C app tauri build --ci --no-bundle
+      - name: Package the portable zip
+        run: |
+          set -euo pipefail
+          python3 scripts/package_portable.py --exe crates/ruckcode-app/target/release/ruckcode.exe \
+            --version 0.0.0-ci --target x86_64-pc-windows-msvc --out portable
+          ls -l portable
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: portable-zip
+          path: portable/*.zip
+          if-no-files-found: error
+          retention-days: 7
 
   # ---------------------------------------------------------------------------------------
   # Release pipeline (push to main only). Everything up to release-site runs in PARALLEL with
@@ -804,7 +819,16 @@ jobs:
               fi ;;
             *windows*)
               # The MSI is the only Windows installer and also the updater bundle.
-              with_sig "$(ls "$bundle"/msi/*.msi)" "dist/${prefix}.msi" ;;
+              with_sig "$(ls "$bundle"/msi/*.msi)" "dist/${prefix}.msi"
+              # Portable zip for machines that block installers: the same exe plus the bundled
+              # rc, checksummed below with everything else and signed like the MSI.
+              python3 scripts/package_portable.py --exe "crates/ruckcode-app/target/${TARGET}/release/ruckcode.exe" \
+                --version "$VERSION" --target "$TARGET" --out dist \
+                --resource "crates/ruckcode-app/wsl-bundle/rc-linux-x86_64=wsl/rc"
+              if [ "$signed" = true ]; then
+                pnpm -C app tauri signer sign --app-version "$VERSION" "$PWD/dist/${prefix}-portable.zip" >/dev/null
+                test -s "dist/${prefix}-portable.zip.sig"
+              fi ;;
             *linux*)
               with_sig "$(ls "$bundle"/appimage/*.AppImage)" "dist/${prefix}.AppImage"
               cp "$bundle"/deb/*.deb "dist/${prefix}.deb" ;;
@@ -833,7 +857,10 @@ jobs:
               # cross-compiled on Apple Silicon, so it is never executed here.
               lipo -archs "$RUNNER_TEMP"/ruckcode.app/Contents/MacOS/* ;;
             *windows*)
-              test -s "${prefix}.msi" ;;
+              test -s "${prefix}.msi"
+              test -s "${prefix}-portable.zip"
+              python3 -c "import sys,zipfile; n=zipfile.ZipFile(sys.argv[1]).namelist(); print(n); r='ruckcode-app-'+sys.argv[2]+'/'; assert all(x in n for x in (r+'ruckcode.exe', r+'portable.txt', r+'wsl/rc')), n" \
+                "${prefix}-portable.zip" "$VERSION" ;;
           esac
       # The MSI defaults to a per-user install (no UAC) and offers a per-machine one
       # (ALLUSERS=1). The runner is an administrator, so "no elevation needed" cannot be observed

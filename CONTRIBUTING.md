@@ -45,8 +45,11 @@ the matrix; re-enable them there, `build_site.py` derives the updater platforms 
 from the artifacts present). The Windows leg `needs` `release-rc`, downloads
 `dist-x86_64-unknown-linux-musl`, and merges `{"bundle":{"resources":{"wsl-bundle/rc-linux-x86_64":"wsl/rc"}}}`
 via `--config` so the MSI carries the Linux `rc` that the app copies into WSL2 distros.
-Artifacts: `ruckcode-app-<version>-x86_64-pc-windows-msvc.msi`, each with
-a `.sha256` (plus a `.sig` for the updater bundles when signing is configured). `release-publish`
+Artifacts: `ruckcode-app-<version>-x86_64-pc-windows-msvc.msi` and
+`...-portable.zip` (the same exe + bundled `rc`, packaged by `scripts/package_portable.py`; a
+`portable.txt` marker disables self-update; the `app-windows` PR job builds it as the `portable-zip`
+workflow artifact), each with a `.sha256` (plus a `.sig` when signing is configured; the zip is
+signed with `tauri signer sign` like the rc archives and is not in the updater manifest). `release-publish`
 needs all builds, so any failed bundle blocks the release. `release.yml` is only the manual
 "redeploy Pages" workflow.
 
