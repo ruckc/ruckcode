@@ -4,6 +4,7 @@
   import ChatView from '../lib/components/ChatView.svelte';
   import Composer from '../lib/components/Composer.svelte';
   import PermissionDialog from '../lib/components/PermissionDialog.svelte';
+  import ResumeDialog from '../lib/components/ResumeDialog.svelte';
   import PlanPanel from '../lib/components/PlanPanel.svelte';
   import Sidebar from '../lib/components/Sidebar.svelte';
   import SessionsDialog from '../lib/components/SessionsDialog.svelte';
@@ -405,6 +406,15 @@
   <SessionsDialog onclose={() => (sessionsOpen = false)}>
     {@render picker()}
   </SessionsDialog>
+{/if}
+
+{#if chat.connected && chat.unfinished.length && !chat.permission && !chat.question}
+  <ResumeDialog
+    sessions={chat.unfinished}
+    onresume={(id, compact) => void chat.resumeUnfinished(id, compact)}
+    ondismiss={(id) => void chat.dismissUnfinished(id)}
+    onclose={() => chat.closeUnfinishedOffer()}
+  />
 {/if}
 
 {#if settings}

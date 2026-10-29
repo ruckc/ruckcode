@@ -218,5 +218,10 @@ export const tauriTranscripts: TranscriptsApi = {
       distro: t.distro ?? null,
       text,
       limit: limit ?? null
-    })
+    }),
+  unfinished: (t) =>
+    invoke('transcripts_unfinished', { project: t.project, distro: t.distro ?? null }),
+  dismiss: async (t, id) => {
+    await invoke('transcripts_dismiss', { project: t.project, distro: t.distro ?? null, id });
+  }
 };

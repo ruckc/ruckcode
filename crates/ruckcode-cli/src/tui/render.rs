@@ -426,6 +426,7 @@ fn render_modal(m: &Modal, f: &mut Frame, area: Rect) {
             ask_lines(a),
         ),
         Modal::Picker(p) => (" Resume a session ".to_string(), picker_lines(p)),
+        Modal::Resume(p) => (" Unfinished sessions ".to_string(), resume_lines(p)),
         Modal::Models(p) => (" Model for this session ".to_string(), model_lines(p)),
     };
     let width = (area.width * 80 / 100).max(30).min(area.width);
@@ -580,6 +581,56 @@ fn model_lines(p: &super::app::ModelPickerModal) -> Vec<Line<'static>> {
     l.push(Line::default());
     l.push(Line::from(Span::styled(
         "↑/↓ select · enter switch · esc cancel",
+        dim(),
+    )));
+    l
+}
+
+fn resume_lines(p: &super::app::ResumeModal) -> Vec<Line<'static>> {
+    let mut l = vec![
+        Line::from("These sessions were left unfinished. Pick up where one stopped?"),
+        Line::default(),
+    ];
+    for (i, s) in p.sessions.iter().enumerate() {
+        let sel = i == p.selected;
+        let why = match (s.interrupted, s.open_tasks.len()) {
+            (true, 0) => "interrupted".to_string(),
+            (true, n) => format!("interrupted, {n} open"),
+            (false, n) => format!("{n} open"),
+        };
+        l.push(Line::from(Span::styled(
+            format!(
+                "{} {}  {:<22} {}",
+                if sel { "❯" } else { " " },
+                s.updated_at.get(..16).unwrap_or(&s.updated_at),
+                why,
+                crate::one_line(&s.first_prompt, 40)
+            ),
+            sel_style(sel),
+        )));
+        if sel {
+            if let Some(cur) = &s.in_progress {
+                l.push(Line::from(Span::styled(
+                    format!("    in progress: {}", crate::one_line(cur, 70)),
+                    dim(),
+                )));
+            }
+            for t in s
+                .open_tasks
+                .iter()
+                .filter(|t| Some(*t) != s.in_progress.as_ref())
+                .take(3)
+            {
+                l.push(Line::from(Span::styled(
+                    format!("    todo: {}", crate::one_line(t, 70)),
+                    dim(),
+                )));
+            }
+        }
+    }
+    l.push(Line::default());
+    l.push(Line::from(Span::styled(
+        "enter resume · c compact and resume · d dismiss · esc/n start fresh",
         dim(),
     )));
     l

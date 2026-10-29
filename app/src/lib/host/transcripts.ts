@@ -142,6 +142,20 @@ export interface SearchHit {
   snippet: string;
 }
 
+/** A session that was interrupted or left tasks open (`transcript_api::UnfinishedSession`). */
+export interface UnfinishedSession {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  firstPrompt: string;
+  mode: string;
+  /** The last turn never completed (killed, crashed, provider error). */
+  interrupted: boolean;
+  /** Plan items not yet completed. */
+  openTasks: string[];
+  inProgress: string | null;
+}
+
 /** The project a request is about: a local path, or a Linux path inside `distro`. */
 export interface TranscriptTarget {
   project: string;
@@ -156,4 +170,8 @@ export interface TranscriptsApi {
     opts?: { offset?: number; limit?: number }
   ): Promise<ReadResult>;
   search(t: TranscriptTarget, text: string, limit?: number): Promise<SearchHit[]>;
+  /** Recent sessions worth resuming, newest first. */
+  unfinished(t: TranscriptTarget): Promise<UnfinishedSession[]>;
+  /** Stop offering a session for resumption. */
+  dismiss(t: TranscriptTarget, id: string): Promise<void>;
 }

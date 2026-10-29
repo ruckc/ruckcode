@@ -311,6 +311,97 @@ fn contains_ci(hay: &str, needle: &str) -> bool {
     fold(hay).contains(&fold(needle))
 }
 
+/// Sessions untouched for longer than this are never offered for resumption.
+pub const UNFINISHED_MAX_AGE_DAYS: u64 = 14;
+/// Most unfinished sessions offered at once.
+pub const UNFINISHED_LIMIT: usize = 5;
+
+/// A session that was interrupted or left tasks open, offered for resumption on startup.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnfinishedSession {
+    pub id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub first_prompt: String,
+    pub mode: String,
+    /// The last turn never completed.
+    pub interrupted: bool,
+    /// Plan items not yet completed.
+    pub open_tasks: Vec<String>,
+    /// The plan item being worked on.
+    pub in_progress: Option<String>,
+}
+
+/// The project's most recent unfinished sessions, newest first (at most `limit`, default
+/// [`UNFINISHED_LIMIT`]). Only transcripts modified in the last [`UNFINISHED_MAX_AGE_DAYS`] days
+/// are looked at, and only sessions with some real user prompt qualify.
+pub fn find_unfinished(project: &Path, limit: Option<usize>) -> Vec<UnfinishedSession> {
+    let limit = limit.unwrap_or(UNFINISHED_LIMIT);
+    let max_age = std::time::Duration::from_secs(UNFINISHED_MAX_AGE_DAYS * 86_400);
+    let mut out = vec![];
+    for id in session_ids(project) {
+        if out.len() >= limit {
+            break;
+        }
+        let Ok(path) = resolve(project, &id) else {
+            continue;
+        };
+        let recent = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_none_or(|age| age <= max_age);
+        if !recent {
+            continue;
+        }
+        let mut records = vec![];
+        if for_each_record(&path, |_, r| records.push(r)).is_err() {
+            continue;
+        }
+        let Some(Record::SessionStart(meta)) = records.first().map(|r| &r.record) else {
+            continue;
+        };
+        let first_prompt = records.iter().find_map(|r| match &r.record {
+            Record::UserMessage {
+                message,
+                source: UserSource::User,
+            } => Some(message.text()),
+            _ => None,
+        });
+        let Some(first_prompt) = first_prompt else {
+            continue;
+        };
+        let u = crate::transcript::assess_unfinished(&records);
+        if !u.is_unfinished() {
+            continue;
+        }
+        let mut mode = meta.mode.clone();
+        for r in &records {
+            if let Record::ModeChange { to, .. } = &r.record {
+                mode = to.clone();
+            }
+        }
+        out.push(UnfinishedSession {
+            id,
+            created_at: meta.created_at.clone(),
+            updated_at: records.last().map(|r| r.ts.clone()).unwrap_or_default(),
+            first_prompt: first_prompt.chars().take(FIRST_PROMPT_CHARS).collect(),
+            mode,
+            interrupted: u.interrupted,
+            open_tasks: u.open_tasks,
+            in_progress: u.in_progress,
+        });
+    }
+    out
+}
+
+/// Stop offering `id` for resumption (appends `session_dismissed`).
+pub fn dismiss(project: &Path, id: &str) -> Result<()> {
+    let path = resolve(project, id)?;
+    crate::transcript::TranscriptWriter::open(&path)?.append(&Record::SessionDismissed {})
+}
+
 /// Sessions of the project, most recently updated first. `query` keeps those whose id, first
 /// prompt, mode or model contains it (case-insensitive).
 pub fn list(project: &Path, query: Option<&str>) -> Result<Vec<SessionItem>> {
@@ -518,6 +609,7 @@ pub fn type_name(r: &Record) -> &'static str {
         Record::HistoryCleared { .. } => "history_cleared",
         Record::TurnEnd { .. } => "turn_end",
         Record::SessionResumed {} => "session_resumed",
+        Record::SessionDismissed {} => "session_dismissed",
         Record::McpServers { .. } => "mcp_servers",
     }
 }
@@ -639,7 +731,7 @@ pub fn normalize(index: usize, s: &Stamped) -> Value {
             "stopReason": stop_reason, "durationMs": duration_ms, "modelRequests": model_requests,
             "toolCalls": tool_calls, "inputTokens": input_tokens, "outputTokens": output_tokens,
         }),
-        Record::SessionResumed {} => json!({}),
+        Record::SessionResumed {} | Record::SessionDismissed {} => json!({}),
         Record::McpServers { servers } => json!({
             "servers": servers.iter().map(|s| json!({
                 "name": s.name, "ok": s.ok, "tools": s.tools, "error": s.error,

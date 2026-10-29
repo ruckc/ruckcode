@@ -7,7 +7,8 @@ import type {
   TranscriptMeta,
   TranscriptRecord,
   TranscriptsApi,
-  TranscriptTarget
+  TranscriptTarget,
+  UnfinishedSession
 } from './transcripts';
 
 /** A seeded transcript: its readable records and how many lines were unreadable. */
@@ -813,6 +814,33 @@ export class FakeTranscripts implements TranscriptsApi {
       limit,
       skippedLines: s.skippedLines
     };
+  }
+
+  /** Dismissed ids; `?unfinished=1` (mock mode) seeds one interrupted session. */
+  private dismissed = new Set<string>();
+
+  async unfinished(t: TranscriptTarget): Promise<UnfinishedSession[]> {
+    await this.tick('unfinished', t);
+    const on =
+      typeof location !== 'undefined' && new URLSearchParams(location.search).has('unfinished');
+    if (!on) return [];
+    return [
+      {
+        id: 'old-1',
+        createdAt: '2026-03-01T10:00:00.000Z',
+        updatedAt: '2026-03-01T10:20:00.000Z',
+        firstPrompt: 'Fix the login bug',
+        mode: 'implement',
+        interrupted: true,
+        openTasks: ['Add a regression test', 'Update the changelog'],
+        inProgress: 'Add a regression test'
+      }
+    ].filter((u) => !this.dismissed.has(u.id));
+  }
+
+  async dismiss(t: TranscriptTarget, id: string): Promise<void> {
+    await this.tick('dismiss', t);
+    this.dismissed.add(id);
   }
 
   async search(t: TranscriptTarget, text: string, limit = 50): Promise<SearchHit[]> {

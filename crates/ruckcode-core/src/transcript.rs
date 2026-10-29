@@ -137,6 +137,9 @@ pub enum Record {
         output_tokens: u64,
     },
     SessionResumed {},
+    /// The user chose not to resume this session; it stops being offered as unfinished until new
+    /// work is recorded.
+    SessionDismissed {},
     McpServers {
         servers: Vec<McpServerRecord>,
     },
@@ -322,6 +325,83 @@ pub fn interrupted_results(tool_use_ids: &[String]) -> Message {
     }
 }
 
+/// What a transcript says was left undone. See [`assess_unfinished`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Unfinished {
+    /// The last turn never completed (killed, crashed, provider error) or work was recorded
+    /// after the last turn ended.
+    pub interrupted: bool,
+    /// Content of the last `TodoWrite` plan's items that are not completed.
+    pub open_tasks: Vec<String>,
+    /// The plan item that was in progress, if any.
+    pub in_progress: Option<String>,
+}
+
+impl Unfinished {
+    pub fn is_unfinished(&self) -> bool {
+        self.interrupted || !self.open_tasks.is_empty()
+    }
+}
+
+/// Scan the records (cheaply, front to back) for unfinished work.
+///
+/// A session is interrupted when conversation records (user/assistant message, tool call or
+/// result) follow the last `turn_end`, or the last turn ended in an error. A turn the user
+/// cancelled on purpose is not interrupted. Independently, the last `TodoWrite` plan with items
+/// that are not `completed` counts as open tasks. `session_dismissed` clears both until newer
+/// records appear.
+pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
+    let mut work_after_end = false;
+    let mut bad_end = false;
+    let mut open: Vec<String> = vec![];
+    let mut in_progress = None;
+    for r in records {
+        match &r.record {
+            Record::UserMessage { .. }
+            | Record::AssistantMessage { .. }
+            | Record::ToolCall { .. }
+            | Record::ToolResult { .. } => work_after_end = true,
+            Record::TurnEnd { stop_reason, .. } => {
+                work_after_end = false;
+                bad_end = matches!(stop_reason.as_str(), "error" | "interrupted");
+            }
+            Record::SessionDismissed {} => {
+                work_after_end = false;
+                bad_end = false;
+                open.clear();
+                in_progress = None;
+            }
+            Record::HistoryCleared { .. } => {
+                open.clear();
+                in_progress = None;
+            }
+            _ => {}
+        }
+        if let Record::ToolCall { name, input, .. } = &r.record {
+            if name == "TodoWrite" {
+                open.clear();
+                in_progress = None;
+                for t in input["todos"].as_array().into_iter().flatten() {
+                    let content = t["content"].as_str().unwrap_or_default().to_string();
+                    match t["status"].as_str() {
+                        Some("completed") => {}
+                        Some("in_progress") => {
+                            in_progress = Some(content.clone());
+                            open.push(content);
+                        }
+                        _ => open.push(content),
+                    }
+                }
+            }
+        }
+    }
+    Unfinished {
+        interrupted: work_after_end || bad_end,
+        open_tasks: open,
+        in_progress,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionSummary {
     pub id: String,
@@ -444,6 +524,82 @@ mod tests {
             .unwrap()
             .contains("\"type\":\"session_start\""));
         assert!(raw.contains("\"signature\":\"sig\""));
+    }
+
+    fn stamped(record: Record) -> Stamped {
+        Stamped {
+            ts: now_rfc3339(),
+            record,
+        }
+    }
+
+    fn user(t: &str) -> Stamped {
+        stamped(Record::UserMessage {
+            message: Message::user_text(t),
+            source: UserSource::User,
+        })
+    }
+
+    fn turn_end(reason: &str) -> Stamped {
+        stamped(Record::TurnEnd {
+            stop_reason: reason.into(),
+            duration_ms: 1,
+            model_requests: 1,
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        })
+    }
+
+    fn todo(items: serde_json::Value) -> Stamped {
+        stamped(Record::ToolCall {
+            tool_use_id: "t".into(),
+            name: "TodoWrite".into(),
+            input: serde_json::json!({ "todos": items }),
+            title: String::new(),
+            kind: "think".into(),
+        })
+    }
+
+    #[test]
+    fn unfinished_detection() {
+        let start = stamped(Record::SessionStart(meta("a")));
+        let a = |rs: Vec<Stamped>| {
+            let mut v = vec![start.clone()];
+            v.extend(rs);
+            assess_unfinished(&v)
+        };
+        // Completed turn, cancelled turn: settled.
+        assert!(!a(vec![user("x"), turn_end("end_turn")]).is_unfinished());
+        assert!(!a(vec![user("x"), turn_end("cancelled")]).is_unfinished());
+        // Killed mid-turn (no turn_end), or ended in an error: interrupted.
+        assert!(a(vec![user("x")]).interrupted);
+        assert!(a(vec![user("x"), turn_end("end_turn"), user("y")]).interrupted);
+        assert!(a(vec![user("x"), turn_end("error")]).interrupted);
+        // Open plan items count even after a clean turn end; completed plans do not.
+        let open = a(vec![
+            user("x"),
+            todo(serde_json::json!([
+                {"content": "a", "status": "completed"},
+                {"content": "b", "status": "in_progress"},
+                {"content": "c", "status": "pending"}
+            ])),
+            turn_end("end_turn"),
+        ]);
+        assert!(!open.interrupted);
+        assert_eq!(open.open_tasks, ["b", "c"]);
+        assert_eq!(open.in_progress.as_deref(), Some("b"));
+        let done = a(vec![
+            todo(serde_json::json!([{"content": "a", "status": "completed"}])),
+            turn_end("end_turn"),
+        ]);
+        assert!(!done.is_unfinished());
+        // Dismissal settles it until new work appears.
+        let d = vec![user("x"), stamped(Record::SessionDismissed {})];
+        assert!(!a(d.clone()).is_unfinished());
+        let mut again = d;
+        again.push(user("more"));
+        assert!(a(again).interrupted);
     }
 
     #[test]

@@ -18,6 +18,10 @@ pub struct SessionsArgs {
     /// List only sessions whose id, first prompt, mode or model contains this text.
     #[arg(long)]
     pub query: Option<String>,
+    /// List only unfinished sessions (interrupted, or with open tasks), newest first. JSON:
+    /// `[{id,createdAt,updatedAt,firstPrompt,mode,interrupted,openTasks,inProgress}]`.
+    #[arg(long)]
+    pub unfinished: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -32,6 +36,8 @@ pub enum SessionsAction {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Stop offering a session for resumption.
+    Dismiss { id: String },
     /// Search all sessions (JSON: `[{id,recordIndex,type,snippet}]`).
     Search {
         text: String,
@@ -84,6 +90,31 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
                     println!(
                         "{}  #{:<5} {:<17} {}",
                         h.id, h.record_index, h.record_type, h.snippet
+                    );
+                }
+            }
+        }
+        Some(SessionsAction::Dismiss { id }) => {
+            transcript_api::dismiss(&project, id)?;
+            if args.json {
+                println!("{{}}");
+            } else {
+                println!("dismissed {id}");
+            }
+        }
+        None if args.unfinished => {
+            let list = transcript_api::find_unfinished(&project, None);
+            if args.json {
+                println!("{}", serde_json::to_string(&list)?);
+            } else if list.is_empty() {
+                println!("no unfinished sessions");
+            } else {
+                for u in list {
+                    println!(
+                        "{}  {}  {}",
+                        u.id,
+                        u.updated_at,
+                        one_line(&u.first_prompt, 60)
                     );
                 }
             }
