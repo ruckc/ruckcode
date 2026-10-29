@@ -62,6 +62,43 @@ impl Tool for Bash {
     }
 }
 
+/// Make a child unable to block on interactive input: no stdin, no controlling
+/// TTY, and credential helpers told never to prompt.
+fn harden(cmd: &mut tokio::process::Command) {
+    cmd.stdin(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "true")
+        .env("SSH_ASKPASS", "true")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env("GCM_INTERACTIVE", "never")
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .env("PAGER", "cat")
+        .env("GIT_PAGER", "cat");
+    #[cfg(unix)]
+    unsafe {
+        // New session: no controlling TTY (so /dev/tty prompts fail fast) and a
+        // process group that can be killed as a whole.
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Kill the whole process tree rooted at `child`.
+async fn kill_tree(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // setsid made the child a group leader: pgid == pid.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill().await;
+}
+
 /// Run `sh -c command`, honoring cancellation and a timeout.
 pub async fn run_shell(
     command: &str,
@@ -69,15 +106,15 @@ pub async fn run_shell(
     timeout: Duration,
     ctx: &ToolContext,
 ) -> anyhow::Result<ToolOutput> {
-    let mut child = tokio::process::Command::new("sh")
-        .arg("-c")
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c")
         .arg(command)
         .current_dir(cwd)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
+        .kill_on_drop(true);
+    harden(&mut cmd);
+    let mut child = cmd.spawn()?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let read = async {
@@ -88,9 +125,11 @@ pub async fn run_shell(
     let result = tokio::select! {
         r = async { let out = read.await; (out, child.wait().await) } => r,
         _ = tokio::time::sleep(timeout) => {
+            kill_tree(&mut child).await;
             return Ok(ToolOutput::error(format!("command timed out after {}ms", timeout.as_millis())));
         }
         _ = ctx.cancel.cancelled() => {
+            kill_tree(&mut child).await;
             return Ok(ToolOutput::error("command cancelled"));
         }
     };
@@ -133,5 +172,100 @@ mod tests {
             .unwrap();
         assert!(bad.is_error);
         assert!(bad.content.contains("no") && bad.content.contains("exit code 3"));
+    }
+
+    #[tokio::test]
+    async fn stdin_is_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let t = std::time::Instant::now();
+        let r = Bash
+            .call(json!({"command": "read x; echo got=[$x]"}), &c)
+            .await
+            .unwrap();
+        assert!(t.elapsed() < Duration::from_secs(5));
+        assert!(r.content.contains("got=[]") || r.is_error);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_prompt_against_auth_remote_does_not_wait() {
+        // A local HTTP server that always answers 401 makes git ask for credentials.
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = s.read(&mut buf).await;
+                    let _ = s
+                        .write_all(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let t = std::time::Instant::now();
+        let r = Bash
+            .call(
+                json!({"command": format!("export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1; git -c credential.helper= ls-remote http://127.0.0.1:{port}/r.git 2>&1; echo done"), "timeout": 20000}),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(t.elapsed() < Duration::from_secs(15), "hung: {}", r.content);
+        assert!(r.content.contains("done"), "{}", r.content);
+        assert!(
+            !r.content.to_lowercase().contains("username for"),
+            "{}",
+            r.content
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn no_controlling_tty() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let r = Bash
+            .call(
+                json!({"command": "(echo x > /dev/tty) 2>/dev/null && echo HASTTY || echo notty"}),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(r.content.contains("notty"), "{}", r.content);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_and_cancel_kill_the_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("alive");
+        let cmd = format!("(sleep 1; touch {}) & sleep 30", marker.display());
+        let c = ctx(dir.path());
+        let r = Bash
+            .call(json!({"command": cmd, "timeout": 200}), &c)
+            .await
+            .unwrap();
+        assert!(r.content.contains("timed out"));
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(!marker.exists(), "background child survived the timeout");
+
+        let c2 = ctx(dir.path());
+        let cancel = c2.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            cancel.cancel();
+        });
+        let r = Bash.call(json!({"command": cmd}), &c2).await.unwrap();
+        assert!(r.content.contains("cancelled"));
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(!marker.exists(), "background child survived cancel");
     }
 }

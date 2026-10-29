@@ -117,6 +117,17 @@ describe('ChatController', () => {
     });
   });
 
+  it('cancel ends a turn blocked on a pending question', async () => {
+    const { chat, agents } = await ready();
+    const turn = chat.send('mock:ask');
+    await vi.waitFor(() => expect(chat.question).not.toBeNull());
+    await chat.cancel();
+    await turn;
+    expect(chat.question).toBeNull();
+    expect(chat.active!.running).toBe(false);
+    expect(agents[0].received.some((m) => m.method === 'session/cancel')).toBe(true);
+  });
+
   it('applies a SwitchMode proposal on approval', async () => {
     const { chat } = await ready();
     const turn = chat.send('mock:mode explore');
