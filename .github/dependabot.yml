@@ -36,3 +36,7 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # SvelteKit and svelte-check call the TypeScript JS API (ts.sys), removed in native TS 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
