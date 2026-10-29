@@ -34,6 +34,7 @@ APP_FILES = [
     f"ruckcode-app-{VERSION}-x86_64-apple-darwin.dmg",
     f"ruckcode-app-{VERSION}-x86_64-apple-darwin.app.tar.gz",
     f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi",
+    f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc-portable.zip",
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.AppImage",
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.deb",
 ]

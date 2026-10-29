@@ -66,6 +66,7 @@ APP_ROWS = [
         "x86_64-pc-windows-msvc",
         [
             (".msi", "MSI installer (.msi, per-user by default; all users: msiexec /i ... ALLUSERS=1)"),
+            ("-portable.zip", "Portable zip (no installer; unzip and run ruckcode.exe, no updates)"),
         ],
     ),
     (
