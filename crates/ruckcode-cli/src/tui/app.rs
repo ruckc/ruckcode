@@ -467,10 +467,29 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl && key.code == KeyCode::Char('c') {
+            // Ctrl+C always gets out of an agent-driven prompt and stops the turn,
+            // even while editing free text.
+            match self.modal.take() {
+                Some(Modal::Ask(mut m)) => {
+                    m.finish(true);
+                    self.close_modal();
+                    return Action::Cancel;
+                }
+                Some(Modal::Permission(mut m)) => {
+                    if let Some(tx) = m.reply.take() {
+                        let _ = tx.send(RequestPermissionOutcome::Cancelled);
+                    }
+                    self.close_modal();
+                    return Action::Cancel;
+                }
+                other => self.modal = other,
+            }
+        }
         if self.modal.is_some() {
             return self.modal_key(key);
         }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
@@ -1488,6 +1507,24 @@ mod tests {
             tx,
         );
         a.handle_key(key(KeyCode::Esc));
+        assert!(rx.try_recv().unwrap().cancelled);
+    }
+
+    #[test]
+    fn ctrl_c_escapes_ask_modal_even_while_editing_other() {
+        let mut a = App::new("m");
+        let (tx, mut rx) = oneshot::channel();
+        a.ask_questions(
+            AskRequest {
+                session_id: "s".into(),
+                questions: vec![q("one", false, &["X"])],
+            },
+            tx,
+        );
+        a.handle_key(key(KeyCode::Char('2'))); // Other: starts editing
+        let cc = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(a.handle_key(cc), Action::Cancel);
+        assert!(a.modal.is_none());
         assert!(rx.try_recv().unwrap().cancelled);
     }
 

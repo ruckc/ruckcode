@@ -260,7 +260,12 @@
   });
 
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !e.defaultPrevented && active?.running && !dialogOpen) {
+    if (e.defaultPrevented || !active?.running) return;
+    // Esc / Ctrl+C always stop a running turn, even with a question or permission dialog
+    // open (which cancel() also dismisses). Ctrl+C keeps its copy meaning over a selection.
+    const copy = e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey;
+    const selecting = copy && (window.getSelection()?.toString() ?? '') !== '';
+    if (e.key === 'Escape' || (e.ctrlKey && copy && !selecting)) {
       e.preventDefault();
       void chat.cancel();
     }
