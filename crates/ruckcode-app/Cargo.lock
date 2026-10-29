@@ -3212,6 +3212,7 @@ dependencies = [
  "async-trait",
  "globset",
  "ignore",
+ "libc",
  "regex",
  "ruckcode-llm",
  "serde",
