@@ -5,6 +5,7 @@ import type {
   SessionModeState,
   SessionNotification
 } from '@agentclientprotocol/sdk';
+import { SvelteSet } from 'svelte/reactivity';
 import { AcpClient } from '../acp/client';
 import type { AskUserQuestionRequest, AskUserQuestionResult } from '../acp/ext';
 import type { LineTransport } from '../acp/transport';
@@ -74,7 +75,7 @@ export class ChatController {
 
   private client: AcpClient | null = null;
   /** Sessions closed here: late updates for them (e.g. available commands) are dropped. */
-  private closed = new Set<string>();
+  private closed = new SvelteSet<string>();
   private opts: ConnectOptions | null = null;
   private canLoad = true;
 
