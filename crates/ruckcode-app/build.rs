@@ -33,6 +33,8 @@ fn main() {
             "transcripts_list",
             "transcripts_read",
             "transcripts_search",
+            "transcripts_unfinished",
+            "transcripts_dismiss",
             "modes_get",
             "modes_validate",
             "modes_preview",

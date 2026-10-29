@@ -9,7 +9,8 @@ import { SvelteSet } from 'svelte/reactivity';
 import { AcpClient } from '../acp/client';
 import type { AskUserQuestionRequest, AskUserQuestionResult } from '../acp/ext';
 import type { LineTransport } from '../acp/transport';
-import { connectHost, type ConnectOptions } from '../host';
+import { connectHost, getTranscripts, type ConnectOptions } from '../host';
+import type { UnfinishedSession } from '../host/transcripts';
 import { applyUpdate, emptyModel, pushTurnEnd, setConfigOptions, type ChatModel } from './reducer';
 
 export type Status = 'disconnected' | 'connecting' | 'connected' | 'lost';
@@ -44,7 +45,17 @@ export interface SessionView {
   queue: string[];
 }
 
+/** Sent by "compact and resume": `/compact` with these instructions, then the continue prompt. */
+export const RESUME_COMPACT_PROMPT =
+  '/compact This session was interrupted and is being resumed. Summarize it focused on what was in progress when it stopped (the exact step, files and commands involved), what has been completed, and what remains to be done. Drop everything else.';
+export const RESUME_CONTINUE_PROMPT =
+  'Continue with the work that was in progress and finish what remains.';
+
 export interface ControllerOptions {
+  /** Test hook: find unfinished sessions instead of asking the host. */
+  unfinished?: (opts: ConnectOptions) => Promise<UnfinishedSession[]>;
+  /** Test hook: record a dismissal instead of asking the host. */
+  dismissUnfinished?: (opts: ConnectOptions, id: string) => Promise<void>;
   /** Test hook: supply the transport directly instead of going through the host. */
   transport?: () => LineTransport | Promise<LineTransport>;
 }
@@ -72,6 +83,8 @@ export class ChatController {
   questions = $state.raw<PendingQuestion[]>([]);
   /** Prompts sent this run, oldest first (for up/down recall). */
   history = $state.raw<string[]>([]);
+  /** Sessions left interrupted or with open tasks, offered once after connecting. */
+  unfinished = $state.raw<UnfinishedSession[]>([]);
 
   private client: AcpClient | null = null;
   /** Sessions closed here: late updates for them (e.g. available commands) are dropped. */
@@ -116,7 +129,57 @@ export class ChatController {
     this.sessions = {};
     this.activeId = null;
     this.stored = [];
+    this.unfinished = [];
     await this.open(null);
+    if (this.connected) await this.offerUnfinished();
+  }
+
+  private async offerUnfinished(): Promise<void> {
+    const opts = this.opts;
+    if (!opts) return;
+    try {
+      const find =
+        this.hooks.unfinished ??
+        (async (o: ConnectOptions) =>
+          (await getTranscripts()).unfinished({ project: o.cwd, distro: o.distro }));
+      const found = await find(opts);
+      // Nothing to offer for a session that is already open.
+      this.unfinished = found.filter((u) => !(u.id in this.sessions));
+    } catch {
+      // The offer is a convenience; never let it break connecting.
+      this.unfinished = [];
+    }
+  }
+
+  /** Forget one offer (the dialog's Dismiss), and tell the host not to offer it again. */
+  async dismissUnfinished(id: string): Promise<void> {
+    this.unfinished = this.unfinished.filter((u) => u.id !== id);
+    const opts = this.opts;
+    if (!opts) return;
+    try {
+      if (this.hooks.dismissUnfinished) await this.hooks.dismissUnfinished(opts, id);
+      else await (await getTranscripts()).dismiss({ project: opts.cwd, distro: opts.distro }, id);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Close the offer without touching the sessions (start fresh). */
+  closeUnfinishedOffer(): void {
+    this.unfinished = [];
+  }
+
+  /**
+   * Continue an unfinished session. With `compact`, first summarize it to what was in progress
+   * and what remains (the agent's `/compact`), then carry on with the rest.
+   */
+  async resumeUnfinished(id: string, compact: boolean): Promise<void> {
+    this.unfinished = [];
+    await this.openSession(id);
+    const v = this.sessions[id];
+    if (!compact || !v || this.activeId !== id) return;
+    v.queue.push(RESUME_CONTINUE_PROMPT);
+    await this.send(RESUME_COMPACT_PROMPT);
   }
 
   /** Reconnect after the agent went away, resuming the sessions that were open. */

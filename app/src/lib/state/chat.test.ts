@@ -1,6 +1,75 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FakeAgent, FakeStore } from '../host/fake-agent';
-import { ChatController } from './chat.svelte';
+import { ChatController, RESUME_COMPACT_PROMPT, RESUME_CONTINUE_PROMPT } from './chat.svelte';
+
+describe('resuming unfinished sessions', () => {
+  const unfinished = {
+    id: 'old-1',
+    createdAt: '',
+    updatedAt: '2026-03-01T10:20:00.000Z',
+    firstPrompt: 'Fix the login bug',
+    mode: 'implement',
+    interrupted: true,
+    openTasks: ['Add a test'],
+    inProgress: 'Add a test'
+  };
+  function withUnfinished() {
+    const store = new FakeStore();
+    const dismissed: string[] = [];
+    const chat = new ChatController({
+      transport: () => new FakeAgent({ store }),
+      unfinished: async () => [unfinished],
+      dismissUnfinished: async (_o, id) => void dismissed.push(id)
+    });
+    return { chat, dismissed };
+  }
+
+  it('offers them after connecting, alongside a fresh session', async () => {
+    const { chat } = withUnfinished();
+    await chat.connect({ cwd: '/proj' });
+    expect(chat.unfinished.map((u) => u.id)).toEqual(['old-1']);
+    expect(chat.active?.id).toBe('sess-1');
+  });
+
+  it('does not break connecting when the lookup fails', async () => {
+    const chat = new ChatController({
+      transport: () => new FakeAgent({ store: new FakeStore() }),
+      unfinished: async () => {
+        throw new Error('boom');
+      }
+    });
+    await chat.connect({ cwd: '/proj' });
+    expect(chat.status).toBe('connected');
+    expect(chat.unfinished).toEqual([]);
+  });
+
+  it('resume opens the session and clears the offer', async () => {
+    const { chat } = withUnfinished();
+    await chat.connect({ cwd: '/proj' });
+    await chat.resumeUnfinished('old-1', false);
+    expect(chat.unfinished).toEqual([]);
+    expect(chat.activeId).toBe('old-1');
+  });
+
+  it('compact and resume runs /compact, then continues', async () => {
+    const { chat } = withUnfinished();
+    await chat.connect({ cwd: '/proj' });
+    await chat.resumeUnfinished('old-1', true);
+    const users = chat
+      .active!.model.items.filter((i) => i.kind === 'user')
+      .map((i) => (i as { text: string }).text);
+    expect(users.slice(-2)).toEqual([RESUME_COMPACT_PROMPT, RESUME_CONTINUE_PROMPT]);
+    expect(chat.active!.running).toBe(false);
+  });
+
+  it('dismiss removes the offer and tells the host', async () => {
+    const { chat, dismissed } = withUnfinished();
+    await chat.connect({ cwd: '/proj' });
+    await chat.dismissUnfinished('old-1');
+    expect(chat.unfinished).toEqual([]);
+    expect(dismissed).toEqual(['old-1']);
+  });
+});
 
 function setup() {
   const store = new FakeStore();

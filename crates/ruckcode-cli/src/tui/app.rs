@@ -12,6 +12,8 @@ use ruckcode_acp::schema::{
 use serde_json::Value;
 use tokio::sync::oneshot;
 
+use ruckcode_core::transcript_api::UnfinishedSession;
+
 use crate::client::{Answer, AskRequest, AskResponse, Question, SessionEntry};
 
 /// What the event loop must do after a key press.
@@ -25,6 +27,16 @@ pub enum Action {
     NewSession,
     ListSessions,
     LoadSession(String),
+    /// Resume an unfinished session; with `compact`, first summarize it to what was in progress
+    /// and what remains.
+    ResumeUnfinished {
+        id: String,
+        compact: bool,
+    },
+    /// Stop offering a session for resumption.
+    DismissSession(String),
+    /// Dismiss the last offered session and start a new one.
+    DismissAndNew(String),
     /// Pin (or with `None` clear) the session model.
     SetModel(Option<String>),
     /// Run the setup wizard.
@@ -87,6 +99,12 @@ pub struct PickerModal {
     pub selected: usize,
 }
 
+/// Startup offer to resume sessions that were interrupted or have open tasks.
+pub struct ResumeModal {
+    pub sessions: Vec<UnfinishedSession>,
+    pub selected: usize,
+}
+
 /// `/model` picker: index 0 is "profile/mode default".
 pub struct ModelPickerModal {
     pub models: Vec<String>,
@@ -97,6 +115,7 @@ pub enum Modal {
     Permission(PermissionModal),
     Ask(AskModal),
     Picker(PickerModal),
+    Resume(ResumeModal),
     Models(ModelPickerModal),
 }
 
@@ -131,6 +150,8 @@ pub struct App {
     pub usage: Option<(u64, u64)>,
     /// Newer `rc` version announced in the status line (daily check; see `update.rs`).
     pub update_available: Option<String>,
+    /// Set by "compact and resume": once the session is loaded, run `/compact` then carry on.
+    pub resume_compact: bool,
 }
 
 pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  clear the conversation (the model starts fresh)\n/compact [instructions]  summarize the conversation to free up context\n/new  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
@@ -164,6 +185,7 @@ impl App {
             chars_streamed: 0,
             usage: None,
             update_available: None,
+            resume_compact: false,
         }
     }
 
@@ -373,6 +395,15 @@ impl App {
             sessions,
             selected: 0,
         }));
+    }
+
+    pub fn show_unfinished(&mut self, sessions: Vec<UnfinishedSession>) {
+        if !sessions.is_empty() {
+            self.push_modal(Modal::Resume(ResumeModal {
+                sessions,
+                selected: 0,
+            }));
+        }
     }
 
     // ---- turns ------------------------------------------------------------
@@ -756,6 +787,24 @@ impl App {
                 }
                 (Some(Modal::Models(p)), Action::None)
             }
+            Modal::Resume(mut p) => match resume_key(&mut p, key) {
+                ResumeResult::Stay => (Some(Modal::Resume(p)), Action::None),
+                ResumeResult::Fresh => (None, Action::NewSession),
+                ResumeResult::Resume { id, compact } => {
+                    (None, Action::ResumeUnfinished { id, compact })
+                }
+                ResumeResult::Dismiss(id) => {
+                    p.sessions.retain(|s| s.id != id);
+                    p.selected = p.selected.min(p.sessions.len().saturating_sub(1));
+                    if p.sessions.is_empty() {
+                        // Nothing left to offer: dismiss it and start fresh.
+                        self.modal = None;
+                        self.close_modal();
+                        return Action::DismissAndNew(id);
+                    }
+                    (Some(Modal::Resume(p)), Action::DismissSession(id))
+                }
+            },
             Modal::Picker(mut p) => match picker_key(&mut p, key) {
                 PickerResult::Stay => (Some(Modal::Picker(p)), Action::None),
                 PickerResult::Close => (
@@ -1099,6 +1148,38 @@ fn picker_key(p: &mut PickerModal, key: KeyEvent) -> PickerResult {
         KeyCode::Enter => PickerResult::Load(p.sessions[p.selected].id.clone()),
         KeyCode::Esc | KeyCode::Char('q') => PickerResult::Close,
         _ => PickerResult::Stay,
+    }
+}
+
+enum ResumeResult {
+    Stay,
+    Fresh,
+    Resume { id: String, compact: bool },
+    Dismiss(String),
+}
+
+fn resume_key(p: &mut ResumeModal, key: KeyEvent) -> ResumeResult {
+    let n = p.sessions.len();
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            p.selected = (p.selected + n - 1) % n;
+            ResumeResult::Stay
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            p.selected = (p.selected + 1) % n;
+            ResumeResult::Stay
+        }
+        KeyCode::Enter | KeyCode::Char('r') => ResumeResult::Resume {
+            id: p.sessions[p.selected].id.clone(),
+            compact: false,
+        },
+        KeyCode::Char('c') => ResumeResult::Resume {
+            id: p.sessions[p.selected].id.clone(),
+            compact: true,
+        },
+        KeyCode::Char('d') => ResumeResult::Dismiss(p.sessions[p.selected].id.clone()),
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => ResumeResult::Fresh,
+        _ => ResumeResult::Stay,
     }
 }
 
@@ -1529,6 +1610,53 @@ mod tests {
         a.handle_key(key(KeyCode::Esc));
         assert!(r2.try_recv().unwrap().cancelled);
         assert!(a.modal.is_none());
+    }
+
+    #[test]
+    fn unfinished_offer_resume_compact_dismiss_or_fresh() {
+        let u = |id: &str| UnfinishedSession {
+            id: id.into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            first_prompt: "p".into(),
+            mode: "build".into(),
+            interrupted: true,
+            open_tasks: vec![],
+            in_progress: None,
+        };
+        let mut a = App::new("m");
+        a.show_unfinished(vec![]);
+        assert!(a.modal.is_none());
+        a.show_unfinished(vec![u("one"), u("two")]);
+        assert_eq!(
+            a.handle_key(key(KeyCode::Enter)),
+            Action::ResumeUnfinished {
+                id: "one".into(),
+                compact: false
+            }
+        );
+        a.show_unfinished(vec![u("one"), u("two")]);
+        a.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            a.handle_key(key(KeyCode::Char('c'))),
+            Action::ResumeUnfinished {
+                id: "two".into(),
+                compact: true
+            }
+        );
+        a.show_unfinished(vec![u("one"), u("two")]);
+        assert_eq!(
+            a.handle_key(key(KeyCode::Char('d'))),
+            Action::DismissSession("one".into())
+        );
+        assert!(a.modal.is_some());
+        assert_eq!(
+            a.handle_key(key(KeyCode::Char('d'))),
+            Action::DismissAndNew("two".into())
+        );
+        assert!(a.modal.is_none());
+        a.show_unfinished(vec![u("one")]);
+        assert_eq!(a.handle_key(key(KeyCode::Esc)), Action::NewSession);
     }
 
     #[test]

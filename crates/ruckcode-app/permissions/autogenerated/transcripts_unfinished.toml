@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcripts-unfinished"
+description = "Enables the transcripts_unfinished command without any pre-configured scope."
+commands.allow = ["transcripts_unfinished"]
+
+[[permission]]
+identifier = "deny-transcripts-unfinished"
+description = "Denies the transcripts_unfinished command without any pre-configured scope."
+commands.deny = ["transcripts_unfinished"]

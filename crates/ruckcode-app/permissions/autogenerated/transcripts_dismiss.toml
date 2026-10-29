@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcripts-dismiss"
+description = "Enables the transcripts_dismiss command without any pre-configured scope."
+commands.allow = ["transcripts_dismiss"]
+
+[[permission]]
+identifier = "deny-transcripts-dismiss"
+description = "Denies the transcripts_dismiss command without any pre-configured scope."
+commands.deny = ["transcripts_dismiss"]

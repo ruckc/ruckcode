@@ -47,6 +47,14 @@ pub fn search_call(text: &str, limit: Option<usize>) -> RcCall {
     c
 }
 
+pub fn unfinished_call() -> RcCall {
+    call(&["sessions", "--unfinished", "--json"])
+}
+
+pub fn dismiss_call(id: &str) -> RcCall {
+    call(&["sessions", "dismiss", id, "--json"])
+}
+
 /// Run blocking transcript reading off the async runtime.
 async fn local<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
@@ -98,6 +106,30 @@ pub async fn search(
     }
 }
 
+/// Sessions of the project that were interrupted or left tasks open (see
+/// `transcript_api::find_unfinished`).
+pub async fn unfinished(t: &Target, project: &str) -> Result<Value, String> {
+    match t {
+        Target::Local => {
+            let p = PathBuf::from(project);
+            json(local(move || Ok(transcript_api::find_unfinished(&p, None))).await?)
+        }
+        Target::Wsl(d) => via_wsl(d, project, unfinished_call(), 60).await,
+    }
+}
+
+/// Stop offering a session for resumption.
+pub async fn dismiss(t: &Target, project: &str, id: &str) -> Result<Value, String> {
+    match t {
+        Target::Local => {
+            let (p, id) = (PathBuf::from(project), id.to_string());
+            local(move || transcript_api::dismiss(&p, &id)).await?;
+            Ok(Value::Null)
+        }
+        Target::Wsl(d) => via_wsl(d, project, dismiss_call(id), 60).await,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +155,8 @@ mod tests {
             ["sessions", "search", "x", "--json", "--limit", "7"]
         );
         assert!(search_call("x", None).stdin.is_none());
+        assert_eq!(unfinished_call().args, ["sessions", "--unfinished", "--json"]);
+        assert_eq!(dismiss_call("s1").args, ["sessions", "dismiss", "s1", "--json"]);
     }
 
     fn project(tag: &str) -> PathBuf {

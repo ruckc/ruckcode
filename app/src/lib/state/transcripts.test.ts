@@ -36,7 +36,9 @@ describe('TranscriptsController', () => {
     const api: TranscriptsApi = {
       list: () => Promise.reject(new Error('rc: boom')),
       read: () => Promise.reject(new Error('x')),
-      search: () => Promise.reject(new Error('x'))
+      search: () => Promise.reject(new Error('x')),
+      unfinished: async () => [],
+      dismiss: async () => {}
     };
     const c = make(api);
     await c.refresh();
@@ -52,6 +54,8 @@ describe('TranscriptsController', () => {
       read: async () => {
         throw new Error('unused');
       },
+      unfinished: async () => [],
+      dismiss: async () => {},
       search: (_t, text) => {
         calls.push(text);
         return new Promise((res) => (release[text] = res));

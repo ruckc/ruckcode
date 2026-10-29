@@ -194,3 +194,13 @@ pub fn mode_list(state: &Option<SessionModeState>) -> (Vec<SessionMode>, String)
         None => (vec![], String::new()),
     }
 }
+
+/// Instructions for the `/compact` that "compact and resume" runs: keep what was in progress and
+/// what is left, drop the rest.
+pub const RESUME_COMPACT_INSTRUCTIONS: &str = "This session was interrupted and is being resumed. \
+Summarize it focused on what was in progress when it stopped (the exact step, files and \
+commands involved), what has been completed, and what remains to be done. Drop everything else.";
+
+/// Sent after "compact and resume" has compacted, to carry on with the remaining work.
+pub const RESUME_CONTINUE_PROMPT: &str =
+    "Continue with the work that was in progress and finish what remains.";

@@ -319,6 +319,20 @@ async fn transcripts_search(
     transcripts::search(&Target::from_distro(distro), &project, &text, limit).await
 }
 
+#[tauri::command]
+async fn transcripts_unfinished(project: String, distro: Option<String>) -> Result<Value, String> {
+    transcripts::unfinished(&Target::from_distro(distro), &project).await
+}
+
+#[tauri::command]
+async fn transcripts_dismiss(
+    project: String,
+    distro: Option<String>,
+    id: String,
+) -> Result<Value, String> {
+    transcripts::dismiss(&Target::from_distro(distro), &project, &id).await
+}
+
 // ---- mode/hook editor ---------------------------------------------------------------------------
 //
 // `doc` is the camelCase modes document of `ruckcode_core::modes_api`; saving keeps comments.
@@ -384,6 +398,8 @@ pub fn run() {
             transcripts_list,
             transcripts_read,
             transcripts_search,
+            transcripts_unfinished,
+            transcripts_dismiss,
             modes_get,
             modes_validate,
             modes_preview,

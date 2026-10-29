@@ -366,6 +366,15 @@ pub async fn run(cli: &Cli) -> Result<()> {
             ctx.start(Some(id.to_string()), true)
         }
         None if cli.continue_last => ctx.continue_last(),
+        None if initial_prompt.is_none() => {
+            // Offer to pick up interrupted sessions or ones with open tasks; esc starts fresh.
+            let unfinished = ruckcode_core::transcript_api::find_unfinished(&cwd, None);
+            if unfinished.is_empty() {
+                ctx.start(None, true)
+            } else {
+                app.show_unfinished(unfinished)
+            }
+        }
         None => ctx.start(None, true),
     }
 
@@ -467,6 +476,14 @@ fn handle_ui_event(
             }
             let (modes, current) = client::mode_list(&s.modes);
             app.set_modes(modes, current);
+            if std::mem::take(&mut app.resume_compact) {
+                app.notice("compacting to what was in progress and what remains...");
+                app.queue
+                    .push_back(client::RESUME_CONTINUE_PROMPT.to_string());
+                let text =
+                    app.begin_turn(format!("/compact {}", client::RESUME_COMPACT_INSTRUCTIONS));
+                ctx.prompt(&s.session_id, text);
+            }
             if let Some(text) = initial_prompt.take() {
                 let text = app.begin_turn(text);
                 ctx.prompt(&s.session_id, text);
@@ -488,6 +505,12 @@ fn handle_ui_event(
         }
     }
     Action::None
+}
+
+fn dismiss(app: &mut App, ctx: &Ctx, id: &str) {
+    if let Err(e) = ruckcode_core::transcript_api::dismiss(&ctx.cwd, id) {
+        app.error(format!("could not dismiss {id}: {e:#}"));
+    }
 }
 
 fn run_action(app: &mut App, ctx: &Ctx, action: Action) {
@@ -519,6 +542,17 @@ fn run_action(app: &mut App, ctx: &Ctx, action: Action) {
             ctx.start(None, false);
         }
         Action::ListSessions => ctx.list(),
+        Action::ResumeUnfinished { id, compact } => {
+            app.reset_for_session(Some(id.clone()));
+            app.resume_compact = compact;
+            ctx.start(Some(id), true);
+        }
+        Action::DismissSession(id) => dismiss(app, ctx, &id),
+        Action::DismissAndNew(id) => {
+            dismiss(app, ctx, &id);
+            app.reset_for_session(None);
+            ctx.start(None, true);
+        }
         Action::LoadSession(id) => {
             app.reset_for_session(Some(id.clone()));
             ctx.start(Some(id), false);
