@@ -38,7 +38,7 @@ APP_FILES = [
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.AppImage",
     f"ruckcode-app-{VERSION}-x86_64-unknown-linux-gnu.deb",
 ]
-UPDATER_FILES = [f for f in APP_FILES if f.endswith((".app.tar.gz", ".msi", ".AppImage"))]
+UPDATER_FILES = [f for f in APP_FILES if f.endswith((".app.tar.gz", ".msi", "-portable.zip", ".AppImage"))]
 
 
 def rc_name(triple):
@@ -116,6 +116,28 @@ class BuildSite(unittest.TestCase):
         self.assertEqual(set(rc["targets"]), {t for t, _l, _e in build_site.RC_TARGETS})
         self.assertIn("rc-%s-aarch64-apple-darwin.tar.gz" % VERSION, index)
 
+    def test_portable_zip_is_its_own_platform_entry(self):
+        msi = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi"
+        zipn = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc-portable.zip"
+        dist = make_dist(self.tmp, app_files=[msi, zipn])
+        out, code = run_build(self.tmp, dist)
+        self.assertEqual(code, 0)
+        p = json.loads((out / "latest.json").read_text())["platforms"]
+        self.assertEqual(
+            set(p), {"windows-x86_64", "windows-x86_64-msi", "windows-x86_64-portable"}
+        )
+        self.assertTrue(p["windows-x86_64"]["url"].endswith(".msi"))
+        self.assertTrue(p["windows-x86_64-portable"]["url"].endswith(zipn))
+        self.assertEqual(p["windows-x86_64-portable"]["signature"], SIG)
+
+    def test_portable_zip_without_signature_is_an_error(self):
+        zipn = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc-portable.zip"
+        msi = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi"
+        dist = make_dist(self.tmp, app_files=[msi, zipn])
+        (dist / f"{zipn}.sig").unlink()
+        _out, code = run_build(self.tmp, dist)
+        self.assertNotEqual(code, 0)
+
     def test_an_app_installer_without_signature_is_an_error(self):
         msi = f"ruckcode-app-{VERSION}-x86_64-pc-windows-msvc.msi"
         dist = make_dist(self.tmp, app_files=[msi])
@@ -133,7 +155,7 @@ class BuildSite(unittest.TestCase):
         self.assertIn("updates", tauri["notes"])
         self.assertEqual(set(tauri["platforms"]), {
                 "darwin-aarch64", "darwin-aarch64-app", "darwin-x86_64", "darwin-x86_64-app",
-                "windows-x86_64", "windows-x86_64-msi",
+                "windows-x86_64", "windows-x86_64-msi", "windows-x86_64-portable",
                 "linux-x86_64", "linux-x86_64-appimage",
             },
         )
@@ -146,6 +168,9 @@ class BuildSite(unittest.TestCase):
         self.assertNotIn("windows-x86_64-nsis", p)
         self.assertTrue(p["windows-x86_64"]["url"].endswith(".msi"))
         self.assertEqual(p["windows-x86_64"], p["windows-x86_64-msi"])
+        # The portable zip is its own entry; MSI entries must never point at it.
+        self.assertTrue(p["windows-x86_64-portable"]["url"].endswith("-x86_64-pc-windows-msvc-portable.zip"))
+        self.assertNotEqual(p["windows-x86_64-portable"], p["windows-x86_64"])
         self.assertTrue(p["linux-x86_64-appimage"]["url"].endswith(".AppImage"))
         self.assertEqual(p["darwin-aarch64-app"], p["darwin-aarch64"])
         self.assertTrue((out / "download" / f"v{VERSION}" / f"{Path(p['windows-x86_64-msi']['url']).name}.sig").is_file())

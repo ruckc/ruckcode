@@ -49,7 +49,10 @@ Artifacts: `ruckcode-app-<version>-x86_64-pc-windows-msvc.msi` and
 `...-portable.zip` (the same exe + bundled `rc`, packaged by `scripts/package_portable.py`; a
 `portable.txt` marker disables self-update; the `app-windows` PR job builds it as the `portable-zip`
 workflow artifact), each with a `.sha256` (plus a `.sig` when signing is configured; the zip is
-signed with `tauri signer sign` like the rc archives and is not in the updater manifest). `release-publish`
+signed with `tauri signer sign` like the rc archives and is the manifest's `windows-x86_64-portable`
+entry: a build with `portable.txt` next to the exe checks that entry (`crates/ruckcode-app/src/portable.rs`
+extracts the zip's contents, renames the old files to `*.old`, moves the new ones in, rolls back on
+failure; `*.old` is deleted on the next start). MSI clients only read the `windows-x86_64(-msi)` keys). `release-publish`
 needs all builds, so any failed bundle blocks the release. `release.yml` is only the manual
 "redeploy Pages" workflow.
 

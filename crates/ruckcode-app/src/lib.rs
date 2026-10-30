@@ -3,6 +3,7 @@
 
 mod host;
 mod modes;
+mod portable;
 mod setup;
 mod transcripts;
 mod update;
@@ -366,6 +367,7 @@ async fn modes_apply(project: String, distro: Option<String>, doc: Value) -> Res
 }
 
 pub fn run() {
+    update::portable_startup_cleanup();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(update::plugin())

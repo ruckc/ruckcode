@@ -7,7 +7,7 @@
 Writes <out>/ruckcode-app-<version>-<target>-portable.zip containing one folder
 `ruckcode-app-<version>/` with the exe, any bundled resources (DEST is relative to the exe, e.g.
 wsl/rc, which is where Tauri looks for resources of an installed app), a `portable.txt` marker
-(the app then never tries to self-update through the MSI) and a short README.
+(the app then updates itself in place from the portable zip instead of through the MSI) and a short README.
 Checksum/signature are produced by the calling workflow, same as for the MSI.
 """
 import argparse
@@ -21,8 +21,11 @@ Run ruckcode.exe. Nothing is installed, no administrator rights are needed; sett
 sessions live in your user profile exactly like the installed app.
 
 Requirements: the Microsoft Edge WebView2 runtime (preinstalled on Windows 10/11).
-This build does not update itself: download a newer zip from
-https://ruckc.github.io/ruckcode/ and replace this folder.
+This build updates itself like the installed app (Settings, check for updates): it downloads
+the new signed zip, verifies it and swaps the files in this folder, so the folder must be
+writable. No installer, no administrator rights. Leftover *.old files are removed on the next
+start. Keep portable.txt: it tells the app to update in place. If an update ever fails you can
+still download a zip from https://ruckc.github.io/ruckcode/ and replace this folder.
 The executable is not code-signed, so SmartScreen may show "Windows protected your PC"
 on first launch: More info, then Run anyway.
 Verify the download against SHA256SUMS on the download page.
@@ -58,7 +61,7 @@ def main() -> int:
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for src, dest in entries:
             z.write(src, f"{root}/{dest}")
-        z.writestr(f"{root}/portable.txt", "Marker: this copy is portable and does not self-update.\n")
+        z.writestr(f"{root}/portable.txt", "Marker: this copy is portable; it updates itself in place from the portable zip.\n")
         z.writestr(f"{root}/README.txt", README.format(version=a.version, target=a.target))
     print(zpath)
     return 0
