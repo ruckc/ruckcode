@@ -20,6 +20,8 @@ use tauri::{AppHandle, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::sync::Mutex;
 
+use crate::portable;
+
 /// Where releases are published (GitHub Pages of the private repository).
 pub const DEFAULT_BASE_URL: &str = "https://ruckc.github.io/ruckcode";
 /// Overrides [`DEFAULT_BASE_URL`] (testing against a staging site). Must be https.
@@ -64,17 +66,18 @@ pub fn pubkey(app: &AppHandle) -> Option<String> {
     })
 }
 
-const PORTABLE_REASON: &str = "This is the portable build, which cannot update itself. \
-     Download the new zip from the download page and replace this folder.";
-
 /// The portable zip ships a `portable.txt` next to the exe. Its exe is the same binary the MSI
-/// is built from (so it reports the MSI bundle type); the marker keeps it from running the MSI
-/// updater, which would install a second copy.
+/// is built from (so it reports the MSI bundle type); the marker makes it check the portable
+/// zip's manifest entry and swap files in place instead of running the MSI installer, which
+/// would install a second copy. Windows only: the zip is a Windows build.
 fn is_portable() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("portable.txt")))
-        .is_some_and(|m| m.is_file())
+    cfg!(windows) && portable_dir().is_some()
+}
+
+/// The folder of the running exe when it holds the `portable.txt` marker.
+fn portable_dir() -> Option<std::path::PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    dir.join(portable::MARKER).is_file().then_some(dir)
 }
 
 /// Why this installation cannot update itself, or `None` when it can. The updater swaps the app
@@ -162,8 +165,13 @@ pub async fn update_check(
     };
     let base = base_url();
     let endpoint = manifest_url(&base).parse::<tauri::Url>().map_err(err)?;
-    let updater = app
-        .updater_builder()
+    let portable = is_portable();
+    let mut builder = app.updater_builder();
+    if portable {
+        // Same manifest, same signature check, but the zip's own platform entry.
+        builder = builder.target(portable::PLATFORM_KEY);
+    }
+    let updater = builder
         .pubkey(key)
         .endpoints(vec![endpoint])
         .map_err(err)?
@@ -172,17 +180,19 @@ pub async fn update_check(
         .map_err(err)?;
     match updater.check().await {
         Ok(Some(update)) => {
-            let manual = if is_portable() {
-                Some(PORTABLE_REASON)
+            let manual: Option<String> = if portable {
+                portable_dir()
+                    .map(|d| portable::check_writable(&d))
+                    .and_then(Result::err)
             } else {
-                manual_reason(tauri::utils::platform::bundle_type().as_ref())
+                manual_reason(tauri::utils::platform::bundle_type().as_ref()).map(str::to_string)
             };
             let result = CheckResult::Available {
                 version: update.version.clone(),
                 current: update.current_version.clone(),
                 notes: update.body.clone().filter(|b| !b.trim().is_empty()),
                 date: update.date.map(|d| d.to_string()),
-                manual_reason: manual.map(str::to_string),
+                manual_reason: manual.clone(),
                 download_page: format!("{base}/"),
             };
             *state.staged.lock().await = manual.is_none().then_some(Staged {
@@ -252,13 +262,49 @@ pub async fn update_install(state: State<'_, UpdateState>) -> Result<(), String>
         .bytes
         .as_ref()
         .ok_or("the update is not downloaded yet")?;
+    if is_portable() {
+        let exe = std::env::current_exe().map_err(err)?;
+        let dir = exe.parent().ok_or("no install folder")?.to_path_buf();
+        let name = portable::exe_name_of(&exe).ok_or("no exe name")?;
+        let bytes = bytes.clone();
+        // The bytes were signature-checked by `update.download`.
+        let done = tokio::task::spawn_blocking(move || portable::install_zip(&bytes, &dir, &name))
+            .await
+            .map_err(err)??;
+        if !done.skipped.is_empty() {
+            eprintln!(
+                "portable update: left in place (in use): {:?}",
+                done.skipped
+            );
+        }
+        return Ok(());
+    }
     staged.update.install(bytes).map_err(err)
 }
 
 /// Relaunch the app (after `update_install`).
 #[tauri::command]
 pub fn update_restart(app: AppHandle) -> Result<(), String> {
+    if is_portable() {
+        // After the swap the running exe may be reported as `<exe>.old`; launch the new file by
+        // its real name instead of `app.restart()`.
+        let exe = std::env::current_exe().map_err(err)?;
+        let name = portable::exe_name_of(&exe).ok_or("no exe name")?;
+        let new_exe = exe.with_file_name(name);
+        std::process::Command::new(&new_exe)
+            .spawn()
+            .map_err(|e| format!("could not start {}: {e}", new_exe.display()))?;
+        app.exit(0);
+        return Ok(());
+    }
     app.restart()
+}
+
+/// Startup housekeeping for the portable build: delete `.old` files left by the last update.
+pub fn portable_startup_cleanup() {
+    if let Some(dir) = portable_dir().filter(|_| cfg!(windows)) {
+        portable::cleanup(&dir);
+    }
 }
 
 /// Register the updater plugin. Its own commands stay unreachable from the webview: the
@@ -292,6 +338,31 @@ mod tests {
             manifest_url(DEFAULT_BASE_URL),
             "https://ruckc.github.io/ruckcode/latest.json"
         );
+    }
+
+    #[test]
+    fn portable_uses_its_own_manifest_entry() {
+        // Selection is done by the plugin from this key; MSI clients use windows-x86_64(-msi).
+        assert_eq!(portable::PLATFORM_KEY, "windows-x86_64-portable");
+        let manifest = serde_json::json!({
+            "version": "9.9.9", "notes": "n", "pub_date": "2026-01-01T00:00:00Z",
+            "platforms": {
+                "windows-x86_64": {"signature": "s1", "url": "https://x/a.msi"},
+                "windows-x86_64-msi": {"signature": "s1", "url": "https://x/a.msi"},
+                "windows-x86_64-portable": {"signature": "s2", "url": "https://x/a-portable.zip"}
+            }
+        });
+        let rel: tauri_plugin_updater::RemoteRelease = serde_json::from_value(manifest).unwrap();
+        assert_eq!(
+            rel.download_url(portable::PLATFORM_KEY).unwrap().as_str(),
+            "https://x/a-portable.zip"
+        );
+        assert_eq!(rel.signature(portable::PLATFORM_KEY).unwrap(), "s2");
+        assert!(rel
+            .download_url("windows-x86_64-msi")
+            .unwrap()
+            .as_str()
+            .ends_with(".msi"));
     }
 
     #[test]

@@ -54,6 +54,9 @@ UPDATER_PLATFORMS = {
     "darwin-x86_64-app": ("x86_64-apple-darwin", ".app.tar.gz"),
     "windows-x86_64": ("x86_64-pc-windows-msvc", ".msi"),
     "windows-x86_64-msi": ("x86_64-pc-windows-msvc", ".msi"),
+    # Portable zip: only the portable build (which has a portable.txt marker) asks for this key;
+    # MSI clients never look at it.
+    "windows-x86_64-portable": ("x86_64-pc-windows-msvc", "-portable.zip"),
     "linux-x86_64": ("x86_64-unknown-linux-gnu", ".AppImage"),
     "linux-x86_64-appimage": ("x86_64-unknown-linux-gnu", ".AppImage"),
 }
@@ -66,7 +69,7 @@ APP_ROWS = [
         "x86_64-pc-windows-msvc",
         [
             (".msi", "MSI installer (.msi, per-user by default; all users: msiexec /i ... ALLUSERS=1)"),
-            ("-portable.zip", "Portable zip (no installer; unzip and run ruckcode.exe, no updates)"),
+            ("-portable.zip", "Portable zip (no installer; unzip and run ruckcode.exe, updates itself)"),
         ],
     ),
     (

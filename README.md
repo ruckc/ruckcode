@@ -502,8 +502,9 @@ keep the scope and location of the existing install and are prompt-free for per-
 example `%LocalAppData%\ruckcode`) and run `ruckcode-app-<version>\ruckcode.exe`. It needs no
 administrator rights and writes nothing outside your user profile. It relies on the system
 **WebView2 runtime** (preinstalled on Windows 10/11), is not code-signed (SmartScreen may show
-"unknown publisher" on first launch: More info, then Run anyway) and does not update itself:
-download a newer zip and replace the folder. It includes the same bundled `rc` for WSL2.
+"unknown publisher" on first launch: More info, then Run anyway) and updates itself like the installed app (same prompt; it downloads the signed zip, verifies it
+and swaps the files in its own folder, which must be writable; old files are deleted on the next
+start). The first portable version with this feature must be downloaded by hand. It includes the same bundled `rc` for WSL2.
 
 On Windows, install the app on Windows itself (not inside WSL2) and choose the WSL2 host to run the
 agent in a distribution; the MSI carries a matching `rc` and the app installs it there for you.
