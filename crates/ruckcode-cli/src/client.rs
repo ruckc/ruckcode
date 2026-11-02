@@ -167,6 +167,24 @@ pub async fn list_sessions(conn: &Connection, cwd: &Path) -> Result<Vec<SessionE
     Ok(sessions)
 }
 
+/// The stop reason of a prompt response as a string. `rate_limited` is not an ACP stop reason,
+/// so the agent reports `end_turn` and carries it in `_meta.ruckcode.stopReason`.
+pub fn real_stop_reason(r: &schema::PromptResponse) -> String {
+    if let Some(s) = r
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("ruckcode"))
+        .and_then(|m| m.get("stopReason"))
+        .and_then(Value::as_str)
+    {
+        return s.to_string();
+    }
+    serde_json::to_value(r.stop_reason)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 /// Option id to answer a permission request: first of `kinds` present, else cancelled.
 pub fn pick_option(
     req: &schema::RequestPermissionRequest,

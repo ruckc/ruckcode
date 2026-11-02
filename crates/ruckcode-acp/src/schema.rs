@@ -44,6 +44,10 @@ pub const LIST_SESSIONS: &str = "_ruckcode/list_sessions";
 /// Pins the model for a session; also reachable as `session/set_config_option` with `model`.
 pub const SET_MODEL: &str = "_ruckcode/set_model";
 
+/// Notification (agent -> client) about a model request that is waiting out a rate limit or
+/// transient failure, or was given up on. See `rate_limit_params`.
+pub const RATE_LIMIT: &str = "_ruckcode/rate_limit";
+
 /// Id of the `model` session config option.
 pub const MODEL_CONFIG_ID: &str = "model";
 
@@ -116,10 +120,15 @@ pub fn supports_notices(caps: &ClientCapabilities) -> bool {
         || ruckcode_meta_flag(caps, "notices")
 }
 
+/// Client advertised `_meta.ruckcode.rateLimit = true`: it renders `_ruckcode/rate_limit`
+/// notifications (a live countdown). Others get the status as a plain notice.
+pub fn supports_rate_limit(caps: &ClientCapabilities) -> bool {
+    ruckcode_meta_flag(caps, "rateLimit")
+}
+
 /// Capabilities `rc` itself advertises: no fs/terminal, notices, and the ask-user extension.
 pub fn ruckcode_client_capabilities() -> ClientCapabilities {
-    let Value::Object(meta) =
-        serde_json::json!({"ruckcode": {"askUserQuestion": true, "notices": true}})
+    let Value::Object(meta) = serde_json::json!({"ruckcode": {"askUserQuestion": true, "notices": true, "rateLimit": true}})
     else {
         unreachable!()
     };

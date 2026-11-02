@@ -4,7 +4,8 @@ use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use ruckcode_hooks::{fix_turn_prompt, HookEvent, HookOutcome, HookRunner, HooksConfig, OnFailure};
 use ruckcode_llm::{
-    ContentBlock, Message, Provider, Request, Response, Role, StopReason as LlmStop, StreamEvent,
+    ContentBlock, LimitKind, Message, Provider, Request, Response, Role, StopReason as LlmStop,
+    StreamEvent,
 };
 use ruckcode_mcp::{McpManager, McpServerConfig};
 use ruckcode_mise::{MiseTask, TaskSelector};
@@ -21,6 +22,7 @@ use crate::config::{make_provider_with, Config, Profile};
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::system_prompt;
+use crate::retry::{self, Decision, Pacer, RateLimitConfig};
 use crate::transcript::{
     self, compaction_message, interrupted_results, EditRecord, Initiator, McpServerRecord, Metrics,
     PermissionOutcome, Record, SessionMeta, SessionSummary, TranscriptReader, TranscriptWriter,
@@ -29,6 +31,9 @@ use crate::transcript::{
 
 const SWITCH_MODE: &str = "SwitchMode";
 const INTERRUPTED: &str = "[Request interrupted by user]";
+const RATE_LIMITED_NOTE: &str =
+    "[Turn paused: the API rate limit was reached. The work continues when the user asks to resume.]";
+const FAILED_NOTE: &str = "[Turn stopped: the model request failed.]";
 const SUMMARY_PROMPT: &str = "Summarize the conversation so far so that work can continue from \
 the summary alone. Cover: the user's goals, decisions made, files read or changed, the current \
 state of the work, and concrete next steps. Be thorough but compact. Do not call any tools.";
@@ -73,6 +78,35 @@ pub enum SessionEvent {
     },
     /// The effective model of the session changed (`/model` pin or a mode switch).
     ModelChanged(String),
+    /// Rate-limit / retry status of the model request in flight.
+    RateLimit(RateLimitEvent),
+}
+
+/// Status of a model request that is being retried or was given up on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RateLimitEvent {
+    /// Waiting before sending the request again. Clients show a live countdown to
+    /// `resume_at_ms` (Unix epoch milliseconds) until `Resumed`, `Stopped` or the turn ends.
+    Waiting {
+        /// "Rate limited (tokens/minute)", "Server overloaded (HTTP 529)", ...
+        reason: String,
+        /// Which limit was hit, when the failure was a rate limit.
+        limit: Option<LimitKind>,
+        wait_ms: u64,
+        resume_at_ms: u64,
+        /// 1-based retry number and the configured maximum; 0 for a proactive pacing delay.
+        attempt: u32,
+        max_attempts: u32,
+    },
+    /// The wait is over and the request is being sent again.
+    Resumed,
+    /// The turn ends because the limit resets too far away (or retries ran out).
+    Stopped {
+        limit: LimitKind,
+        /// Unix epoch milliseconds when the limit resets, if known.
+        resets_at_ms: Option<u64>,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +145,9 @@ pub enum StopReason {
     MaxTurnRequests,
     Cancelled,
     Refusal,
+    /// A rate limit (or exhausted budget) ended the turn; the session is resumable after the
+    /// reset. Counts as unfinished work.
+    RateLimited,
 }
 
 impl StopReason {
@@ -121,6 +158,7 @@ impl StopReason {
             StopReason::MaxTurnRequests => "max_turn_requests",
             StopReason::Cancelled => "cancelled",
             StopReason::Refusal => "refusal",
+            StopReason::RateLimited => "rate_limited",
         }
     }
 }
@@ -210,7 +248,12 @@ impl SessionState {
 
     /// Close a user message that never got a reply so roles keep alternating.
     fn push_interruption(&mut self) {
-        let message = Message::assistant_text(INTERRUPTED);
+        self.push_closing(INTERRUPTED);
+    }
+
+    /// Close a user message that never got a reply with an assistant note `text`.
+    fn push_closing(&mut self, text: &str) {
+        let message = Message::assistant_text(text);
         self.request_counter += 1;
         let request_id = self.request_counter;
         self.rec(Record::AssistantMessage {
@@ -341,6 +384,8 @@ pub struct Agent {
     sessions: Mutex<HashMap<String, Arc<tokio::sync::Mutex<SessionState>>>>,
     cancels: Mutex<HashMap<String, CancellationToken>>,
     shared: Mutex<HashMap<String, Arc<Shared>>>,
+    /// Rate-limit headers seen so far, for proactive pacing.
+    pacer: Pacer,
 }
 
 /// Per-session data reachable without the session lock.
@@ -359,6 +404,7 @@ impl Agent {
             sessions: Mutex::default(),
             cancels: Mutex::default(),
             shared: Mutex::default(),
+            pacer: Pacer::default(),
         }
     }
 
@@ -833,10 +879,16 @@ impl Agent {
         let result = self
             .run_prompt(&mut s, text, &client, &cancel, &mut stats)
             .await;
-        if matches!(result, Ok(StopReason::Cancelled))
-            && s.messages.last().is_some_and(|m| m.role == Role::User)
-        {
-            s.push_interruption();
+        // A turn that stopped before the model answered leaves the user message (or tool
+        // results) dangling. Close it so roles keep alternating and the next prompt starts
+        // cleanly instead of being merged into the failed one.
+        if s.messages.last().is_some_and(|m| m.role == Role::User) {
+            match &result {
+                Ok(StopReason::Cancelled) => s.push_interruption(),
+                Ok(StopReason::RateLimited) => s.push_closing(RATE_LIMITED_NOTE),
+                Err(_) => s.push_closing(FAILED_NOTE),
+                _ => {}
+            }
         }
         self.apply_pending_mode(&mut s, &client).await;
         {
@@ -978,10 +1030,22 @@ impl Agent {
                 max_tokens: profile.max_tokens,
                 thinking: profile.thinking.clone(),
             };
-            let Some((response, metrics)) =
-                stream_request(&s.id, client.as_ref(), provider.as_ref(), request, cancel).await?
-            else {
-                return Ok(StopReason::Cancelled);
+            let (response, metrics) = match self
+                .call_model(
+                    &s.id,
+                    &profile.name,
+                    client,
+                    provider.as_ref(),
+                    request,
+                    cancel,
+                    &s.config.rate_limit,
+                    true,
+                )
+                .await?
+            {
+                ModelOutcome::Done(r, m) => (r, m),
+                ModelOutcome::Cancelled => return Ok(StopReason::Cancelled),
+                ModelOutcome::RateLimited(_) => return Ok(StopReason::RateLimited),
             };
             stats.model_requests += 1;
             stats.input_tokens += response.usage.input_tokens;
@@ -1440,6 +1504,163 @@ impl Agent {
         }
     }
 
+    /// Send a model request, retrying 429 / overloaded / transient failures per `cfg`.
+    ///
+    /// Each retry restarts the request from scratch: nothing from a failed attempt is added to
+    /// the history (only the final response is), so the transcript never holds partial or
+    /// duplicated text or tool calls. Waits are cancellable and announced with
+    /// [`SessionEvent::RateLimit`]; a wait longer than `cfg.max_auto_wait_secs` ends the request
+    /// as [`ModelOutcome::RateLimited`] instead of sleeping.
+    #[allow(clippy::too_many_arguments)]
+    async fn call_model(
+        &self,
+        session_id: &str,
+        pace_key: &str,
+        client: &Arc<dyn Client>,
+        provider: &dyn Provider,
+        request: Request,
+        cancel: &CancellationToken,
+        cfg: &RateLimitConfig,
+        forward: bool,
+    ) -> Result<ModelOutcome> {
+        let mut attempt = 0u32;
+        loop {
+            if cfg.pacing {
+                if let Some((left, kind, info)) = self.pacer.gate(pace_key) {
+                    if left > cfg.max_auto_wait() {
+                        let stop = retry::RateLimitStop {
+                            kind,
+                            wait: Some(left),
+                            info,
+                            too_long: true,
+                        };
+                        return Ok(ModelOutcome::RateLimited(Self::announce_stop(
+                            session_id, client, &stop,
+                        )));
+                    }
+                    let reason = format!("Rate limited ({})", kind.label());
+                    if !Self::wait_out(session_id, client, cancel, left, reason, Some(kind), 0, cfg)
+                        .await
+                    {
+                        return Ok(ModelOutcome::Cancelled);
+                    }
+                    self.pacer.clear(pace_key);
+                }
+            }
+            match stream_request(
+                session_id,
+                client.as_ref(),
+                provider,
+                request.clone(),
+                cancel,
+                forward,
+            )
+            .await
+            {
+                Ok(Some((response, metrics))) => {
+                    if let Some(info) = &response.rate_limit {
+                        self.pacer.observe(pace_key, info);
+                    }
+                    return Ok(ModelOutcome::Done(response, metrics));
+                }
+                Ok(None) => return Ok(ModelOutcome::Cancelled),
+                Err(StreamFail { error, streamed }) => {
+                    let api = error
+                        .chain()
+                        .find_map(|e| e.downcast_ref::<ruckcode_llm::ApiError>());
+                    if let Some(api) = api {
+                        self.pacer.observe(pace_key, &api.rate_limit);
+                    }
+                    match retry::decide(&error, attempt, cfg, retry::jitter()) {
+                        Decision::Fail => return Err(error),
+                        Decision::Stop(stop) => {
+                            return Ok(ModelOutcome::RateLimited(Self::announce_stop(
+                                session_id, client, &stop,
+                            )));
+                        }
+                        Decision::Retry { delay, reason } => {
+                            tracing::warn!("{reason}; retrying in {delay:?}: {error:#}");
+                            if streamed && forward {
+                                client.send_event(
+                                    session_id,
+                                    SessionEvent::Notice(
+                                        "The response was cut off; restarting the request (the \
+                                         partial output above is discarded)."
+                                            .into(),
+                                    ),
+                                );
+                            }
+                            attempt += 1;
+                            let limit = api
+                                .filter(|a| a.is_rate_limited())
+                                .map(|a| a.rate_limit.hit_kind());
+                            if !Self::wait_out(
+                                session_id, client, cancel, delay, reason, limit, attempt, cfg,
+                            )
+                            .await
+                            {
+                                return Ok(ModelOutcome::Cancelled);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sleep for `delay`, announcing it and clearing the announcement afterwards. Returns
+    /// `false` when cancelled.
+    #[allow(clippy::too_many_arguments)]
+    async fn wait_out(
+        session_id: &str,
+        client: &Arc<dyn Client>,
+        cancel: &CancellationToken,
+        delay: Duration,
+        reason: String,
+        limit: Option<LimitKind>,
+        attempt: u32,
+        cfg: &RateLimitConfig,
+    ) -> bool {
+        let resume = std::time::SystemTime::now() + delay;
+        client.send_event(
+            session_id,
+            SessionEvent::RateLimit(RateLimitEvent::Waiting {
+                reason,
+                limit,
+                wait_ms: delay.as_millis() as u64,
+                resume_at_ms: unix_ms(resume),
+                attempt,
+                max_attempts: cfg.max_retries,
+            }),
+        );
+        let completed = tokio::select! {
+            _ = cancel.cancelled() => false,
+            _ = tokio::time::sleep(delay) => true,
+        };
+        client.send_event(session_id, SessionEvent::RateLimit(RateLimitEvent::Resumed));
+        completed
+    }
+
+    /// Tell the user why the turn ends; returns the message.
+    fn announce_stop(
+        session_id: &str,
+        client: &Arc<dyn Client>,
+        stop: &retry::RateLimitStop,
+    ) -> String {
+        let message = retry::stop_message(stop, chrono::Local::now());
+        let resets_at_ms = stop.wait.map(|w| unix_ms(std::time::SystemTime::now() + w));
+        client.send_event(
+            session_id,
+            SessionEvent::RateLimit(RateLimitEvent::Stopped {
+                limit: stop.kind,
+                resets_at_ms,
+                message: message.clone(),
+            }),
+        );
+        client.send_event(session_id, SessionEvent::Notice(message.clone()));
+        message
+    }
+
     /// Summarize and replace history when the estimated context exceeds the threshold.
     /// Must only be called when the history is valid (no dangling tool uses).
     async fn compact_if_needed(
@@ -1497,10 +1718,22 @@ impl Agent {
             max_tokens: profile.max_tokens,
             thinking: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Ok(None),
-            r = provider.complete(request, tx) => r?,
+        let response = match self
+            .call_model(
+                &s.id,
+                &profile.name,
+                client,
+                provider.as_ref(),
+                request,
+                cancel,
+                &s.config.rate_limit,
+                false,
+            )
+            .await?
+        {
+            ModelOutcome::Done(r, _) => r,
+            ModelOutcome::Cancelled => return Ok(None),
+            ModelOutcome::RateLimited(msg) => bail!("{msg}"),
         };
         let summary = response.message.text();
         if summary.trim().is_empty() {
@@ -1692,27 +1925,55 @@ fn build_tools(s: &SessionState) -> Vec<Arc<dyn Tool>> {
     tools
 }
 
-/// Stream one completion, forwarding deltas to the client. `None` means cancelled.
+/// A failed model request, and whether any of its output already reached the client.
+struct StreamFail {
+    error: anyhow::Error,
+    streamed: bool,
+}
+
+/// How a model request (including its retries) ended.
+enum ModelOutcome {
+    Done(Response, Metrics),
+    Cancelled,
+    /// Gave up because of rate limits; the message was already shown to the user.
+    RateLimited(String),
+}
+
+fn unix_ms(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Stream one completion, forwarding deltas to the client (when `forward`). `Ok(None)` means
+/// cancelled.
 async fn stream_request(
     session_id: &str,
     client: &dyn Client,
     provider: &dyn Provider,
     request: Request,
     cancel: &CancellationToken,
-) -> Result<Option<(Response, Metrics)>> {
+    forward: bool,
+) -> Result<Option<(Response, Metrics)>, StreamFail> {
     let started = Instant::now();
     let mut first_token: Option<Duration> = None;
+    let mut streamed = false;
     let (tx, mut rx) = unbounded_channel();
     let fut = provider.complete(request, tx);
     tokio::pin!(fut);
-    let handle = |ev: StreamEvent, first: &mut Option<Duration>| match ev {
+    let mut handle = |ev: StreamEvent, first: &mut Option<Duration>| match ev {
         StreamEvent::TextDelta(t) => {
             first.get_or_insert_with(|| started.elapsed());
-            client.send_event(session_id, SessionEvent::AgentText(t));
+            streamed = true;
+            if forward {
+                client.send_event(session_id, SessionEvent::AgentText(t));
+            }
         }
         StreamEvent::ThinkingDelta(t) => {
             first.get_or_insert_with(|| started.elapsed());
-            client.send_event(session_id, SessionEvent::AgentThought(t));
+            streamed = true;
+            if forward {
+                client.send_event(session_id, SessionEvent::AgentThought(t));
+            }
         }
         StreamEvent::ToolUseStart { .. } => {}
     };
@@ -1725,7 +1986,15 @@ async fn stream_request(
                 Some(ev) => handle(ev, &mut first_token),
                 None => open = false,
             },
-            r = &mut fut => break r?,
+            r = &mut fut => match r {
+                Ok(r) => break r,
+                Err(error) => {
+                    while let Ok(ev) = rx.try_recv() {
+                        handle(ev, &mut first_token);
+                    }
+                    return Err(StreamFail { error, streamed });
+                }
+            },
         }
     };
     while let Ok(ev) = rx.try_recv() {

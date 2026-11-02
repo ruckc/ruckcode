@@ -328,7 +328,7 @@ pub fn interrupted_results(tool_use_ids: &[String]) -> Message {
 /// What a transcript says was left undone. See [`assess_unfinished`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Unfinished {
-    /// The last turn never completed (killed, crashed, provider error) or work was recorded
+    /// The last turn never completed (killed, crashed, provider error, rate limited) or work was recorded
     /// after the last turn ended.
     pub interrupted: bool,
     /// Content of the last `TodoWrite` plan's items that are not completed.
@@ -346,7 +346,7 @@ impl Unfinished {
 /// Scan the records (cheaply, front to back) for unfinished work.
 ///
 /// A session is interrupted when conversation records (user/assistant message, tool call or
-/// result) follow the last `turn_end`, or the last turn ended in an error. A turn the user
+/// result) follow the last `turn_end`, or the last turn ended in an error or a rate limit. A turn the user
 /// cancelled on purpose is not interrupted. Independently, the last `TodoWrite` plan with items
 /// that are not `completed` counts as open tasks. `session_dismissed` clears both until newer
 /// records appear.
@@ -363,7 +363,10 @@ pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
             | Record::ToolResult { .. } => work_after_end = true,
             Record::TurnEnd { stop_reason, .. } => {
                 work_after_end = false;
-                bad_end = matches!(stop_reason.as_str(), "error" | "interrupted");
+                bad_end = matches!(
+                    stop_reason.as_str(),
+                    "error" | "interrupted" | "rate_limited"
+                );
             }
             Record::SessionDismissed {} => {
                 work_after_end = false;
@@ -576,6 +579,7 @@ mod tests {
         assert!(a(vec![user("x")]).interrupted);
         assert!(a(vec![user("x"), turn_end("end_turn"), user("y")]).interrupted);
         assert!(a(vec![user("x"), turn_end("error")]).interrupted);
+        assert!(a(vec![user("x"), turn_end("rate_limited")]).interrupted);
         // Open plan items count even after a clean turn end; completed plans do not.
         let open = a(vec![
             user("x"),

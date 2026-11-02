@@ -8,6 +8,7 @@ pub mod modes;
 pub mod modes_api;
 mod modes_edit;
 pub mod permissions;
+pub mod retry;
 pub mod setup;
 pub mod setup_api;
 pub mod transcript;
@@ -17,7 +18,7 @@ mod prompt;
 
 pub use agent::{
     Agent, AgentOptions, Client, Command, ModeInfo, PermissionDecision, PermissionRequest,
-    SessionEvent, SessionInfo, StopReason, ToolStatus,
+    RateLimitEvent, SessionEvent, SessionInfo, StopReason, ToolStatus,
 };
 pub use config::{Config, Profile, ProviderKind};
 pub use modes::{ModeDef, ModeSet};

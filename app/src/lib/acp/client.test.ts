@@ -31,7 +31,7 @@ describe('AcpClient over a fake transport', () => {
     expect(init.agentInfo?.name).toBe('fake-agent');
     expect(agent.clientCapabilities).toMatchObject({
       session: { notices: {} },
-      _meta: { ruckcode: { askUserQuestion: true, notices: true } }
+      _meta: { ruckcode: { askUserQuestion: true, notices: true, rateLimit: true } }
     });
     const first = agent.received[0];
     expect(first.method).toBe('initialize');

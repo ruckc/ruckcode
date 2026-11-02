@@ -60,7 +60,8 @@ Client capabilities we look at: `session.notices` (standard `notice` updates, se
 | `session/resume` | Same as `session/load` but without replaying history. |
 | `session/list` | `{cwd?, cursor?}` -> `{sessions: [{sessionId, cwd, title, updatedAt, _meta}]}`, newest first, never paginated. `title` is the first line of the first prompt; `_meta.ruckcode` has `createdAt`, `mode`, `firstPrompt`. Sessions are stored per project, so a missing `cwd` lists the agent process's working directory. |
 | `session/close` | Cancels any running prompt and drops the session's in-memory state (MCP connections included). The transcript stays on disk; `session/load`/`resume` can reopen it. |
-| `session/prompt` | Returns `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). |
+| `session/prompt` | Returns `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). A rate limit too long to wait out is reported as `end_turn` with `_meta.ruckcode.stopReason = "rate_limited"`. |
+| `_ruckcode/rate_limit` | Notification (agent -> client, when the client advertises `_meta.ruckcode.rateLimit`): `{sessionId, status: "waiting"\|"resumed"\|"stopped", reason, limit, waitMs, resumeAtMs, attempt, maxAttempts, message, resetsAtMs}`. `waiting` carries a countdown target (`resumeAtMs`, Unix ms); `resumed` clears it. Other clients get the wait as a notice. |
 | `session/cancel` | Notification. |
 | `session/set_mode` | Emits `current_mode_update`. |
 | `session/set_config_option` | Only the `model` option: `{sessionId, configId: "model", value: "<model id>"}` -> `{configOptions}`. Pins the model for the session like `_ruckcode/set_model`. |

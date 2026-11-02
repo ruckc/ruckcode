@@ -4,8 +4,27 @@
   import Markdown from './Markdown.svelte';
   import ToolCard from './ToolCard.svelte';
 
-  let { items, running, loading }: { items: ChatItem[]; running: boolean; loading: boolean } =
-    $props();
+  import { onDestroy } from 'svelte';
+  import { rateWaitText, type RateWait } from '../state/ratelimit';
+
+  let {
+    items,
+    running,
+    loading,
+    rateWait = null,
+    oncancel
+  }: {
+    items: ChatItem[];
+    running: boolean;
+    loading: boolean;
+    rateWait?: RateWait | null;
+    oncancel?: () => void;
+  } = $props();
+
+  // Live countdown: re-render the banner text a few times a second.
+  let now = $state(Date.now());
+  const timer = setInterval(() => (now = Date.now()), 250);
+  onDestroy(() => clearInterval(timer));
 
   let scroller: HTMLElement | undefined = $state();
   let stick = true;
@@ -33,6 +52,7 @@
     max_tokens: 'Stopped: token limit',
     max_turn_requests: 'Stopped: request limit',
     refusal: 'Refused',
+    rate_limited: 'Stopped: rate limited (resume after the reset)',
     error: 'Turn failed'
   };
 </script>
@@ -76,7 +96,12 @@
       </div>
     {/if}
   {/each}
-  {#if running}
+  {#if rateWait}
+    <div class="ratelimit" role="status" data-testid="rate-wait">
+      <span>{rateWaitText(rateWait, now)}</span>
+      {#if oncancel}<button onclick={oncancel} aria-label="Cancel the wait">Cancel</button>{/if}
+    </div>
+  {:else if running}
     <div class="working muted" aria-hidden="true"><span class="pulse"></span> working…</div>
   {/if}
 </div>
@@ -97,6 +122,16 @@
   }
   .center {
     align-self: center;
+  }
+  .ratelimit {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-variant-numeric: tabular-nums;
   }
   .msg {
     padding: 6px 12px;

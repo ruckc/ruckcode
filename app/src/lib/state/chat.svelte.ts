@@ -11,6 +11,7 @@ import type { AskUserQuestionRequest, AskUserQuestionResult } from '../acp/ext';
 import type { LineTransport } from '../acp/transport';
 import { connectHost, getTranscripts, type ConnectOptions } from '../host';
 import type { UnfinishedSession } from '../host/transcripts';
+import { rateWaitOf, stopReasonOf, type RateWait } from './ratelimit';
 import { applyUpdate, emptyModel, pushTurnEnd, setConfigOptions, type ChatModel } from './reducer';
 
 export type Status = 'disconnected' | 'connecting' | 'connected' | 'lost';
@@ -43,6 +44,8 @@ export interface SessionView {
   loading: boolean;
   /** Prompts typed while a turn was running; sent in order afterwards. */
   queue: string[];
+  /** The agent is waiting out a rate limit before retrying (live countdown). */
+  rateWait: RateWait | null;
 }
 
 /** Sent by "compact and resume": `/compact` with these instructions, then the continue prompt. */
@@ -61,7 +64,7 @@ export interface ControllerOptions {
 }
 
 function newView(id: string): SessionView {
-  return { id, model: emptyModel(), running: false, loading: false, queue: [] };
+  return { id, model: emptyModel(), running: false, loading: false, queue: [], rateWait: null };
 }
 
 type SessionSetup = {
@@ -200,6 +203,10 @@ export class ChatController {
         : await connectHost(this.opts!);
       const client = new AcpClient(transport, {
         onSessionUpdate: (n: SessionNotification) => this.onUpdate(n),
+        onRateLimit: (n) => {
+          const v = this.sessions[n.sessionId];
+          if (v) v.rateWait = rateWaitOf(n);
+        },
         requestPermission: (request) =>
           new Promise((resolve) => {
             const p: PendingPermission = {
@@ -266,7 +273,10 @@ export class ChatController {
     const c = this.client;
     this.client = null;
     this.cancelDialogs();
-    for (const v of Object.values(this.sessions)) v.running = false;
+    for (const v of Object.values(this.sessions)) {
+      v.running = false;
+      v.rateWait = null;
+    }
     await c?.close().catch(() => {});
   }
 
@@ -280,6 +290,7 @@ export class ChatController {
     this.cancelDialogs();
     for (const v of Object.values(this.sessions)) {
       v.running = false;
+      v.rateWait = null;
       v.queue = [];
     }
   }
@@ -420,7 +431,7 @@ export class ChatController {
     v.running = true;
     try {
       const res = await client.prompt(v.id, text);
-      pushTurnEnd(v.model, res.stopReason);
+      pushTurnEnd(v.model, stopReasonOf(res));
     } catch (e) {
       if (this.client === client) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -429,6 +440,7 @@ export class ChatController {
       }
     } finally {
       v.running = false;
+      v.rateWait = null;
     }
     if (this.client !== client) return;
     const next = v.queue.shift();

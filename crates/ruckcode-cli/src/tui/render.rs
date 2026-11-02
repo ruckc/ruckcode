@@ -364,6 +364,12 @@ fn render_input(app: &App, f: &mut Frame, area: Rect, rows: &[String], cpos: (us
     }
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
 fn render_status(app: &App, f: &mut Frame, area: Rect) {
     let mode = if app.mode_id.is_empty() {
         "default"
@@ -384,6 +390,20 @@ fn render_status(app: &App, f: &mut Frame, area: Rect) {
         left.push(Span::styled(format!(" · {id}"), dim()));
     }
     left.push(Span::styled(format!(" · {}", app.tokens_label()), dim()));
+    if let Some(text) = app.rate_wait_text(now_ms()) {
+        let line = format!(" {} {text} \u{b7} esc to cancel", spinner(app));
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                line,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ))),
+            area,
+        );
+        return;
+    }
     let right = if app.running {
         format!("{} esc to interrupt ", spinner(app))
     } else if let Some(v) = &app.update_available {

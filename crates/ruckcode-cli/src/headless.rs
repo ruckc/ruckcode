@@ -16,6 +16,9 @@ use serde_json::{json, Value};
 use crate::client::{self, AskResponse};
 use crate::{Cli, OutputFormat};
 
+/// Exit code of `rc -p` when a rate limit ended the turn (`EX_TEMPFAIL`).
+pub const EXIT_RATE_LIMITED: u8 = 75;
+
 pub struct Policy {
     pub allow: Vec<String>,
     pub yolo: bool,
@@ -72,7 +75,19 @@ impl Handler for HeadlessHandler {
     }
 
     async fn notification(&self, method: &str, params: Value) {
-        if method != schema::SESSION_UPDATE || self.quiet.load(Ordering::Relaxed) {
+        if self.quiet.load(Ordering::Relaxed) {
+            return;
+        }
+        if method == schema::RATE_LIMIT {
+            // Same envelope as `session/update` so stream-json consumers read one stream.
+            if self.format == OutputFormat::StreamJson {
+                println!("{}", rate_limit_stream_line(&params));
+            } else if let Some(line) = rate_limit_text(&params) {
+                eprintln!("\x1b[2mrc: {line}\x1b[0m");
+            }
+            return;
+        }
+        if method != schema::SESSION_UPDATE {
             return;
         }
         if self.format == OutputFormat::StreamJson {
@@ -108,6 +123,37 @@ impl Handler for HeadlessHandler {
             _ => {}
         }
     }
+}
+
+/// stream-json line for a `_ruckcode/rate_limit` notification:
+/// `{"sessionId", "update": {"sessionUpdate": "rate_limit", "status": "waiting"|"resumed"|"stopped", ...}}`.
+fn rate_limit_stream_line(params: &Value) -> Value {
+    let mut update = params.clone();
+    let session_id = update
+        .as_object_mut()
+        .and_then(|o| o.remove("sessionId"))
+        .unwrap_or(Value::Null);
+    if let Some(o) = update.as_object_mut() {
+        o.insert("sessionUpdate".into(), json!("rate_limit"));
+    }
+    json!({"sessionId": session_id, "update": update})
+}
+
+/// One human line for stderr: "Rate limited (tokens/minute) - retrying in 51s (retry 1/6)".
+fn rate_limit_text(params: &Value) -> Option<String> {
+    if params["status"] != "waiting" {
+        return None;
+    }
+    let secs = params["waitMs"].as_u64().unwrap_or(0).div_ceil(1000);
+    let retry = match params["attempt"].as_u64() {
+        Some(n) if n > 0 => format!(" (retry {n}/{})", params["maxAttempts"]),
+        _ => String::new(),
+    };
+    Some(format!(
+        "{} - retrying in {}{retry}",
+        params["reason"].as_str().unwrap_or("Rate limited"),
+        ruckcode_core::retry::format_wait(std::time::Duration::from_secs(secs))
+    ))
 }
 
 const STDIN_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
@@ -233,6 +279,12 @@ pub async fn run(cli: &Cli) -> Result<u8> {
     let v = res
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("prompt failed")?;
+    if v["_meta"]["ruckcode"]["stopReason"] == "rate_limited" {
+        // The explanation (budget, reset time) was printed as a notice. 75 = EX_TEMPFAIL:
+        // retry later, which is exactly what the session allows (`--continue`).
+        eprintln!("rc: stopped: rate limited; continue the session after the limit resets");
+        return Ok(EXIT_RATE_LIMITED);
+    }
     let stop: StopReason = serde_json::from_value(v.get("stopReason").cloned().unwrap_or_default())
         .context("bad prompt response")?;
     Ok(match stop {

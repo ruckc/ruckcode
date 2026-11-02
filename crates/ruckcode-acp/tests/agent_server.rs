@@ -765,6 +765,7 @@ impl Provider for UsageProvider {
                 input_tokens: 1200,
                 output_tokens: 34,
             },
+            rate_limit: None,
         })
     }
 }

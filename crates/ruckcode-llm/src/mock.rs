@@ -21,6 +21,8 @@
 //! | `mock:mode <id>`               | `SwitchMode` tool call with a reason                       |
 //! | `mock:think`                   | a thinking block (signature `mock`) plus text              |
 //! | `mock:tool <Name> <json>`      | arbitrary tool call                                        |
+//! | `mock:ratelimit [ms]`          | one 429 asking to retry after `ms` (default 1500), then reply |
+//! | `mock:ratelimit-daily`         | 429 with an exhausted daily credit budget (resets in 1h)   |
 //! | anything else                  | help text echoing the prompt, streamed in chunks           |
 //!
 //! A tool is only called when the request offers it; otherwise the reply is text saying so.
@@ -44,6 +46,11 @@ use tokio::sync::mpsc::UnboundedSender;
 pub struct MockProvider {
     responses: Mutex<VecDeque<Message>>,
     pub requests: Mutex<Vec<Request>>,
+    /// Failures returned (one per request, before any scripted response) ahead of the queue.
+    failures: Mutex<VecDeque<anyhow::Error>>,
+    /// Rate-limit headers attached to every successful response.
+    rate_limit: Mutex<Option<crate::RateLimitInfo>>,
+    limited: Mutex<std::collections::HashSet<String>>,
     demo: bool,
     counter: AtomicU64,
 }
@@ -62,6 +69,16 @@ impl MockProvider {
             demo: true,
             ..Default::default()
         }
+    }
+
+    /// Make the next request fail with `err` (queued in order, ahead of scripted responses).
+    pub fn push_failure(&self, err: impl Into<anyhow::Error>) {
+        self.failures.lock().unwrap().push_back(err.into());
+    }
+
+    /// Attach rate-limit headers to every successful response (proactive pacing tests).
+    pub fn set_rate_limit(&self, info: Option<crate::RateLimitInfo>) {
+        *self.rate_limit.lock().unwrap() = info;
     }
 
     pub fn push(&self, m: Message) {
@@ -86,6 +103,42 @@ impl MockProvider {
                 input,
             }],
         }
+    }
+
+    /// `mock:ratelimit [ms]` fails once per prompt with a 429 asking to retry after `ms`
+    /// milliseconds (default 1500); `mock:ratelimit-daily` always fails with an exhausted daily
+    /// credit budget that resets in an hour.
+    fn demo_failure(&self, request: &Request) -> Option<anyhow::Error> {
+        let last = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)?;
+        let text = last.text();
+        let rest = strip_prefix_ci(text.trim(), "mock:ratelimit")?;
+        let limited = |headers: &[(String, String)], body: &str| {
+            let info = crate::RateLimitInfo::parse(headers, body, std::time::SystemTime::now());
+            crate::ApiError::new("mock", 429, body.to_string(), info).into()
+        };
+        if rest.starts_with("-daily") {
+            return Some(limited(
+                &[
+                    ("X-RateLimit-Limit-Credits-Day".into(), "2000000".into()),
+                    ("X-RateLimit-Remaining-Credits-Day".into(), "0".into()),
+                    ("X-RateLimit-Reset-Credits-Day".into(), "3600".into()),
+                ],
+                r#"{"error":{"type":"rate_limit_exceeded","message":"daily credit budget exhausted","code":"daily_credits_exceeded"}}"#,
+            ));
+        }
+        let ms: u64 = rest.trim().parse().unwrap_or(1500);
+        let key = format!("{}#{}", text, request.messages.len());
+        if !self.limited.lock().unwrap().insert(key) {
+            return None;
+        }
+        Some(limited(
+            &[("retry-after-ms".into(), ms.to_string())],
+            r#"{"error":{"type":"rate_limit_exceeded","message":"mock rate limit","code":"tokens_per_minute_exceeded"}}"#,
+        ))
     }
 
     fn demo_reply(&self, request: &Request) -> Message {
@@ -295,7 +348,11 @@ impl Provider for MockProvider {
         events: UnboundedSender<StreamEvent>,
     ) -> anyhow::Result<Response> {
         let demo_msg = self.demo.then(|| self.demo_reply(&request));
+        let demo_fail = self.demo.then(|| self.demo_failure(&request)).flatten();
         self.requests.lock().unwrap().push(request);
+        if let Some(e) = self.failures.lock().unwrap().pop_front().or(demo_fail) {
+            return Err(e);
+        }
         let message = demo_msg.unwrap_or_else(|| {
             self.responses
                 .lock()
@@ -344,6 +401,7 @@ impl Provider for MockProvider {
             message,
             stop_reason,
             usage: Usage::default(),
+            rate_limit: self.rate_limit.lock().unwrap().clone(),
         })
     }
 }

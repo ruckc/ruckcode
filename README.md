@@ -74,6 +74,27 @@ Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` 
 `allow` / `ask` / `deny`), and global `[[hooks.<event>]]` tables. `RUCKCODE_PROFILE` overrides
 `default_profile`; `--profile` and `--model` override per run.
 
+### Rate limits and retries
+
+HTTP 429, overloaded (529/503), other transient 5xx and dropped connections are retried
+automatically; a failed attempt is discarded and the request restarted, so the transcript never
+holds partial or duplicated output. The server's timing is honoured (`retry_after_seconds` in the
+body, `Retry-After` / `RetryAfter` / `retry-after-ms`, then the reset of the exhausted
+`X-RateLimit-*` / `anthropic-ratelimit-*` bucket); without it the agent backs off exponentially
+with jitter. A wait of up to `max_auto_wait_secs` is waited out with a live countdown ("Rate
+limited (tokens/minute) - retrying in 51s"); Esc / Stop cancels it like any turn. A longer wait,
+such as an exhausted daily credit budget, ends the turn as `rate_limited` with the budget and the
+reset time; the session stays usable and shows up in the resume offer. After a response that
+leaves a per-minute bucket empty, the next request is delayed until that reset instead of being
+sent into a 429.
+
+```toml
+[rate_limit]
+max_auto_wait_secs = 60   # longest wait the agent sits out itself (default 60)
+max_retries = 6           # retries per request (default 6)
+pacing = true             # delay requests until an emptied per-minute bucket resets (default true)
+```
+
 ## Setup
 
 The first time you run interactive `rc` without a usable profile (one with a stored key, or a
@@ -426,7 +447,9 @@ rc -p --output-format stream-json "..."        # raw session/update notification
 
 Other flags: `--mode`, `--profile`, `--model`, `--cwd`, `-c`, `-r <ID>`. Without `--allow`/`--yolo`
 permission requests are denied; AskUserQuestion is cancelled. Exit codes: `0` finished (end of turn),
-`130` cancelled (Ctrl+C), `1` any error or other stop reason.
+`130` cancelled (Ctrl+C), `75` stopped by a rate limit too long to wait out (continue later with
+`-c`), `1` any error or other stop reason. Waits are announced on stderr; with `stream-json` they
+are `{"sessionId", "update": {"sessionUpdate": "rate_limit", "status": "waiting"|"resumed"|"stopped", ...}}` lines.
 
 ## Editor integration (ACP)
 

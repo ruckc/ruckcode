@@ -50,6 +50,8 @@ pub enum UiEvent {
         reply: oneshot::Sender<AskResponse>,
     },
     TurnDone(Result<String, String>),
+    /// `_ruckcode/rate_limit` notification params.
+    RateLimit(Value),
     Started(Started),
     ModeSet(String),
     ModelSet(Option<String>),
@@ -92,6 +94,10 @@ impl Handler for TuiHandler {
     }
 
     async fn notification(&self, method: &str, params: Value) {
+        if method == schema::RATE_LIMIT {
+            let _ = self.tx.send(UiEvent::RateLimit(params));
+            return;
+        }
         if method != schema::SESSION_UPDATE {
             return;
         }
@@ -233,10 +239,8 @@ impl Ctx {
                 )
                 .await;
             let _ = tx.send(UiEvent::TurnDone(match r {
-                Ok(r) => Ok(serde_json::to_value(r.stop_reason)
-                    .ok()
-                    .and_then(|v| v.as_str().map(str::to_string))
-                    .unwrap_or_default()),
+                // `rate_limited` rides in `_meta` because it is not an ACP stop reason.
+                Ok(r) => Ok(client::real_stop_reason(&r)),
                 Err(e) => Err(e.to_string()),
             }));
         });
@@ -460,12 +464,21 @@ fn handle_ui_event(
         }
         UiEvent::Permission { req, reply } => app.request_permission(req, reply),
         UiEvent::Ask { req, reply } => app.ask_questions(req, reply),
+        UiEvent::RateLimit(params) => app.handle_rate_limit(&params),
         UiEvent::TurnDone(r) => {
+            let limited = matches!(&r, Ok(s) if s == "rate_limited");
             match r {
                 Ok(stop) => app.end_turn(None, Some(&stop)),
                 Err(e) => app.end_turn(Some(e), None),
             }
-            if let (Some(text), Some(sid)) = (app.next_queued(), app.session_id.clone()) {
+            // Queued messages would only hit the same limit again: hold them until the user
+            // sends something after the reset.
+            if limited && !app.queue.is_empty() {
+                app.notice(format!(
+                    "{} queued message(s) are held and go out after your next message",
+                    app.queue.len()
+                ));
+            } else if let (Some(text), Some(sid)) = (app.next_queued(), app.session_id.clone()) {
                 ctx.prompt(&sid, text);
             }
         }
