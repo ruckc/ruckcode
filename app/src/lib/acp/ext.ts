@@ -31,8 +31,26 @@ export interface AskUserQuestionResult {
   cancelled: boolean;
 }
 
+/** Method name of the rate-limit status notification (agent -> client). */
+export const RATE_LIMIT = '_ruckcode/rate_limit';
+
+export const rateLimitSchema = z.object({
+  sessionId: z.string(),
+  status: z.enum(['waiting', 'resumed', 'stopped']),
+  reason: z.string().optional().nullable(),
+  limit: z.string().optional().nullable(),
+  waitMs: z.number().optional().nullable(),
+  resumeAtMs: z.number().optional().nullable(),
+  attempt: z.number().optional().nullable(),
+  maxAttempts: z.number().optional().nullable(),
+  resetsAtMs: z.number().optional().nullable(),
+  message: z.string().optional().nullable()
+});
+
+export type RateLimitNotification = z.infer<typeof rateLimitSchema>;
+
 /** Capabilities advertised in `initialize`. */
 export const CLIENT_CAPABILITIES = {
   session: { notices: {} },
-  _meta: { ruckcode: { askUserQuestion: true, notices: true } }
+  _meta: { ruckcode: { askUserQuestion: true, notices: true, rateLimit: true } }
 } as const;

@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use ruckcode_core::{
-    Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, SessionEvent,
+    Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, RateLimitEvent, SessionEvent,
     SessionInfo as CoreSessionInfo, StopReason as CoreStop, ToolStatus,
 };
 use ruckcode_mcp::McpServerConfig;
@@ -130,8 +130,30 @@ impl Shared {
         model_option(current, &models)
     }
 
+    fn rate_limit_supported(&self) -> bool {
+        supports_rate_limit(&self.caps.lock().unwrap())
+    }
+
     fn convert_event(&self, session_id: &str, ev: SessionEvent) -> Vec<SessionUpdate> {
         match ev {
+            // Clients without the extension see the wait as a notice; `Resumed` and `Stopped`
+            // need nothing (the stop message arrives as its own notice).
+            SessionEvent::RateLimit(r) => match r {
+                RateLimitEvent::Waiting { .. } => {
+                    let text = rate_limit_text(&r);
+                    if self.notices_supported() {
+                        vec![SessionUpdate::Notice(Notice::new(
+                            NoticeSeverity::Info,
+                            text,
+                        ))]
+                    } else {
+                        vec![SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                            text_block(format!("\n> {text}\n")),
+                        ))]
+                    }
+                }
+                _ => vec![],
+            },
             SessionEvent::Notice(n) if self.notices_supported() => {
                 vec![SessionUpdate::Notice(Notice::new(NoticeSeverity::Info, n))]
             }
@@ -165,6 +187,55 @@ fn kind(k: CoreKind) -> ToolKind {
 
 fn text(s: impl Into<String>) -> ContentBlock {
     ContentBlock::from(s.into())
+}
+
+fn text_block(s: String) -> ContentBlock {
+    text(s)
+}
+
+/// "Rate limited (tokens/minute) — retrying in 51s".
+fn rate_limit_text(ev: &RateLimitEvent) -> String {
+    match ev {
+        RateLimitEvent::Waiting {
+            reason, wait_ms, ..
+        } => format!(
+            "{reason} \u{2014} retrying in {}",
+            ruckcode_core::retry::format_wait(std::time::Duration::from_millis(*wait_ms))
+        ),
+        RateLimitEvent::Resumed => "retrying".into(),
+        RateLimitEvent::Stopped { message, .. } => message.clone(),
+    }
+}
+
+/// Params of the `_ruckcode/rate_limit` notification.
+///
+/// `status` is `waiting` (live countdown to `resumeAtMs`, Unix epoch ms), `resumed` (the wait
+/// ended or was cancelled; clear the countdown) or `stopped` (the turn ends; `message` says why
+/// and `resetsAtMs` when the limit resets).
+pub fn rate_limit_params(session_id: &str, ev: &RateLimitEvent) -> Value {
+    match ev {
+        RateLimitEvent::Waiting {
+            reason,
+            limit,
+            wait_ms,
+            resume_at_ms,
+            attempt,
+            max_attempts,
+        } => json!({
+            "sessionId": session_id, "status": "waiting", "reason": reason,
+            "limit": limit, "waitMs": wait_ms, "resumeAtMs": resume_at_ms,
+            "attempt": attempt, "maxAttempts": max_attempts,
+        }),
+        RateLimitEvent::Resumed => json!({"sessionId": session_id, "status": "resumed"}),
+        RateLimitEvent::Stopped {
+            limit,
+            resets_at_ms,
+            message,
+        } => json!({
+            "sessionId": session_id, "status": "stopped", "limit": limit,
+            "resetsAtMs": resets_at_ms, "message": message,
+        }),
+    }
 }
 
 /// The `model` select option: `current` first if it is not among `models`.
@@ -271,6 +342,9 @@ fn convert_event(ev: SessionEvent) -> SessionUpdate {
         SessionEvent::ModelChanged(m) => {
             SessionUpdate::AgentMessageChunk(ContentChunk::new(text(format!("\n> model: {m}\n"))))
         }
+        SessionEvent::RateLimit(r) => SessionUpdate::AgentMessageChunk(ContentChunk::new(text(
+            format!("\n> {}\n", rate_limit_text(&r)),
+        ))),
     }
 }
 
@@ -386,6 +460,14 @@ impl Client for Bridge {
     }
 
     fn send_event(&self, session_id: &str, event: SessionEvent) {
+        if let SessionEvent::RateLimit(r) = &event {
+            if self.0.rate_limit_supported() {
+                if let Ok(conn) = self.0.conn() {
+                    let _ = conn.notify(RATE_LIMIT, rate_limit_params(session_id, r));
+                }
+                return;
+            }
+        }
         for u in self.0.convert_event(session_id, event) {
             self.0.update(session_id, u);
         }
@@ -626,13 +708,21 @@ impl Handler for AcpAgent {
                     .agent()
                     .prompt(&session_id.0, prompt_to_text(&blocks), self.client())
                     .await?;
-                to_value(&PromptResponse::new(match stop {
+                // `rate_limited` is not an ACP stop reason: report `end_turn` and carry the real
+                // reason in `_meta.ruckcode.stopReason` for clients that know about it.
+                let rate_limited = stop == CoreStop::RateLimited;
+                let mut resp = to_value(&PromptResponse::new(match stop {
+                    CoreStop::RateLimited => StopReason::EndTurn,
                     CoreStop::EndTurn => StopReason::EndTurn,
                     CoreStop::MaxTokens => StopReason::MaxTokens,
                     CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,
                     CoreStop::Cancelled => StopReason::Cancelled,
                     CoreStop::Refusal => StopReason::Refusal,
-                }))
+                }))?;
+                if rate_limited {
+                    resp["_meta"] = json!({"ruckcode": {"stopReason": "rate_limited"}});
+                }
+                Ok(resp)
             }
             SESSION_SET_MODE => {
                 let req: SetSessionModeRequest = parse(params)?;

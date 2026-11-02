@@ -1,10 +1,10 @@
 //! Anthropic Messages API client (streaming, tool use, prompt caching).
 
 use crate::{
-    http_client, sse, ContentBlock, Message, PartialToolUse, Provider, Request, Response, Role,
-    StopReason, StreamEvent, Usage,
+    http_client, ratelimit, sse, ApiError, ContentBlock, Message, PartialToolUse, Provider,
+    RateLimitInfo, Request, Response, Role, StopReason, StreamEvent, Usage,
 };
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -126,10 +126,9 @@ impl Provider for Anthropic {
             .await
             .context("sending request to Anthropic")?;
         if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            bail!("Anthropic API error {status}: {text}");
+            return Err(ratelimit::api_error("Anthropic", resp).await.into());
         }
+        let rate_limit = ratelimit::from_success(&resp);
 
         let mut blocks: Vec<Block> = Vec::new();
         let mut stop_reason = StopReason::Other;
@@ -209,7 +208,21 @@ impl Provider for Anthropic {
                     };
                     usage.output_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(0);
                 }
-                "error" => return Err(anyhow!("Anthropic stream error: {}", v["error"])),
+                "error" => {
+                    let status = ratelimit::stream_error_status(
+                        v["error"]["type"].as_str().unwrap_or_default(),
+                    );
+                    if status == 0 {
+                        return Err(anyhow!("Anthropic stream error: {}", v["error"]));
+                    }
+                    return Err(ApiError::new(
+                        "Anthropic",
+                        status,
+                        v["error"].to_string(),
+                        RateLimitInfo::default(),
+                    )
+                    .into());
+                }
                 _ => {}
             }
         }
@@ -234,6 +247,7 @@ impl Provider for Anthropic {
             },
             stop_reason,
             usage,
+            rate_limit,
         })
     }
 }

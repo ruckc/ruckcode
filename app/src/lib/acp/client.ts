@@ -17,6 +17,9 @@ import {
 import {
   ASK_USER_QUESTION,
   CLIENT_CAPABILITIES,
+  RATE_LIMIT,
+  rateLimitSchema,
+  type RateLimitNotification,
   askUserQuestionRequestSchema,
   type AskUserQuestionRequest,
   type AskUserQuestionResult
@@ -28,6 +31,8 @@ export interface ClientHandlers {
   onSessionUpdate(n: SessionNotification): void;
   requestPermission(req: RequestPermissionRequest): Promise<RequestPermissionResponse>;
   askUserQuestion(req: AskUserQuestionRequest): Promise<AskUserQuestionResult>;
+  /** A model request is waiting out a rate limit, resumed, or the turn was stopped by one. */
+  onRateLimit?(n: RateLimitNotification): void;
 }
 
 export interface ClientInfo {
@@ -51,6 +56,11 @@ export class AcpClient {
       .onNotification(methods.client.session.update, ({ params }) => {
         handlers.onSessionUpdate(params);
       })
+      .onNotification(
+        RATE_LIMIT,
+        (params: unknown) => rateLimitSchema.parse(params),
+        ({ params }) => handlers.onRateLimit?.(params)
+      )
       .onRequest(methods.client.session.requestPermission, ({ params }) =>
         handlers.requestPermission(params)
       )

@@ -70,3 +70,39 @@ fn plain_prompt_lists_commands() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("You said: hi there") && stdout.contains("mock:ask"));
 }
+
+#[test]
+fn short_rate_limit_is_waited_out_and_reported_as_stream_json() {
+    let (proj, home) = project();
+    let out = rc(
+        proj.path(),
+        home.path(),
+        &["-p", "mock:ratelimit 60", "--output-format", "stream-json"],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<serde_json::Value> = stdout
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let rl: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|v| v["update"]["sessionUpdate"] == "rate_limit")
+        .collect();
+    assert_eq!(rl[0]["update"]["status"], "waiting", "{stdout}");
+    assert_eq!(rl[0]["update"]["reason"], "Rate limited (tokens/minute)");
+    assert_eq!(rl[0]["update"]["limit"], "tokens_per_minute");
+    assert!(rl[0]["update"]["resumeAtMs"].as_u64().unwrap() > 0);
+    assert_eq!(rl.last().unwrap()["update"]["status"], "resumed");
+    assert!(stdout.contains("You said: mock:ratelimit 60"), "{stdout}");
+}
+
+#[test]
+fn exhausted_daily_budget_exits_75_with_an_explanation() {
+    let (proj, home) = project();
+    let out = rc(proj.path(), home.path(), &["-p", "mock:ratelimit-daily"]);
+    assert_eq!(out.status.code(), Some(75), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("daily credit budget"), "{stderr}");
+    assert!(stderr.contains("rate limited"), "{stderr}");
+}

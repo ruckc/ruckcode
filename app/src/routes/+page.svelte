@@ -342,7 +342,13 @@
         />
       {/key}
     {:else if active}
-      <ChatView items={active.model.items} running={active.running} loading={active.loading} />
+      <ChatView
+        items={active.model.items}
+        running={active.running}
+        loading={active.loading}
+        rateWait={active.rateWait}
+        oncancel={() => chat.cancel()}
+      />
     {:else}
       <div class="welcome">
         {#if chat.connected}

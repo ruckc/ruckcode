@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::permissions::Permission;
+use crate::retry::RateLimitConfig;
 
 const DEFAULTS: &str = r#"
 default_profile = "anthropic"
@@ -153,6 +154,9 @@ pub struct Config {
     pub permissions: BTreeMap<String, Permission>,
     #[serde(default)]
     pub hooks: HooksConfig,
+    /// Retry and wait behaviour for 429 / overloaded / transient API failures (`[rate_limit]`).
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 impl Default for Config {

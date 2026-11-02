@@ -4,9 +4,11 @@ pub mod anthropic;
 pub mod mock;
 pub mod models;
 pub mod openai;
+pub mod ratelimit;
 mod sse;
 
 pub use models::{list_models, ApiKind, ModelInfo};
+pub use ratelimit::{is_transport_error, ApiError, Bucket, LimitKind, RateLimitInfo};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -128,6 +130,8 @@ pub struct Response {
     pub message: Message,
     pub stop_reason: StopReason,
     pub usage: Usage,
+    /// Rate-limit headers the server sent with this response (used for proactive pacing).
+    pub rate_limit: Option<RateLimitInfo>,
 }
 
 /// Incremental output while a response streams.

@@ -104,6 +104,27 @@ describe('ChatView', () => {
     expect(screen.getByTestId('turn-end')).toHaveTextContent('Cancelled');
     expect(screen.getByTestId('turn-end')).toHaveTextContent('cancelled');
   });
+
+  it('shows the rate-limit countdown with a working cancel button', async () => {
+    const oncancel = vi.fn();
+    render(ChatView, {
+      items: [{ kind: 'user', text: 'go' }],
+      running: true,
+      loading: false,
+      rateWait: {
+        reason: 'Rate limited (tokens/minute)',
+        resumeAtMs: Date.now() + 51_000,
+        attempt: 1,
+        maxAttempts: 6
+      },
+      oncancel
+    });
+    expect(screen.getByTestId('rate-wait')).toHaveTextContent(
+      /Rate limited \(tokens\/minute\) — retrying in (50|51)s \(retry 1\/6\)/
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel the wait' }));
+    expect(oncancel).toHaveBeenCalled();
+  });
 });
 
 function composer(over: Record<string, unknown> = {}) {

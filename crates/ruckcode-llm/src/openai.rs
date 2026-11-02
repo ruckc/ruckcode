@@ -1,10 +1,10 @@
 //! OpenAI-compatible Chat Completions client (OpenAI, Ollama, OpenRouter, vLLM, ...).
 
 use crate::{
-    http_client, sse, ContentBlock, Message, PartialToolUse, Provider, Request, Response, Role,
-    StopReason, StreamEvent, Usage,
+    http_client, ratelimit, sse, ContentBlock, Message, PartialToolUse, Provider, Request,
+    Response, Role, StopReason, StreamEvent, Usage,
 };
-use anyhow::{bail, Context};
+use anyhow::Context;
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -134,10 +134,9 @@ impl Provider for OpenAi {
             .await
             .context("sending request to OpenAI-compatible API")?;
         if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            bail!("OpenAI-compatible API error {status}: {text}");
+            return Err(ratelimit::api_error("OpenAI-compatible", resp).await.into());
         }
+        let rate_limit = ratelimit::from_success(&resp);
 
         let mut text = String::new();
         let mut reasoning = String::new();
@@ -238,6 +237,7 @@ impl Provider for OpenAi {
             },
             stop_reason,
             usage,
+            rate_limit,
         })
     }
 }

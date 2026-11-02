@@ -416,6 +416,45 @@ export class FakeAgent implements LineTransport {
       return this.respond(id, { stopReason: 'end_turn' });
     }
     if (input.startsWith('mock:error')) return this.fail(id, -32000, 'mock agent failure');
+    if (input.startsWith('mock:ratelimit-daily')) {
+      const message =
+        'Rate limited: the daily credit budget is used up (0 of 2,000,000 remaining). It resets in 1h 0m. The session is saved; send a message after the reset to continue.';
+      this.emit({
+        method: '_ruckcode/rate_limit',
+        params: {
+          sessionId: sid,
+          status: 'stopped',
+          limit: 'daily_credits',
+          resetsAtMs: Date.now() + 3_600_000,
+          message
+        }
+      });
+      this.update(sid, { sessionUpdate: 'notice', severity: 'info', title: message });
+      return this.respond(id, {
+        stopReason: 'end_turn',
+        _meta: { ruckcode: { stopReason: 'rate_limited' } }
+      });
+    }
+    if (input.startsWith('mock:ratelimit')) {
+      const ms = Number(input.split(' ')[1] ?? 1500) || 1500;
+      this.emit({
+        method: '_ruckcode/rate_limit',
+        params: {
+          sessionId: sid,
+          status: 'waiting',
+          reason: 'Rate limited (tokens/minute)',
+          limit: 'tokens_per_minute',
+          waitMs: ms,
+          resumeAtMs: Date.now() + ms,
+          attempt: 1,
+          maxAttempts: 6
+        }
+      });
+      const until = Date.now() + ms;
+      while (Date.now() < until && !this.cancelled) await this.pause(10);
+      this.emit({ method: '_ruckcode/rate_limit', params: { sessionId: sid, status: 'resumed' } });
+      if (this.cancelled) return this.respond(id, { stopReason: 'cancelled' });
+    }
 
     await this.text(sid, 'agent_thought_chunk', 'Looking at the request. ');
     if (input.startsWith('mock:write ')) {

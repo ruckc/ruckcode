@@ -152,6 +152,35 @@ pub struct App {
     pub update_available: Option<String>,
     /// Set by "compact and resume": once the session is loaded, run `/compact` then carry on.
     pub resume_compact: bool,
+    /// The agent is waiting out a rate limit or transient API failure before retrying.
+    pub rate_wait: Option<RateWait>,
+}
+
+/// A retry wait announced by the agent (`_ruckcode/rate_limit`, status `waiting`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RateWait {
+    pub reason: String,
+    /// Unix epoch milliseconds when the request is sent again.
+    pub resume_at_ms: u64,
+    pub attempt: u32,
+    pub max_attempts: u32,
+}
+
+impl RateWait {
+    /// "Rate limited (tokens/minute) - retrying in 51s (retry 1/6)", counting down to zero.
+    pub fn text(&self, now_ms: u64) -> String {
+        let left = self.resume_at_ms.saturating_sub(now_ms).div_ceil(1000);
+        let retry = if self.attempt > 0 {
+            format!(" (retry {}/{})", self.attempt, self.max_attempts)
+        } else {
+            String::new()
+        };
+        format!(
+            "{} \u{2014} retrying in {}{retry}",
+            self.reason,
+            ruckcode_core::retry::format_wait(std::time::Duration::from_secs(left))
+        )
+    }
 }
 
 pub const HELP: &str = "/help  this help\n/mode <id>  switch mode (shift+tab cycles)\n/modes  list modes\n/model [id|default]  pick the model for this session\n/setup  run the setup wizard\n/clear  clear the conversation (the model starts fresh)\n/compact [instructions]  summarize the conversation to free up context\n/new  start a new session\n/resume, /sessions  pick a previous session\n/init  how to configure modes\n/quit  exit\nenter: send  alt+enter / shift+enter / ctrl+j: newline  esc: interrupt  ctrl+t: thoughts  pgup/pgdn: scroll  ctrl+c twice: quit";
@@ -186,6 +215,7 @@ impl App {
             usage: None,
             update_available: None,
             resume_compact: false,
+            rate_wait: None,
         }
     }
 
@@ -200,6 +230,7 @@ impl App {
         self.queue.clear();
         self.chars_streamed = 0;
         self.usage = None;
+        self.rate_wait = None;
     }
 
     pub fn set_modes(&mut self, modes: Vec<SessionMode>, current: String) {
@@ -416,12 +447,36 @@ impl App {
         text
     }
 
+    /// Apply a `_ruckcode/rate_limit` notification: show or clear the retry countdown. The
+    /// message of a final `stopped` arrives as a regular notice.
+    pub fn handle_rate_limit(&mut self, p: &Value) {
+        if p["sessionId"].as_str() != self.session_id.as_deref() {
+            return;
+        }
+        self.rate_wait = match p["status"].as_str() {
+            Some("waiting") => Some(RateWait {
+                reason: p["reason"].as_str().unwrap_or("Rate limited").to_string(),
+                resume_at_ms: p["resumeAtMs"].as_u64().unwrap_or(0),
+                attempt: p["attempt"].as_u64().unwrap_or(0) as u32,
+                max_attempts: p["maxAttempts"].as_u64().unwrap_or(0) as u32,
+            }),
+            _ => None,
+        };
+    }
+
+    /// The countdown line while waiting out a rate limit.
+    pub fn rate_wait_text(&self, now_ms: u64) -> Option<String> {
+        self.rate_wait.as_ref().map(|w| w.text(now_ms))
+    }
+
     pub fn end_turn(&mut self, err: Option<String>, stop: Option<&str>) {
         self.running = false;
+        self.rate_wait = None;
         if let Some(e) = err {
             self.error(e);
         } else if let Some(s) = stop {
-            if s != "end_turn" {
+            // A rate-limit stop already posted its own explanation.
+            if s != "end_turn" && s != "rate_limited" {
                 self.notice(format!("stopped: {s}"));
             }
         }
@@ -1281,6 +1336,48 @@ mod tests {
         assert!(a.tokens_label().starts_with('~'));
         a.handle_update(SessionUpdate::UsageUpdate(UsageUpdate::new(1234, 200_000)));
         assert_eq!(a.tokens_label(), "1.2k / 200k tok");
+    }
+
+    #[test]
+    fn rate_limit_countdown_and_cancel() {
+        let mut a = App::new("m");
+        a.reset_for_session(Some("s1".into()));
+        a.begin_turn("go".into());
+        let waiting = |at: u64| {
+            serde_json::json!({"sessionId": "s1", "status": "waiting",
+                "reason": "Rate limited (tokens/minute)",
+                "waitMs": 51000, "resumeAtMs": at, "attempt": 1, "maxAttempts": 6})
+        };
+        a.handle_rate_limit(&waiting(1_051_000));
+        assert_eq!(
+            a.rate_wait_text(1_000_000).as_deref(),
+            Some("Rate limited (tokens/minute) \u{2014} retrying in 51s (retry 1/6)")
+        );
+        // Live countdown, rounding up, never below zero.
+        assert!(a
+            .rate_wait_text(1_040_500)
+            .unwrap()
+            .contains("retrying in 11s"));
+        assert!(a
+            .rate_wait_text(2_000_000)
+            .unwrap()
+            .contains("retrying in 0s"));
+        // Another session's updates are ignored.
+        let mut other = waiting(5);
+        other["sessionId"] = serde_json::json!("s2");
+        a.handle_rate_limit(&other);
+        assert!(a.rate_wait.is_some());
+        // Esc cancels the wait through the normal cancel path; the turn then ends cleanly.
+        assert_eq!(a.handle_key(key(KeyCode::Esc)), Action::Cancel);
+        a.handle_rate_limit(&serde_json::json!({"sessionId": "s1", "status": "resumed"}));
+        assert!(a.rate_wait.is_none());
+        a.handle_rate_limit(&waiting(9));
+        a.end_turn(None, Some("cancelled"));
+        assert!(a.rate_wait.is_none() && !a.running);
+        // A rate-limit stop adds no duplicate "stopped:" line (the notice explains it).
+        let n = a.blocks.len();
+        a.end_turn(None, Some("rate_limited"));
+        assert_eq!(a.blocks.len(), n);
     }
 
     #[test]
