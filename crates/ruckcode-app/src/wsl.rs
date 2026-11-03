@@ -528,7 +528,8 @@ impl Default for Sha256 {
 
 /// POSIX `sh` script that receives the `rc` binary on STDIN (no network, no UNC paths) and
 /// installs it as `~/.local/bin/rc`: write to `rc.tmp`, verify the SHA-256 when `sha256sum`
-/// exists, `chmod 0755`, atomically `mv` over `rc`. `sha256` is the host-computed digest.
+/// exists, `chmod 0755`, atomically `mv` over `rc`, and leaves the `.rc-managed-by-app` marker
+/// that keeps `rc` from self-updating this copy. `sha256` is the host-computed digest.
 pub fn stdin_copy_script(sha256: &str) -> Result<String, String> {
     if sha256.len() != 64 || !sha256.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
         return Err("invalid sha256".into());
@@ -550,6 +551,8 @@ else
   echo "[rc-install] sha256sum not found in the distro; checksum not verified"
 fi
 chmod 0755 "$d/rc.tmp" && mv -f "$d/rc.tmp" "$d/rc" || {{ echo "[rc-install] error: cannot install $d/rc"; rm -f "$d/rc.tmp"; exit 2; }}
+# Tells `rc update` / the background auto-update to leave this copy to the app.
+: > "$d/.rc-managed-by-app" 2>/dev/null
 echo "[rc-install] installed $d/rc"
 "#
     ))
@@ -1742,6 +1745,7 @@ cp "$f" "$out"
             0o755
         );
         assert!(!home.join(".local/bin/rc.tmp").exists());
+        assert!(home.join(".local/bin/.rc-managed-by-app").exists());
         // Truncated transfer: rejected, the installed rc stays untouched.
         let (code, log) = run(&sha256_hex(&bin), &bin[..1000]);
         assert_eq!(code, Some(4), "{log}");

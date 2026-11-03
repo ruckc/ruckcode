@@ -112,11 +112,16 @@ fn env(version: &str, target_ok: bool) -> Env {
 #[test]
 fn check_and_version_only() {
     let e = env("9.9.9", true);
-    let o = rc(&e.exe, &e.base, &["self-update", "--check"], e.dir.path());
+    // `update` is an alias; --check exits 10 when a newer release exists.
+    let o = rc(&e.exe, &e.base, &["update", "--check"], e.dir.path());
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(
-        o.status.success() && out.contains("9.9.9 is available"),
+        o.status.code() == Some(10) && out.contains("9.9.9 is available"),
         "{out}"
+    );
+    assert_eq!(
+        std::fs::read(&e.exe).unwrap(),
+        std::fs::read(env!("CARGO_BIN_EXE_rc")).unwrap()
     );
     let o = rc(
         &e.exe,
@@ -196,4 +201,25 @@ fn no_hint_on_stderr_when_not_a_terminal_or_disabled() {
             .env("RUCKCODE_NO_UPDATE_CHECK", "1"),
     );
     assert!(o.stderr.is_empty());
+}
+
+#[test]
+fn app_managed_copy_exits_11_and_is_left_alone() {
+    let e = env("9.9.9", true);
+    std::fs::write(e.dir.path().join(".rc-managed-by-app"), b"").unwrap();
+    let before = std::fs::read(&e.exe).unwrap();
+    let o = rc(
+        &e.exe,
+        &e.base,
+        &["update", "--yes", "--insecure-skip-signature"],
+        e.dir.path(),
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(11),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("desktop app"));
+    assert_eq!(std::fs::read(&e.exe).unwrap(), before);
 }

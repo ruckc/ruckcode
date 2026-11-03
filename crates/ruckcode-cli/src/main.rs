@@ -111,7 +111,9 @@ pub enum Command {
         #[command(subcommand)]
         action: modes_cmd::ModesAction,
     },
-    /// Update rc to the latest release published on the ruckcode site (verified download).
+    /// Update rc to the latest release (verified download). Exit codes with --check: 0 up to
+    /// date, 10 update available, 11 available but this install must be updated another way.
+    #[command(alias = "update")]
     SelfUpdate(update::SelfUpdateArgs),
     /// List the models an endpoint offers (JSON with --json).
     Models(models_cmd::ModelsArgs),
@@ -229,7 +231,7 @@ async fn main() -> ExitCode {
             .await
             .map(|_| 0),
         Some(Command::Setup(args)) => setup_cmd::run(&cli, args).await.map(|_| 0),
-        Some(Command::SelfUpdate(args)) => update::run(args).await.map(|_| 0),
+        Some(Command::SelfUpdate(args)) => update::run(args).await,
         Some(Command::Models(args)) => models_cmd::run(args).await.map(|_| 0),
         Some(Command::Modes { action }) => modes_cmd::run(&cli, action).await.map(|_| 0),
         Some(Command::Keys { action }) => keys_cmd::run(&cli, action).await.map(|_| 0),
@@ -246,7 +248,19 @@ async fn main() -> ExitCode {
             action: McpAction::List,
         }) => mcp_cmd::list(&cli).await.map(|_| 0),
         None if cli.print => headless::run(&cli).await,
-        None => tui::run(&cli).await.map(|_| 0),
+        None => {
+            // Announce a finished background update before the TUI takes the screen and again
+            // after it gives it back; never while it is up.
+            let announce = || {
+                if let Some(n) = update::take_notice() {
+                    eprintln!("rc: {n}");
+                }
+            };
+            announce();
+            let r = tui::run(&cli).await.map(|_| 0);
+            announce();
+            r
+        }
     };
     match result {
         Ok(code) => ExitCode::from(code),

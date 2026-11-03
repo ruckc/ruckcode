@@ -1,4 +1,4 @@
-//! `rc self-update` and the once-a-day "update available" hint.
+//! `rc update` (alias `self-update`), the once-a-day check and the background auto-update.
 //!
 //! Updates come from the public GitHub Pages site (the repository is private, so release assets
 //! are not downloadable): `<base>/rc/latest.json` lists, per target triple, the archive `url`, its
@@ -24,6 +24,18 @@ pub const DEFAULT_BASE_URL: &str = "https://ruckc.github.io/ruckcode";
 pub const BASE_URL_ENV: &str = "RUCKCODE_UPDATE_BASE_URL";
 /// `1` (or any non-empty value other than `0`) disables the daily hint.
 pub const NO_CHECK_ENV: &str = "RUCKCODE_NO_UPDATE_CHECK";
+/// Same effect, shorter: `RC_NO_UPDATE=1` disables the check and the auto-update.
+pub const NO_UPDATE_ENV: &str = "RC_NO_UPDATE";
+/// Set by the desktop app (or anything else that owns this binary) to say "do not self-update".
+pub const APP_MANAGED_ENV: &str = "RUCKCODE_APP_MANAGED";
+/// File the desktop app drops next to the `rc` it installs into a WSL distro.
+pub const APP_MARKER: &str = ".rc-managed-by-app";
+
+/// `rc update --check` exit code when a newer release exists (0 means up to date, 1 an error).
+pub const EXIT_UPDATE_AVAILABLE: u8 = 10;
+/// Exit code when an update exists but this install must be updated another way (package
+/// manager, desktop app, read-only location).
+pub const EXIT_NOT_UPDATABLE: u8 = 11;
 
 /// Public key embedded at build time (empty when `RUCKCODE_UPDATER_PUBKEY` was not set).
 const EMBEDDED_PUBKEY: &str = env!("RC_UPDATER_PUBKEY");
@@ -33,6 +45,38 @@ const VERSION: &str = env!("RC_VERSION");
 /// Archives larger than this are refused (the real ones are a few MB).
 const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
 const HINT_INTERVAL_SECS: u64 = 24 * 60 * 60;
+
+/// "This install is not ours to replace": carries the reason and what to do instead.
+#[derive(Debug)]
+pub struct NotUpdatable(pub String);
+
+impl std::fmt::Display for NotUpdatable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotUpdatable {}
+
+/// How an `rc update` run ended (maps to the process exit code).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    UpToDate,
+    /// `--check` found a newer release.
+    Available,
+    Updated,
+    /// The user answered no, or no manifest is published.
+    Skipped,
+}
+
+impl Outcome {
+    pub fn exit_code(self) -> u8 {
+        match self {
+            Outcome::Available => EXIT_UPDATE_AVAILABLE,
+            _ => 0,
+        }
+    }
+}
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SelfUpdateArgs {
@@ -80,7 +124,8 @@ pub fn parse_version(s: &str) -> Result<semver::Version> {
 /// True when `latest` is a strictly newer release than `current`.
 pub fn is_newer(latest: &str, current: &str) -> bool {
     match (parse_version(latest), parse_version(current)) {
-        (Ok(l), Ok(c)) => l > c,
+        // Never move to a prerelease, never downgrade.
+        (Ok(l), Ok(c)) => l.pre.is_empty() && l > c,
         _ => false,
     }
 }
@@ -229,15 +274,26 @@ pub fn install_binary(bytes: &[u8], dest: &Path, running: bool) -> Result<()> {
     result
 }
 
-/// `Some(hint)` when the binary was installed by a package manager that should update it.
+/// `Some(hint)` when the binary was installed by a package manager or version manager that
+/// should update it. Pure path inspection (see [`blocked_reason`] for the filesystem checks).
 pub fn managed_install(exe: &Path) -> Option<&'static str> {
     let p = exe.to_string_lossy().replace('\\', "/");
-    if p.contains("/Cellar/") || p.contains("/homebrew/") || p.contains("/linuxbrew/") {
+    if p.contains("/.cargo/bin/") {
+        Some("installed with `cargo install`; re-run `cargo install` for rc to update it")
+    } else if p.contains("/Cellar/") || p.contains("/homebrew/") || p.contains("/linuxbrew/") {
         Some("installed by Homebrew; run `brew upgrade rc` instead")
     } else if p.starts_with("/nix/store/") {
         Some("managed by Nix; update it through your Nix configuration")
     } else if p.starts_with("/snap/") {
         Some("installed as a snap; run `snap refresh` instead")
+    } else if p.contains("/mise/installs/") || p.contains("/.local/share/mise/") {
+        Some("installed by mise; run `mise upgrade` instead")
+    } else if p.contains("/.asdf/") {
+        Some("installed by asdf; update it with `asdf install` instead")
+    } else if p.contains("/scoop/apps/") {
+        Some("installed by Scoop; run `scoop update rc` instead")
+    } else if p.to_ascii_lowercase().contains("/chocolatey/") {
+        Some("installed by Chocolatey; run `choco upgrade rc` instead")
     } else if ["/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/", "/usr/lib/"]
         .iter()
         .any(|d| p.starts_with(d))
@@ -246,6 +302,65 @@ pub fn managed_install(exe: &Path) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// True when the desktop app owns this binary: `RUCKCODE_APP_MANAGED` is set, the app's marker
+/// file sits next to it (the copy installed into a WSL distro), or it is the `wsl/rc` resource
+/// next to the app executable.
+pub fn app_managed(exe: &Path) -> bool {
+    if env_disables(std::env::var(APP_MANAGED_ENV).ok().as_deref()) {
+        return true;
+    }
+    let Some(dir) = exe.parent() else {
+        return false;
+    };
+    if dir.join(APP_MARKER).exists() {
+        return true;
+    }
+    dir.file_name().is_some_and(|n| n == "wsl")
+        && dir.parent().is_some_and(|app| {
+            [
+                "ruckcode",
+                "ruckcode.exe",
+                "ruckcode-app",
+                "ruckcode-app.exe",
+            ]
+            .iter()
+            .any(|n| app.join(n).exists())
+        })
+}
+
+/// Can a file be created next to `exe` (what an in-place replacement needs)?
+pub fn dir_writable(exe: &Path) -> bool {
+    let Some(dir) = exe.parent() else {
+        return false;
+    };
+    let probe = dir.join(format!(".rc-write-probe-{}", std::process::id()));
+    let ok = std::fs::File::create(&probe).is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+/// Why `exe` must not be replaced by `rc` itself, with what to do instead; `None` when it is
+/// ours to update.
+pub fn blocked_reason(exe: &Path) -> Option<String> {
+    if let Some(why) = managed_install(exe) {
+        return Some(why.to_string());
+    }
+    if app_managed(exe) {
+        return Some(
+            "managed by the ruckcode desktop app; it updates this copy together with the app"
+                .into(),
+        );
+    }
+    if !dir_writable(exe) {
+        return Some(format!(
+            "in a directory this user cannot write ({}); reinstall it somewhere writable or \
+             update it as an administrator",
+            exe.parent().unwrap_or(exe).display()
+        ));
+    }
+    None
 }
 
 // ---- network ----------------------------------------------------------------------------
@@ -393,25 +508,37 @@ fn not_configured() -> anyhow::Error {
     )
 }
 
-// ---- rc self-update ---------------------------------------------------------------------
+// ---- rc update --------------------------------------------------------------------------
 
-pub async fn run(args: &SelfUpdateArgs) -> Result<()> {
+/// `rc update`: returns the process exit code (see [`EXIT_UPDATE_AVAILABLE`],
+/// [`EXIT_NOT_UPDATABLE`]); other failures are errors (exit 1).
+pub async fn run(args: &SelfUpdateArgs) -> Result<u8> {
     let updater = Updater::from_build();
     let exe = std::env::current_exe()
         .and_then(|p| p.canonicalize())
         .context("cannot locate the running binary")?;
-    run_with(&updater, args, &exe, true, &mut std::io::stdout()).await
+    match run_with(&updater, args, &exe, true, &mut std::io::stdout()).await {
+        Ok(outcome) => Ok(outcome.exit_code()),
+        Err(e) => match e.downcast::<NotUpdatable>() {
+            Ok(n) => {
+                eprintln!("rc: {n}");
+                Ok(EXIT_NOT_UPDATABLE)
+            }
+            Err(e) => Err(e),
+        },
+    }
 }
 
-/// The testable body of `rc self-update`. `running` says whether `exe` is the live process
-/// binary (see [`install_binary`]).
+/// The testable body of `rc update`. `running` says whether `exe` is the live process
+/// binary (see [`install_binary`]). An install that must not be replaced fails with
+/// [`NotUpdatable`].
 pub async fn run_with(
     updater: &Updater,
     args: &SelfUpdateArgs,
     exe: &Path,
     running: bool,
     out: &mut dyn Write,
-) -> Result<()> {
+) -> Result<Outcome> {
     let check = updater.check().await?;
     let manifest = match check {
         Check::NotPublished => {
@@ -426,7 +553,7 @@ pub async fn run_with(
                 "Updates are not configured for this release channel (no manifest at {}).",
                 updater.manifest_url()
             )?;
-            return Ok(());
+            return Ok(Outcome::Skipped);
         }
         Check::UpToDate { latest } => {
             if args.version_only {
@@ -438,13 +565,14 @@ pub async fn run_with(
                     updater.current
                 )?;
             }
-            return Ok(());
+            return Ok(Outcome::UpToDate);
         }
         Check::Available { manifest } => *manifest,
     };
     if args.version_only {
+        // Pure query for scripts: the version is the answer, so the exit code is 0.
         writeln!(out, "{}", manifest.version)?;
-        return Ok(());
+        return Ok(Outcome::Skipped);
     }
     writeln!(
         out,
@@ -458,17 +586,21 @@ pub async fn run_with(
         }
     }
     if args.check {
-        writeln!(out, "Run `rc self-update` to install it.")?;
-        return Ok(());
+        match blocked_reason(exe) {
+            Some(why) => writeln!(out, "This copy cannot update itself: it is {why}.")?,
+            None => writeln!(out, "Run `rc update` to install it.")?,
+        }
+        return Ok(Outcome::Available);
     }
     if updater.pubkey.is_none() && !args.insecure_skip_signature {
         return Err(not_configured());
     }
-    if let Some(why) = managed_install(exe) {
-        bail!(
+    if let Some(why) = blocked_reason(exe) {
+        return Err(NotUpdatable(format!(
             "{} is {why}. Self-update only replaces binaries you installed yourself",
             exe.display()
-        );
+        ))
+        .into());
     }
     if args.insecure_skip_signature {
         eprintln!(
@@ -492,7 +624,7 @@ pub async fn run_with(
         std::io::stdin().read_line(&mut line)?;
         if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
             writeln!(out, "Cancelled.")?;
-            return Ok(());
+            return Ok(Outcome::Skipped);
         }
     }
     writeln!(out, "Downloading and verifying...")?;
@@ -501,17 +633,29 @@ pub async fn run_with(
         .await?;
     install_binary(&bytes, exe, running)?;
     writeln!(out, "Updated to rc {}.", manifest.version)?;
-    Ok(())
+    Ok(Outcome::Updated)
 }
 
-// ---- daily hint -------------------------------------------------------------------------
+// ---- daily check and auto-update ----------------------------------------------------------
 
+/// A background install that finished and has not been announced yet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Installed {
+    pub from: String,
+    pub to: String,
+}
+
+/// State kept between runs in `<cache dir>/ruckcode/update-check.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Cache {
-    /// Unix seconds of the last check.
+    /// Unix seconds of the last check (stamped when it starts, so concurrent `rc` processes
+    /// do not all check).
     pub checked_at: u64,
     /// Latest published version seen then.
     pub latest: Option<String>,
+    /// Set by a finished background install, cleared once it was announced.
+    #[serde(default)]
+    pub installed: Option<Installed>,
 }
 
 pub fn cache_path() -> Option<PathBuf> {
@@ -542,25 +686,42 @@ fn write_cache(path: &Path, cache: &Cache) {
 }
 
 pub fn hint_text(latest: &str) -> String {
-    format!("rc {latest} is available (you have {VERSION}): run `rc self-update`")
+    format!("rc {latest} is available (you have {VERSION}): run `rc update`")
 }
 
 fn env_disables(value: Option<&str>) -> bool {
     matches!(value, Some(v) if !v.is_empty() && v != "0")
 }
 
-/// What the interactive entry points should do about update hints.
+/// `CI` is set to anything but empty, `0` or `false`.
+fn ci_value(value: Option<&str>) -> bool {
+    matches!(value, Some(v) if !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
+/// Environment switches that turn the daily check and the auto-update off: `RC_NO_UPDATE`,
+/// `RUCKCODE_NO_UPDATE_CHECK`, and CI.
+fn env_off() -> bool {
+    env_disables(std::env::var(NO_UPDATE_ENV).ok().as_deref())
+        || env_disables(std::env::var(NO_CHECK_ENV).ok().as_deref())
+        || ci_value(std::env::var("CI").ok().as_deref())
+}
+
+/// What the interactive entry points should do about updates.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HintPlan {
     /// A newer version to announce right away, from the cached result of an earlier check.
     pub cached: Option<String>,
-    /// The cache is older than a day: refresh it in the background ([`refresh_cache`]).
+    /// The cache is older than a day: check in the background ([`refresh_and_install`]).
     pub refresh: bool,
+    /// ...and install what is found there (config `[update] auto`, a binary we may replace).
+    pub auto: bool,
 }
 
-/// Pure decision core of the hint, so it can be tested without a clock or a filesystem.
+/// Pure decision core, so it can be tested without a clock or a filesystem. `auto` is whether
+/// installing is allowed at all (config, environment, install location).
 pub fn plan_hint(
     enabled: bool,
+    auto: bool,
     cache: &Cache,
     now: u64,
     current: &str,
@@ -577,18 +738,29 @@ pub fn plan_hint(
     HintPlan {
         cached,
         refresh: now.saturating_sub(cache.checked_at) >= HINT_INTERVAL_SECS,
+        auto,
     }
 }
 
-/// Plan for this process: honours `RUCKCODE_NO_UPDATE_CHECK`, the `check_updates` config option,
-/// dev builds and unconfigured (no embedded key) builds.
-pub fn startup_plan(config_enabled: bool) -> HintPlan {
-    let enabled = config_enabled && !env_disables(std::env::var(NO_CHECK_ENV).ok().as_deref());
+/// Plan for this process: honours `[update] check/auto`, `RC_NO_UPDATE`,
+/// `RUCKCODE_NO_UPDATE_CHECK`, CI, dev builds, unconfigured (no embedded key) builds and installs
+/// that are not ours to replace. `auto_allowed` is false for entry points that never install
+/// (headless `-p`, `rc acp`).
+pub fn startup_plan(check: bool, auto: bool, auto_allowed: bool) -> HintPlan {
+    let enabled = check && !env_off();
     let Some(path) = cache_path() else {
         return HintPlan::default();
     };
+    let can_install = enabled
+        && auto
+        && auto_allowed
+        && std::env::current_exe()
+            .and_then(|p| p.canonicalize())
+            .map(|exe| blocked_reason(&exe).is_none())
+            .unwrap_or(false);
     plan_hint(
         enabled,
+        can_install,
         &read_cache(&path),
         now_secs(),
         VERSION,
@@ -596,28 +768,103 @@ pub fn startup_plan(config_enabled: bool) -> HintPlan {
     )
 }
 
+/// The one-line message for a finished background install; `restarted` is true when the
+/// running process already is the new version.
+pub fn installed_notice(i: &Installed, running: &str) -> String {
+    if is_newer(&i.to, running) {
+        format!(
+            "rc updated {} \u{2192} {}; takes effect next run",
+            i.from, i.to
+        )
+    } else {
+        format!("rc updated {} \u{2192} {}", i.from, i.to)
+    }
+}
+
+/// Announce (once) a background install that finished: returns the message and clears it.
+/// Call before the TUI takes the screen and after it gives it back, never in between.
+pub fn take_notice() -> Option<String> {
+    take_notice_at(&cache_path()?, VERSION)
+}
+
+pub fn take_notice_at(path: &Path, running: &str) -> Option<String> {
+    let mut cache = read_cache(path);
+    let installed = cache.installed.take()?;
+    write_cache(path, &cache);
+    Some(installed_notice(&installed, running))
+}
+
 /// Query the site (short timeout) and store the result; returns the version when newer. Failures
 /// are swallowed (but still stamp the cache so an offline machine retries only daily).
 pub async fn refresh_cache() -> Option<String> {
     let path = cache_path()?;
-    refresh_cache_with(&Updater::from_build(), &path).await
+    refresh_cache_with(&Updater::from_build(), &path, None).await
 }
 
-pub async fn refresh_cache_with(updater: &Updater, path: &Path) -> Option<String> {
+/// Like [`refresh_cache`], and when a newer release is found download, verify and install it
+/// over the running binary. Returns the newer version only when it was NOT installed (so the
+/// caller can hint at it); a successful install is recorded in the cache for [`take_notice`].
+pub async fn refresh_and_install() -> Option<String> {
+    let path = cache_path()?;
+    let exe = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .ok()?;
+    refresh_cache_with(&Updater::from_build(), &path, Some((&exe, true))).await
+}
+
+pub async fn refresh_cache_with(
+    updater: &Updater,
+    path: &Path,
+    install_over: Option<(&Path, bool)>,
+) -> Option<String> {
+    // Stamp first: a second `rc` starting meanwhile (or a failure below) waits a day.
+    let mut cache = read_cache(path);
+    cache.checked_at = now_secs();
+    write_cache(path, &cache);
+
     let checked = tokio::time::timeout(Duration::from_secs(5), updater.check()).await;
-    let latest = match checked {
-        Ok(Ok(Check::Available { manifest })) => Some(manifest.version),
-        Ok(Ok(Check::UpToDate { latest })) => Some(latest),
-        _ => None,
+    let manifest = match checked {
+        Ok(Ok(Check::Available { manifest })) => Some(*manifest),
+        Ok(Ok(Check::UpToDate { latest })) => {
+            cache.latest = Some(latest);
+            None
+        }
+        Ok(Ok(Check::NotPublished)) => None,
+        Ok(Err(e)) => {
+            tracing::debug!("update check failed: {e:#}");
+            None
+        }
+        Err(_) => {
+            tracing::debug!("update check timed out");
+            None
+        }
     };
-    write_cache(
-        path,
-        &Cache {
-            checked_at: now_secs(),
-            latest: latest.clone(),
-        },
-    );
-    latest.filter(|l| is_newer(l, &updater.current))
+    let Some(manifest) = manifest else {
+        write_cache(path, &cache);
+        return None;
+    };
+    cache.latest = Some(manifest.version.clone());
+    if let Some((exe, running)) = install_over.filter(|(e, _)| blocked_reason(e).is_none()) {
+        let attempt = tokio::time::timeout(Duration::from_secs(180), async {
+            let bytes = updater.download(&manifest, false).await?;
+            install_binary(&bytes, exe, running)
+        })
+        .await;
+        match attempt {
+            Ok(Ok(())) => {
+                cache.installed = Some(Installed {
+                    from: updater.current.clone(),
+                    to: manifest.version.clone(),
+                });
+                write_cache(path, &cache);
+                return None;
+            }
+            Ok(Err(e)) => tracing::debug!("auto-update failed: {e:#}"),
+            Err(_) => tracing::debug!("auto-update timed out"),
+        }
+    }
+    write_cache(path, &cache);
+    Some(manifest.version)
 }
 
 #[cfg(test)]
@@ -764,7 +1011,7 @@ mod tests {
         }
     }
 
-    async fn run_in(up: &Updater, a: &SelfUpdateArgs, exe: &Path) -> (Result<()>, String) {
+    async fn run_in(up: &Updater, a: &SelfUpdateArgs, exe: &Path) -> (Result<Outcome>, String) {
         let mut out = Vec::new();
         let r = run_with(up, a, exe, false, &mut out).await;
         (r, String::from_utf8(out).unwrap())
@@ -996,6 +1243,10 @@ mod tests {
             "/usr/local/Cellar/rc/1.0/bin/rc",
             "/home/linuxbrew/.linuxbrew/Cellar/rc/1.0/bin/rc",
             "/nix/store/abc-rc/bin/rc",
+            "/home/u/.cargo/bin/rc",
+            "/home/u/.local/share/mise/installs/rc/1.0/bin/rc",
+            "/home/u/.asdf/installs/rc/1.0/bin/rc",
+            "C:\\Users\\u\\scoop\\apps\\rc\\current\\rc.exe",
         ] {
             assert!(managed_install(Path::new(p)).is_some(), "{p}");
         }
@@ -1056,6 +1307,7 @@ mod tests {
         let fresh = Cache {
             checked_at: 1_000,
             latest: Some("0.2.0".into()),
+            installed: None,
         };
         // Disabled by config/env, dev build, or no embedded key: silent, no refresh.
         for (en, key, cur) in [
@@ -1063,20 +1315,24 @@ mod tests {
             (true, false, "0.1.0"),
             (true, true, "0.1.0-dev+abc"),
         ] {
-            assert_eq!(plan_hint(en, &fresh, 1_000, cur, key), HintPlan::default());
+            assert_eq!(
+                plan_hint(en, true, &fresh, 1_000, cur, key),
+                HintPlan::default()
+            );
         }
         // Checked recently: cached hint, no refresh.
-        let p = plan_hint(true, &fresh, 1_000 + day - 1, "0.1.0", true);
+        let p = plan_hint(true, false, &fresh, 1_000 + day - 1, "0.1.0", true);
         assert!(p.cached.as_deref() == Some("0.2.0") && !p.refresh);
         // Stale cache: still shows the old result and refreshes.
-        let p = plan_hint(true, &fresh, 1_000 + day, "0.1.0", true);
+        let p = plan_hint(true, true, &fresh, 1_000 + day, "0.1.0", true);
+        assert!(p.auto, "auto is passed through");
         assert!(p.cached.is_some() && p.refresh);
         // Already current: nothing to show.
-        let p = plan_hint(true, &fresh, 1_000, "0.2.0", true);
+        let p = plan_hint(true, false, &fresh, 1_000, "0.2.0", true);
         assert!(p.cached.is_none());
         // Empty cache: refresh.
-        assert!(plan_hint(true, &Cache::default(), 5, "0.1.0", true).refresh || day > 5);
-        assert!(plan_hint(true, &Cache::default(), day + 5, "0.1.0", true).refresh);
+        assert!(plan_hint(true, false, &Cache::default(), 5, "0.1.0", true).refresh || day > 5);
+        assert!(plan_hint(true, false, &Cache::default(), day + 5, "0.1.0", true).refresh);
     }
 
     #[test]
@@ -1093,7 +1349,7 @@ mod tests {
         let f = fixture("0.2.0", b"NEW", |_, _, _| {});
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub/update-check.json");
-        let hint = refresh_cache_with(&updater(&f, "0.1.0", true), &path).await;
+        let hint = refresh_cache_with(&updater(&f, "0.1.0", true), &path, None).await;
         assert_eq!(hint.as_deref(), Some("0.2.0"));
         let c = read_cache(&path);
         assert_eq!(c.latest.as_deref(), Some("0.2.0"));
@@ -1106,7 +1362,144 @@ mod tests {
             TGT.into(),
         );
         let path2 = dir.path().join("two.json");
-        assert!(refresh_cache_with(&down, &path2).await.is_none());
+        assert!(refresh_cache_with(&down, &path2, None).await.is_none());
         assert!(read_cache(&path2).checked_at > 0);
+    }
+
+    #[test]
+    fn prereleases_and_downgrades_are_never_offered() {
+        assert!(!is_newer("0.3.0-rc.1", "0.2.0"));
+        assert!(!is_newer("0.1.0", "0.2.0"));
+        assert!(is_newer("0.3.0", "0.2.0"));
+    }
+
+    #[test]
+    fn ci_and_env_switches() {
+        assert!(ci_value(Some("true")) && ci_value(Some("1")));
+        assert!(!ci_value(Some("false")) && !ci_value(Some("0")) && !ci_value(Some("")));
+        assert!(!ci_value(None));
+    }
+
+    #[test]
+    fn app_managed_copies_are_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = temp_exe(&dir);
+        assert!(blocked_reason(&exe).is_none());
+        // The marker the desktop app drops next to the WSL copy.
+        std::fs::write(dir.path().join(APP_MARKER), b"").unwrap();
+        assert!(app_managed(&exe));
+        assert!(blocked_reason(&exe).unwrap().contains("desktop app"));
+        // The `wsl/rc` resource next to the app executable.
+        let app = tempfile::tempdir().unwrap();
+        std::fs::create_dir(app.path().join("wsl")).unwrap();
+        std::fs::write(app.path().join("ruckcode.exe"), b"").unwrap();
+        let bundled = app.path().join("wsl/rc");
+        std::fs::write(&bundled, b"x").unwrap();
+        assert!(app_managed(&bundled));
+        // A `wsl` directory without the app next to it is just a directory.
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir(other.path().join("wsl")).unwrap();
+        assert!(!app_managed(&other.path().join("wsl/rc")));
+    }
+
+    #[tokio::test]
+    async fn check_exit_codes_and_not_updatable() {
+        let f = fixture("0.2.0", b"NEW", |_, _, _| {});
+        let dir = tempfile::tempdir().unwrap();
+        let exe = temp_exe(&dir);
+        let check = SelfUpdateArgs {
+            check: true,
+            ..Default::default()
+        };
+        let (r, out) = run_in(&updater(&f, "0.1.0", true), &check, &exe).await;
+        let o = r.unwrap();
+        assert_eq!(o.exit_code(), EXIT_UPDATE_AVAILABLE);
+        assert!(out.contains("0.2.0"));
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        let (r, _) = run_in(&updater(&f, "0.2.0", true), &check, &exe).await;
+        assert_eq!(r.unwrap().exit_code(), 0);
+        // A copy the app owns: refuses with the typed error (exit 11).
+        std::fs::write(dir.path().join(APP_MARKER), b"").unwrap();
+        let (r, _) = run_in(&updater(&f, "0.1.0", true), &args(), &exe).await;
+        assert!(r.unwrap_err().downcast_ref::<NotUpdatable>().is_some());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+    }
+
+    #[tokio::test]
+    async fn auto_update_installs_and_announces_once() {
+        let f = fixture("0.2.0", b"NEW", |_, _, _| {});
+        let dir = tempfile::tempdir().unwrap();
+        let exe = temp_exe(&dir);
+        let cache = dir.path().join("state/update-check.json");
+        let up = updater(&f, "0.1.0", true);
+        let hint = refresh_cache_with(&up, &cache, Some((&exe, false))).await;
+        assert!(hint.is_none(), "installed, so nothing left to hint at");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"NEW");
+        let c = read_cache(&cache);
+        assert_eq!(c.latest.as_deref(), Some("0.2.0"));
+        assert!(c.installed.is_some() && c.checked_at > 0);
+        let n = take_notice_at(&cache, "0.1.0").unwrap();
+        assert!(n.contains("0.1.0") && n.contains("0.2.0") && n.contains("next run"));
+        assert!(take_notice_at(&cache, "0.1.0").is_none());
+    }
+
+    #[tokio::test]
+    async fn auto_update_refuses_bad_signatures_and_foreign_installs() {
+        let dir = tempfile::tempdir().unwrap();
+        // Signed with a key that is not the embedded one.
+        let bad = fixture("0.2.0", b"EVIL", |_, e, a| {
+            e.signature = sign(&keys(), a, "0.2.0");
+        });
+        let exe = temp_exe(&dir);
+        let cache = dir.path().join("c1.json");
+        let hint =
+            refresh_cache_with(&updater(&bad, "0.1.0", true), &cache, Some((&exe, false))).await;
+        assert_eq!(hint.as_deref(), Some("0.2.0"), "falls back to a hint");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        assert!(read_cache(&cache).installed.is_none());
+        // Good release, but the app owns this copy.
+        let good = fixture("0.2.0", b"NEW", |_, _, _| {});
+        std::fs::write(dir.path().join(APP_MARKER), b"").unwrap();
+        let cache2 = dir.path().join("c2.json");
+        let hint =
+            refresh_cache_with(&updater(&good, "0.1.0", true), &cache2, Some((&exe, false))).await;
+        assert_eq!(hint.as_deref(), Some("0.2.0"));
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        // Already current: no install, no hint.
+        std::fs::remove_file(dir.path().join(APP_MARKER)).unwrap();
+        let cache3 = dir.path().join("c3.json");
+        let hint =
+            refresh_cache_with(&updater(&good, "0.2.0", true), &cache3, Some((&exe, false))).await;
+        assert!(hint.is_none());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+    }
+
+    #[test]
+    fn notice_is_shown_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update-check.json");
+        write_cache(
+            &path,
+            &Cache {
+                checked_at: 5,
+                latest: Some("0.2.0".into()),
+                installed: Some(Installed {
+                    from: "0.1.0".into(),
+                    to: "0.2.0".into(),
+                }),
+            },
+        );
+        let n = take_notice_at(&path, "0.1.0").unwrap();
+        assert_eq!(n, "rc updated 0.1.0 \u{2192} 0.2.0; takes effect next run");
+        assert!(take_notice_at(&path, "0.1.0").is_none());
+        assert_eq!(read_cache(&path).checked_at, 5, "rest of the state is kept");
+        let i = Installed {
+            from: "0.1.0".into(),
+            to: "0.2.0".into(),
+        };
+        assert_eq!(
+            installed_notice(&i, "0.2.0"),
+            "rc updated 0.1.0 \u{2192} 0.2.0"
+        );
     }
 }
