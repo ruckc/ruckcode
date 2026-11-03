@@ -46,6 +46,7 @@ ruckcode-hooks = { path = "crates/ruckcode-hooks" }
 ruckcode-llm = { path = "crates/ruckcode-llm" }
 ruckcode-mcp = { path = "crates/ruckcode-mcp" }
 ruckcode-mise = { path = "crates/ruckcode-mise" }
+ruckcode-sandbox = { path = "crates/ruckcode-sandbox" }
 ruckcode-tools = { path = "crates/ruckcode-tools" }
 
 [profile.release]
