@@ -132,7 +132,20 @@ jobs:
           key: cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
           restore-keys: |
             cargo-test-ubuntu-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
+      - name: Sandbox kernel features
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; lift that in this
+        # job so the sandbox's namespace layer is exercised. The tests detect missing features
+        # (and print why) instead of failing.
+        run: |
+          uname -r
+          cat /sys/kernel/security/lsm || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sysctl user.max_user_namespaces kernel.apparmor_restrict_unprivileged_userns || true
       - run: cargo test --workspace --locked
+      - name: Sandbox enforcement tests (verbose, shows skips)
+        run: |
+          cargo test -p ruckcode-sandbox --test enforcement --locked -- --nocapture --test-threads=1
+          cargo test -p ruckcode-cli --test sandbox_cli --locked -- --nocapture
 
   # Portability smoke test for the other release platforms.
       - name: Save cargo cache
@@ -188,6 +201,11 @@ jobs:
           restore-keys: |
             cargo-check-${{ matrix.os }}-${{ runner.os }}-rust${{ env.RUSTC_VERSION }}-
       - run: cargo check --workspace --all-targets --locked
+      - name: Sandbox tests (macOS Seatbelt)
+        if: runner.os == 'macOS'
+        run: |
+          cargo test -p ruckcode-sandbox --locked -- --nocapture --test-threads=1
+          cargo test -p ruckcode-cli --test sandbox_cli --locked -- --nocapture
       - name: Save cargo cache
         if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
