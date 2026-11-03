@@ -24,6 +24,18 @@ pub enum NamespaceMode {
     Off,
 }
 
+/// Where project-level sandbox policy may come from (user config only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectPolicy {
+    /// Honour the project's `[sandbox]` / `[modes.<id>.sandbox]` only as committed on the remote's
+    /// default branch (verified by a fetch ruckcode runs itself).
+    #[default]
+    Remote,
+    /// Ignore project sandbox policy entirely.
+    Off,
+}
+
 pub const DEFAULT_ALLOWED_DOMAINS: &[&str] = &[
     "github.com",
     "*.githubusercontent.com",
@@ -86,6 +98,9 @@ fn strs(v: &[&str]) -> Vec<String> {
 pub struct SandboxConfig {
     /// The only off switch. Honoured from the user's config only, never from project files.
     pub enabled: bool,
+    /// Whether project sandbox policy is honoured (`remote`, the default) or ignored (`off`).
+    /// Honoured from the user's config only.
+    pub project_policy: ProjectPolicy,
     /// Refuse to run commands unless every configured layer is enforced.
     pub strict: bool,
     pub namespaces: NamespaceMode,
@@ -108,6 +123,7 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            project_policy: ProjectPolicy::Remote,
             strict: false,
             namespaces: NamespaceMode::Auto,
             network: NetworkMode::Allowlist,
@@ -137,6 +153,29 @@ pub struct SandboxOverride {
     pub cache_paths: Option<Vec<String>>,
     pub allowed_ports: Option<Vec<u16>>,
     pub mask_env_files: Option<bool>,
+}
+
+impl SandboxOverride {
+    /// `other`'s set fields replace this override's.
+    pub fn merged_with(&self, other: &SandboxOverride) -> SandboxOverride {
+        macro_rules! pick {
+            ($($f:ident),*) => {
+                SandboxOverride { $($f: other.$f.clone().or_else(|| self.$f.clone())),* }
+            };
+        }
+        pick!(
+            strict,
+            namespaces,
+            network,
+            allowed_domains,
+            extra_write_paths,
+            extra_read_paths,
+            deny_read_paths,
+            cache_paths,
+            allowed_ports,
+            mask_env_files
+        )
+    }
 }
 
 impl SandboxConfig {

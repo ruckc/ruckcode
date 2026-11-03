@@ -32,19 +32,25 @@ pub struct DomainStore {
     path: PathBuf,
 }
 
+/// A stable key for a project: the hash of its canonical path (names per-project files in the
+/// user data directory, which sandboxed commands cannot write).
+pub fn project_key(project: &Path) -> String {
+    let canon = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in canon.to_string_lossy().bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
+
 impl DomainStore {
     pub fn for_project(project: &Path) -> Option<Self> {
-        let canon = project
-            .canonicalize()
-            .unwrap_or_else(|_| project.to_path_buf());
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in canon.to_string_lossy().bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
         let dir = dirs::data_dir()?.join("ruckcode").join("network");
         Some(Self {
-            path: dir.join(format!("{h:016x}.json")),
+            path: dir.join(format!("{}.json", project_key(project))),
         })
     }
 

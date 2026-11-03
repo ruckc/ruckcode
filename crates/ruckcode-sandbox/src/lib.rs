@@ -8,6 +8,7 @@
 
 pub mod caps;
 pub mod config;
+pub mod git;
 pub mod launcher;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -20,8 +21,12 @@ pub mod runner;
 pub mod spawn;
 
 pub use caps::{detect, plan, report, Capabilities, Plan};
-pub use config::{domain_matches, NamespaceMode, NetworkMode, SandboxConfig, SandboxOverride};
+pub use config::{
+    domain_matches, NamespaceMode, NetworkMode, ProjectPolicy, SandboxConfig, SandboxOverride,
+};
+pub use git::{git_common_dir, git_protected_paths};
 pub use policy::{build_policy, deny_list, BuildInput, Layers, Policy};
+pub use proxy::project_key;
 pub use proxy::{DomainAnswer, DomainPrompter, DomainStore};
 pub use runner::{Prep, Prepared, Sandbox, SandboxOptions};
 pub use spawn::LauncherExe;

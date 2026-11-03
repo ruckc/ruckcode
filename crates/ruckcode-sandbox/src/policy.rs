@@ -294,6 +294,15 @@ pub fn build_policy(i: &BuildInput) -> Policy {
         }
     }
 
+    // Paths that could forge the remote or run code outside the sandbox later. Kernel enforced
+    // with namespaces / Seatbelt (existing paths only); Landlock-only mode restores them after
+    // each command instead.
+    for p in crate::git::git_protected_paths(&project) {
+        if p.exists() && !protected_ro.contains(&p) {
+            protected_ro.push(p);
+        }
+    }
+
     let mut mask_paths = Vec::new();
     if i.cfg.mask_env_files {
         mask_paths.extend(find_env_files(&project));

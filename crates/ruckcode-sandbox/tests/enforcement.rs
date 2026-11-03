@@ -531,3 +531,171 @@ async fn strict_refuses_without_enforcement() {
         _ => panic!(),
     }
 }
+
+fn have_git() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn git_repo(dir: &Path) {
+    let st = std::process::Command::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .arg(dir)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    std::fs::write(
+        dir.join(".git/config"),
+        "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = /nowhere/repo.git\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join(".git/refs/remotes/origin")).unwrap();
+    std::fs::write(
+        dir.join(".git/refs/remotes/origin/main"),
+        "0000000000000000000000000000000000000001\n",
+    )
+    .unwrap();
+}
+
+const GIT_ID: &str = "GIT_CONFIG_GLOBAL=/dev/null XDG_CONFIG_HOME=/tmp/nocfg git -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false";
+
+/// Kernel-enforced read-only `.git` paths: namespaces on Linux, Seatbelt on macOS.
+#[tokio::test]
+async fn kernel_makes_git_config_hooks_and_remote_refs_read_only() {
+    let e = env();
+    let sb = sandbox(&e).await;
+    let c = cfg(NamespaceMode::Auto, NetworkMode::Off);
+    let l = sb.plan(&c).layers;
+    if !(l.namespaces || l.seatbelt) {
+        return skip(&format!(
+            "neither user namespaces nor Seatbelt available: {}",
+            sb.capabilities()
+                .namespaces_reason
+                .clone()
+                .unwrap_or_default()
+        ));
+    }
+    if !have_git() {
+        return skip("git not installed");
+    }
+    git_repo(&e.proj);
+    let orig = std::fs::read_to_string(e.proj.join(".git/config")).unwrap();
+    for (name, script) in [
+        ("hook", "echo evil > .git/hooks/post-commit"),
+        ("config", "git config core.fsmonitor 'touch /tmp/pwned'"),
+        ("config-append", "echo '[core]' >> .git/config"),
+        (
+            "remote ref",
+            "echo 1111111111111111111111111111111111111111 > .git/refs/remotes/origin/main",
+        ),
+        ("info", "echo x > .git/info/exclude"),
+    ] {
+        let r = run(&sb, &c, &e.proj, script).await;
+        assert_ne!(r.code, 0, "{name} must fail: {}", r.text);
+    }
+    assert_eq!(
+        std::fs::read_to_string(e.proj.join(".git/config")).unwrap(),
+        orig
+    );
+    assert!(!e.proj.join(".git/hooks/post-commit").exists());
+    // Normal git keeps working: commit, branch, checkout, stash.
+    let r = run(
+        &sb,
+        &c,
+        &e.proj,
+        &format!(
+            "{GIT_ID} add a.txt && {GIT_ID} commit -q -m one && {GIT_ID} branch topic && \
+             {GIT_ID} checkout -q topic && echo more >> a.txt && {GIT_ID} stash -q && \
+             {GIT_ID} checkout -q main && {GIT_ID} log --oneline"
+        ),
+    )
+    .await;
+    assert_eq!(r.code, 0, "git inside the sandbox: {}", r.text);
+    assert!(r.text.contains("one"), "{}", r.text);
+    assert!(e.proj.join(".git/refs/heads/topic").exists());
+}
+
+#[tokio::test]
+async fn landlock_only_restores_git_config_hooks_and_remote_refs() {
+    let e = env();
+    let sb = sandbox(&e).await;
+    let c = cfg(NamespaceMode::Off, NetworkMode::Full);
+    if !enforcing(&sb, &c) {
+        return;
+    }
+    if !have_git() {
+        return skip("git not installed");
+    }
+    git_repo(&e.proj);
+    std::fs::write(e.proj.join(".git/hooks/pre-commit.sample"), "orig-hook").unwrap();
+    let orig = std::fs::read_to_string(e.proj.join(".git/config")).unwrap();
+    let r = run(
+        &sb,
+        &c,
+        &e.proj,
+        "echo evil > .git/hooks/post-commit; echo '[core]' >> .git/config; \
+         rm .git/hooks/pre-commit.sample; \
+         echo 1111111111111111111111111111111111111111 > .git/refs/remotes/origin/main",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(e.proj.join(".git/config")).unwrap(),
+        orig
+    );
+    assert!(!e.proj.join(".git/hooks/post-commit").exists());
+    assert_eq!(
+        std::fs::read_to_string(e.proj.join(".git/hooks/pre-commit.sample")).unwrap(),
+        "orig-hook"
+    );
+    assert!(
+        std::fs::read_to_string(e.proj.join(".git/refs/remotes/origin/main"))
+            .unwrap()
+            .starts_with("0000000")
+    );
+    if !sb.plan(&c).layers.seatbelt {
+        assert!(
+            r.notes.contains(".git/config") && r.notes.contains("reverted"),
+            "{}",
+            r.notes
+        );
+    }
+    // Local work is not reverted.
+    let r = run(
+        &sb,
+        &c,
+        &e.proj,
+        &format!("{GIT_ID} add a.txt && {GIT_ID} commit -q -m one && {GIT_ID} branch topic"),
+    )
+    .await;
+    assert_eq!(r.code, 0, "{}", r.text);
+    assert!(e.proj.join(".git/refs/heads/topic").exists());
+    assert!(!r.notes.contains("reverted"), "{}", r.notes);
+}
+
+/// The model cannot pin or re-pin the policy remote: the pin lives in the user data directory,
+/// which is not writable by sandboxed commands.
+#[tokio::test]
+async fn user_data_dir_is_not_writable_by_commands() {
+    let e = env();
+    let sb = sandbox(&e).await;
+    for ns in [NamespaceMode::Off, NamespaceMode::Auto] {
+        let c = cfg(ns, NetworkMode::Full);
+        if !enforcing(&sb, &c) {
+            return;
+        }
+        let data = e.home.join(".local/share/ruckcode");
+        std::fs::create_dir_all(data.join("project-policy")).unwrap();
+        let r = run(
+            &sb,
+            &c,
+            &e.proj,
+            &format!("echo '{{}}' > {}/project-policy/pin.json", data.display()),
+        )
+        .await;
+        assert_ne!(r.code, 0, "{}", r.text);
+        assert!(!data.join("project-policy/pin.json").exists());
+    }
+}

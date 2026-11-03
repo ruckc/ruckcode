@@ -77,6 +77,12 @@ impl Prepared {
                 p.display()
             ));
         }
+        for p in self.snapshot.restore_git() {
+            notes.push(format!(
+                "[sandbox] The command modified {}; the change was reverted. Sandboxed commands cannot change the git remote configuration, hooks or remote-tracking refs (`.git/config`, `.git/hooks`, `.git/info`, `.git/refs/remotes`, `.git/packed-refs`, `.git/FETCH_HEAD`): they would run outside the sandbox or forge the source of the sandbox policy.",
+                p.display()
+            ));
+        }
         let denied = self.gate.take_denials();
         if !denied.is_empty() {
             notes.push(format!(
@@ -183,9 +189,11 @@ fn fs_denial_note(
     ))
 }
 
-/// Contents of ruckcode's own config files before a command ran.
+/// Contents of ruckcode's own config files (and the protected parts of `.git`) before a command
+/// ran.
 struct ConfigSnapshot {
     files: Vec<(PathBuf, Option<Vec<u8>>)>,
+    git: crate::git::Snapshot,
 }
 
 impl ConfigSnapshot {
@@ -207,7 +215,13 @@ impl ConfigSnapshot {
                     (p, c)
                 })
                 .collect(),
+            git: crate::git::Snapshot::take(project),
         }
+    }
+
+    /// Undo changes to the git paths a command must not touch.
+    fn restore_git(&self) -> Vec<PathBuf> {
+        self.git.restore()
     }
 
     /// Undo changes; returns the paths that had been changed.
