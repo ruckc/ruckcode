@@ -12,6 +12,7 @@ globset.workspace = true
 ignore.workspace = true
 regex.workspace = true
 ruckcode-llm.workspace = true
+ruckcode-sandbox.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -83,6 +83,11 @@ impl Env {
         let proj = tempfile::tempdir().unwrap();
         let user = tempfile::tempdir().unwrap();
         let client = Arc::new(Client::default());
+        // These tests run in a binary without the sandbox launcher: turn the sandbox off (user config only).
+        let _ = std::fs::write(
+            user.path().join("config.toml"),
+            "[sandbox]\nenabled = false\n",
+        );
         let agent = Arc::new(Agent::new(AgentOptions {
             provider_override: Some(Arc::new(MockProvider::demo())),
             user_config_dir: Some(user.path().to_path_buf()),

@@ -47,6 +47,9 @@ pub struct ModeDef {
     pub permissions: BTreeMap<String, Permission>,
     #[serde(default)]
     pub hooks: HooksConfig,
+    /// Per-mode sandbox overrides (`[modes.<id>.sandbox]`); cannot turn the sandbox off.
+    #[serde(default)]
+    pub sandbox: Option<ruckcode_sandbox::SandboxOverride>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -190,6 +190,9 @@ pub struct AgentOptions {
     pub persist: bool,
     /// Directory holding user `config.toml` / `modes.toml`; `None` means `~/.config/ruckcode`.
     pub user_config_dir: Option<PathBuf>,
+    /// The binary that acts as the sandbox launcher (`__sandbox-exec`); `None` re-executes the
+    /// running binary. Tests whose binary does not embed the launcher set this.
+    pub sandbox_exe: Option<ruckcode_sandbox::LauncherExe>,
 }
 
 impl Default for AgentOptions {
@@ -200,6 +203,7 @@ impl Default for AgentOptions {
             provider_override: None,
             persist: true,
             user_config_dir: None,
+            sandbox_exe: None,
         }
     }
 }
@@ -227,6 +231,8 @@ struct SessionState {
     model_pin: Option<String>,
     /// Whether the "profile isn't configured" notices were already sent.
     warned_profiles: bool,
+    /// Created on the first sandboxed command.
+    sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
 }
 
 impl SessionState {
@@ -448,6 +454,7 @@ impl Agent {
             request_counter: 0,
             model_pin: None,
             warned_profiles: false,
+            sandbox: None,
         })
     }
 
@@ -1321,11 +1328,14 @@ impl Agent {
                     false,
                 );
             }
+            let sandbox = self.sandbox_handle(s, client, name, kind).await;
             let ctx = ToolContext {
                 cwd: s.cwd.clone(),
                 session_id: s.id.clone(),
                 user: client.clone(),
                 cancel: cancel.clone(),
+                tool_call_id: id.to_string(),
+                sandbox,
             };
             match tool.call(input.clone(), &ctx).await {
                 Ok(out) => {
@@ -1392,6 +1402,61 @@ impl Agent {
             },
             cancelled,
         )
+    }
+
+    /// The sandbox for a process-spawning tool call (created on first use), unless the user
+    /// turned it off in their config.
+    async fn sandbox_handle(
+        &self,
+        s: &mut SessionState,
+        client: &Arc<dyn Client>,
+        name: &str,
+        kind: ToolKind,
+    ) -> Option<ruckcode_tools::SandboxHandle> {
+        if name.starts_with("mcp__") || !s.config.sandbox.enabled {
+            return None;
+        }
+        let cfg = s
+            .config
+            .sandbox
+            .with_override(s.mode_def().sandbox.as_ref());
+        let config_dir = crate::config::user_config_dir(self.options.user_config_dir.as_deref());
+        // Only process-spawning tools need the sandbox itself (and its proxy); the others get
+        // the path guards for ruckcode's config and secrets.
+        let sb = if kind == ToolKind::Execute {
+            Some(match &s.sandbox {
+                Some(sb) => sb.clone(),
+                None => {
+                    let sb = ruckcode_sandbox::Sandbox::new(ruckcode_sandbox::SandboxOptions {
+                        project_root: s.cwd.clone(),
+                        exe: self
+                            .options
+                            .sandbox_exe
+                            .clone()
+                            .unwrap_or(ruckcode_sandbox::LauncherExe::SelfExe),
+                        prompter: Some(Arc::new(crate::sandbox::NetPrompter {
+                            client: client.clone(),
+                            session_id: s.id.clone(),
+                        })),
+                        store: ruckcode_sandbox::DomainStore::for_project(&s.cwd),
+                        config_dir: config_dir.clone(),
+                        home: None,
+                        caps: None,
+                    })
+                    .await;
+                    s.sandbox = Some(sb.clone());
+                    sb
+                }
+            })
+        } else {
+            None
+        };
+        Some(crate::sandbox::handle(
+            sb,
+            cfg,
+            &s.cwd,
+            config_dir.as_deref(),
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
