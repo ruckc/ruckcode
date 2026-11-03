@@ -69,7 +69,7 @@ base_url = "http://localhost:11434/v1"
 ```
 
 Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` (default 100),
-`check_updates` (default true; the daily update hint, see [Updates](#updates)),
+`[update] auto` / `check` (both default true: background self-update and the daily check, see [Updates](#updates); the older `check_updates` still works),
 `[mise] lazy_threshold` (default 12), `[permissions]` (tool name or glob such as `"mise__*"` to
 `allow` / `ask` / `deny`), and global `[[hooks.<event>]]` tables. `RUCKCODE_PROFILE` overrides
 `default_profile`; `--profile` and `--model` override per run.
@@ -656,19 +656,31 @@ are not downloadable). Everything is verified with the project's minisign key (t
   installed from the `.deb` cannot update itself: the app tells you a new version exists and
   links to the download page. On Windows the app can also update
   `rc` inside WSL distros (see WSL2 above).
-- **`rc`.** `rc self-update` downloads the archive for your platform from
-  `<site>/rc/latest.json`, verifies SHA-256 **and** the minisign signature, and replaces the running
-  binary atomically (Windows too). Flags: `--check` (only report), `--version-only` (print the latest
-  version), `--yes` (no prompt), `--insecure-skip-signature` (checksum only, loud warning; for
-  builds without the key). It refuses for package-manager installs (Homebrew Cellar, `/usr/bin`,
-  Nix, snap) and tells you to use the package manager. Once a day `rc` also notes "update available"
-  (the TUI status line; headless mode on stderr only when it is a terminal; never in `rc acp`). The
-  check is one small request to the update site, cached in
-  `<cache dir>/ruckcode/update-check.json`.
-- **Turning it off.** Desktop: Settings, Updates, switch off "Automatically download updates" (it
-  still tells you when something is available). `rc`: set `RUCKCODE_NO_UPDATE_CHECK=1`, or
-  `check_updates = false` in `config.toml`, to stop the daily hint (`rc self-update` still works when
-  you run it). `RUCKCODE_UPDATE_BASE_URL` points both at another site (testing, mirrors).
+- **`rc` updates itself.** At most once a day (timestamp in `<cache dir>/ruckcode/update-check.json`)
+  the interactive `rc` checks the update site in the background (short timeouts, never delays or
+  breaks the session, errors only in the debug log). When a newer release exists it downloads the
+  archive for your platform, verifies SHA-256 **and** the minisign signature, and replaces the `rc`
+  binary atomically (Windows too: the running exe is renamed aside). The new version runs from the
+  next launch; `rc` prints `rc updated 0.15.0 → 0.16.0; takes effect next run` when the TUI exits
+  (or at the next start if you quit first), never while the TUI is up. It never moves to a
+  prerelease and never downgrades.
+- **`rc update`** (alias `rc self-update`) does it on demand: shows current to latest and the release
+  notes, asks, downloads, verifies and installs. Flags: `--check` (only report), `--version-only`
+  (print the latest version), `--yes` (no prompt), `--insecure-skip-signature` (checksum only, loud
+  warning; for builds without the key). Exit codes: `0` ok / up to date, `1` error, `10` (with
+  `--check`) a newer release exists, `11` an update exists but this copy cannot update itself.
+- **When `rc` leaves itself alone.** Installs by a package or version manager (`cargo install`,
+  Homebrew, Nix, snap, mise, asdf, Scoop, Chocolatey, `/usr/bin`), a binary in a directory you cannot
+  write, and the `rc` the desktop app installs into WSL (marked by `.rc-managed-by-app`; the app
+  updates it) are never replaced: `rc update` says what to run instead (exit 11) and the daily check
+  only mentions the new version. Headless `rc -p`, `rc acp`, JSON output and CI (`CI` set) never
+  install anything; an explicit `rc update` still works there.
+- **Turning it off.** `rc` config: `[update] auto = false` (still tells you a new version exists) or
+  `[update] check = false` (no network request at all); `check_updates = false` also still works.
+  Environment: `RC_NO_UPDATE=1` (or `RUCKCODE_NO_UPDATE_CHECK=1`) disables both for that run.
+  Desktop: Settings, Updates, switch off "Automatically download updates" (it still tells you when
+  something is available). `RUCKCODE_UPDATE_BASE_URL` points everything at another site (testing,
+  mirrors).
 - **Not configured.** Releases built without the signing key (see CONTRIBUTING.md) publish no update
   manifests: the app says "updates not configured" and `rc self-update` reports that no manifest is
   published.

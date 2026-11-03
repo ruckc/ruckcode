@@ -220,7 +220,8 @@ pub async fn run(cli: &Cli) -> Result<u8> {
     });
     let conn = crate::connect(cli, handler.clone()).await?;
     // Once-a-day update hint: shown on stderr only when it is a terminal, never delays the run.
-    let update_plan = crate::update::startup_plan(crate::tui::update_checks_enabled(&cwd));
+    let update_plan =
+        crate::update::startup_plan(crate::tui::update_checks_enabled(&cwd), false, false);
     let update_refresh = update_plan
         .refresh
         .then(|| tokio::spawn(crate::update::refresh_cache()));

@@ -275,11 +275,19 @@ impl Ctx {
     }
 }
 
-/// The `check_updates` config option (default on).
-pub fn update_checks_enabled(cwd: &Path) -> bool {
+/// `(check, auto)` from the config: `[update] check/auto` (and the older `check_updates`).
+pub fn update_settings(cwd: &Path) -> (bool, bool) {
     ruckcode_core::Config::load(cwd, None)
-        .map(|c| c.check_updates)
-        .unwrap_or(true)
+        .map(|c| {
+            let check = c.check_updates && c.update.check;
+            (check, check && c.update.auto)
+        })
+        .unwrap_or((true, true))
+}
+
+/// Whether the daily check is enabled (headless mode: hint only, never installs).
+pub fn update_checks_enabled(cwd: &Path) -> bool {
+    update_settings(cwd).0
 }
 
 fn model_label(cli: &Cli, cwd: &Path) -> String {
@@ -350,12 +358,19 @@ pub async fn run(cli: &Cli) -> Result<()> {
     };
 
     let mut app = App::new(model_label(cli, &cwd));
-    let plan = crate::update::startup_plan(update_checks_enabled(&cwd));
+    let (check, auto) = update_settings(&cwd);
+    let plan = crate::update::startup_plan(check, auto, true);
     app.update_available = plan.cached;
     if plan.refresh {
         let tx = ctx.tx.clone();
         tokio::spawn(async move {
-            if let Some(v) = crate::update::refresh_cache().await {
+            // Installs in the background when allowed; the notice comes on exit / next run.
+            let newer = if plan.auto {
+                crate::update::refresh_and_install().await
+            } else {
+                crate::update::refresh_cache().await
+            };
+            if let Some(v) = newer {
                 let _ = tx.send(UiEvent::UpdateAvailable(v));
             }
         });

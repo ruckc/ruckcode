@@ -83,6 +83,27 @@ fn default_lazy_threshold() -> usize {
     12
 }
 
+/// `[update]`: how `rc` keeps itself current (see the README, "Updates").
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct UpdateConfig {
+    /// Download, verify and install new releases in the background (TUI only); the new version
+    /// runs from the next launch.
+    #[serde(default = "default_true")]
+    pub auto: bool,
+    /// Check for new releases at most once a day and mention them. `false` also stops `auto`.
+    #[serde(default = "default_true")]
+    pub check: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            check: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MiseConfig {
     #[serde(default = "default_lazy_threshold")]
@@ -141,6 +162,8 @@ pub struct Config {
     pub check_updates: bool,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
+    #[serde(default)]
+    pub update: UpdateConfig,
     #[serde(default)]
     pub mise: MiseConfig,
     #[serde(default)]
@@ -380,6 +403,11 @@ mod tests {
                 .unwrap()
                 .check_updates
         );
+        assert!(c.update.auto && c.update.check);
+        let u = Config::from_toml_str("[update]\nauto = false")
+            .unwrap()
+            .update;
+        assert!(!u.auto && u.check);
         assert_eq!(c.mise.lazy_threshold, 12);
         assert_eq!(c.mcp.lazy_threshold, 20);
         assert!(c.mcp_servers.is_empty());
