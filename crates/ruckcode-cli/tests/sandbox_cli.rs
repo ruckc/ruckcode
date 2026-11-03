@@ -148,3 +148,197 @@ fn only_the_user_config_can_turn_the_sandbox_off() {
 
 #[allow(dead_code)]
 fn _p(_: &Path) {}
+
+fn have_git() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn git_in(dir: &Path, args: &[&str]) {
+    let o = Command::new("git")
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
+/// The project committed to a local bare "remote" whose policy sets `network = "off"`.
+fn project_with_remote(e: &Env) -> PathBuf {
+    let remote = e.outside.join("remote.git");
+    git_in(
+        &e.outside,
+        &["init", "-q", "--bare", "-b", "main", "remote.git"],
+    );
+    git_in(&e.proj, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        e.proj.join(".ruckcode/config.toml"),
+        format!("{CFG}[sandbox]\nnetwork = \"off\"\n"),
+    )
+    .unwrap();
+    git_in(&e.proj, &["add", "."]);
+    git_in(&e.proj, &["commit", "-q", "-m", "init"]);
+    git_in(
+        &e.proj,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git_in(&e.proj, &["push", "-q", "origin", "main"]);
+    remote
+}
+
+fn status_json(e: &Env) -> serde_json::Value {
+    let o = rc(e, &["sandbox", "status", "--json"]);
+    serde_json::from_slice(&o.stdout).unwrap_or_else(|_| panic!("{}", text(&o)))
+}
+
+#[test]
+fn status_shows_the_verified_project_policy_and_drift() {
+    if !have_git() {
+        return eprintln!("SKIPPED: git not installed");
+    }
+    let e = env();
+    let remote = project_with_remote(&e);
+    let v = status_json(&e);
+    assert_eq!(v["project_policy"]["status"]["state"], "active", "{v}");
+    assert_eq!(v["config"]["network"], "off");
+    assert_eq!(
+        v["project_policy"]["source"]["url"],
+        remote.to_str().unwrap()
+    );
+    assert_eq!(v["project_policy"]["source"]["branch"], "main");
+    assert!(v["project_policy"]["drift"].is_null());
+    // Loosening the working tree does not take effect and is reported.
+    std::fs::write(
+        e.proj.join(".ruckcode/config.toml"),
+        format!("{CFG}[sandbox]\nnetwork = \"full\"\n"),
+    )
+    .unwrap();
+    let v = status_json(&e);
+    assert_eq!(v["config"]["network"], "off");
+    assert!(v["project_policy"]["drift"]
+        .as_str()
+        .unwrap()
+        .contains("until merged"));
+    let t = text(&rc(&e, &["sandbox", "status"]));
+    assert!(t.contains("project policy: active; source:"), "{t}");
+    assert!(t.contains("warning:") && t.contains("until merged"), "{t}");
+}
+
+#[test]
+fn changed_origin_is_ignored_until_the_user_runs_trust_remote() {
+    if !have_git() {
+        return eprintln!("SKIPPED: git not installed");
+    }
+    let e = env();
+    let _ = project_with_remote(&e);
+    assert_eq!(status_json(&e)["config"]["network"], "off");
+    let other = e.outside.join("other.git");
+    git_in(
+        &e.outside,
+        &["init", "-q", "--bare", "-b", "main", "other.git"],
+    );
+    git_in(
+        &e.proj,
+        &["remote", "set-url", "origin", other.to_str().unwrap()],
+    );
+    let v = status_json(&e);
+    assert_eq!(
+        v["project_policy"]["status"]["state"], "pin_mismatch",
+        "{v}"
+    );
+    assert_eq!(v["config"]["network"], "allowlist");
+    let t = text(&rc(&e, &["sandbox", "status"]));
+    assert!(t.contains("IGNORED") && t.contains("trust-remote"), "{t}");
+    // Needs an explicit yes when there is no terminal.
+    let o = rc(&e, &["sandbox", "trust-remote"]);
+    assert!(!o.status.success(), "{}", text(&o));
+    let o = rc(&e, &["sandbox", "trust-remote", "--yes"]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        status_json(&e)["project_policy"]["pinned_url"],
+        other.to_str().unwrap()
+    );
+}
+
+#[test]
+fn the_model_cannot_re_pin_the_remote() {
+    if !have_git() {
+        return eprintln!("SKIPPED: git not installed");
+    }
+    let e = env();
+    if !enforcing(&e) {
+        return;
+    }
+    let remote = project_with_remote(&e);
+    let other = e.outside.join("other.git");
+    git_in(
+        &e.outside,
+        &["init", "-q", "--bare", "-b", "main", "other.git"],
+    );
+    // The model changes origin (blocked, or reverted when only Landlock is available) and then
+    // tries the user's command from inside the sandbox.
+    let out = bash(
+        &e,
+        &format!(
+            "git remote set-url origin {} ; {} sandbox trust-remote --yes",
+            other.display(),
+            env!("CARGO_BIN_EXE_rc")
+        ),
+    );
+    let v = status_json(&e);
+    assert_eq!(
+        v["project_policy"]["pinned_url"],
+        remote.to_str().unwrap(),
+        "{out}"
+    );
+    assert_eq!(
+        v["project_policy"]["status"]["state"], "active",
+        "{out} {v}"
+    );
+    assert_eq!(v["config"]["network"], "off");
+}
+
+#[test]
+fn write_tool_refuses_git_config_hooks_and_info() {
+    if !have_git() {
+        return eprintln!("SKIPPED: git not installed");
+    }
+    let e = env();
+    if !enforcing(&e) {
+        return;
+    }
+    git_in(&e.proj, &["init", "-q", "-b", "main"]);
+    let cfg = std::fs::read_to_string(e.proj.join(".git/config")).unwrap();
+    for target in [".git/config", ".git/hooks/post-commit", ".git/info/exclude"] {
+        let out = text(&rc(
+            &e,
+            &["-p", &format!("mock:write {target} evil"), "--yolo"],
+        ));
+        assert!(
+            out.contains("protected git state"),
+            "{target} must be refused: {out}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(e.proj.join(".git/config")).unwrap(),
+        cfg
+    );
+    assert!(!e.proj.join(".git/hooks/post-commit").exists());
+    // Ordinary files are still writable.
+    let out = text(&rc(&e, &["-p", "mock:write notes.txt hi", "--yolo"]));
+    assert!(e.proj.join("notes.txt").exists(), "{out}");
+}

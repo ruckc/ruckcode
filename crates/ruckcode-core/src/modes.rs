@@ -110,12 +110,28 @@ impl ModeSet {
     }
 
     /// Project `.ruckcode/modes.toml`, else the user's, else the implicit set.
+    ///
+    /// Sandbox overrides in the *project* file are dropped: they are only honoured as committed
+    /// on the remote (`project_policy::apply`). The user's own `[modes.<id>.sandbox]` overrides
+    /// still apply to the modes of the same id.
     pub fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
-        let candidates = [
-            Some(project_dir.join(".ruckcode/modes.toml")),
-            user_config_dir(user_dir).map(|d| d.join("modes.toml")),
-        ];
-        for path in candidates.into_iter().flatten() {
+        let user_path = user_config_dir(user_dir).map(|d| d.join("modes.toml"));
+        let project_path = project_dir.join(".ruckcode/modes.toml");
+        if let Ok(text) = std::fs::read_to_string(&project_path) {
+            let mut set = Self::from_toml_str(&text)
+                .with_context(|| format!("loading {}", project_path.display()))?;
+            let user = user_path
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|t| Self::from_toml_str(&t).ok());
+            for (id, def) in &mut set.modes {
+                def.sandbox = user
+                    .as_ref()
+                    .and_then(|u| u.get(id))
+                    .and_then(|m| m.sandbox.clone());
+            }
+            return Ok(set);
+        }
+        if let Some(path) = user_path {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 return Self::from_toml_str(&text)
                     .with_context(|| format!("loading {}", path.display()));

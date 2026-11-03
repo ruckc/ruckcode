@@ -303,9 +303,17 @@ result says what, and you widen the policy in `config.toml` or a mode in `modes.
 [sandbox]
 network = "allowlist"            # "off" | "full"
 extra_write_paths = ["~/.config/mytool"]
+project_policy = "remote"        # or "off": ignore the project's own sandbox settings
 ```
 
-`rc sandbox status` shows what your system can enforce. Native Windows has no sandbox (use WSL).
+A project may carry its own `[sandbox]` (in `.ruckcode/config.toml`) and `[modes.<id>.sandbox]` (in
+`.ruckcode/modes.toml`), but because commands can write the project, that policy is honoured only
+as **committed on the remote's default branch**: ruckcode fetches it itself, by a pinned URL and
+outside the sandbox. Working-tree, staged and local-commit changes never take effect (you get a
+warning); if `origin` changes you re-pin it with `rc sandbox trust-remote`. Sandboxed commands also
+cannot modify `.git/config`, `.git/hooks/`, `.git/info/` or the remote-tracking refs.
+
+`rc sandbox status` shows what your system can enforce and where the project policy comes from. Native Windows has no sandbox (use WSL).
 See [docs/SANDBOX.md](docs/SANDBOX.md) for the layers, defaults, every config key, the Ubuntu
 AppArmor profile for user namespaces and the known limits.
 

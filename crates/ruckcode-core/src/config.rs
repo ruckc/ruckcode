@@ -330,14 +330,13 @@ impl Config {
         // `.mcp.json` sits between user config and project config.toml.
         layers.extend(mcp_json_layer(project_dir)?);
         if let Some(mut t) = read(project_dir.join(".ruckcode/config.toml"))? {
-            // The sandbox's only off switch belongs to the user; a project (which the agent can
-            // write to) must not be able to flip it.
-            if let Some(toml::Value::Table(sb)) = t.get_mut("sandbox") {
-                if sb.remove("enabled").is_some() {
-                    tracing::warn!(
-                        "ignoring sandbox.enabled in the project config; set it in the user config"
-                    );
-                }
+            // A project is writable by sandboxed commands, so nothing in its working tree may
+            // shape the sandbox: project `[sandbox]` settings are only honoured as committed on
+            // the remote (see `project_policy`), never from this file.
+            if t.remove("sandbox").is_some() {
+                tracing::debug!(
+                    "ignoring [sandbox] in the project config.toml (only the verified remote copy is honoured)"
+                );
             }
             layers.push(t);
         }
@@ -486,8 +485,10 @@ mod tests {
             c.sandbox.enabled,
             "project config must not disable the sandbox"
         );
-        assert_eq!(c.sandbox.network, ruckcode_sandbox::NetworkMode::Off);
-        assert_eq!(c.sandbox.extra_write_paths, ["/x"]);
+        // The working-tree [sandbox] table is not read at all (only the verified remote copy is
+        // honoured, see `project_policy`).
+        assert_eq!(c.sandbox.network, ruckcode_sandbox::NetworkMode::Allowlist);
+        assert!(c.sandbox.extra_write_paths.is_empty());
         std::fs::write(
             user.path().join("config.toml"),
             "[sandbox]\nenabled = false\n",

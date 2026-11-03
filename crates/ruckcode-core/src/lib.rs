@@ -8,6 +8,7 @@ pub mod modes;
 pub mod modes_api;
 mod modes_edit;
 pub mod permissions;
+pub mod project_policy;
 pub mod retry;
 mod sandbox;
 pub mod setup;

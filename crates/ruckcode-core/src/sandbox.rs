@@ -36,10 +36,13 @@ impl DomainPrompter for NetPrompter {
     }
 }
 
-/// Paths in-process tools must not write (ruckcode's own configuration).
+/// Paths in-process tools must not write: ruckcode's own configuration and the parts of `.git`
+/// that could redirect the remote or run code outside the sandbox (`.git/config`,
+/// `.git/hooks/**`, `.git/info/**`, remote-tracking refs, ...).
 pub(crate) fn protected_write(project: &Path, config_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut v = vec![project.join(".ruckcode"), project.join(".mcp.json")];
     v.extend(config_dir.map(Path::to_path_buf));
+    v.extend(ruckcode_sandbox::git_protected_paths(project));
     v
 }
 
@@ -56,5 +59,45 @@ pub(crate) fn handle(
         cfg,
         protected_write: protected_write(project, config_dir),
         deny_read,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ruckcode_tools::SandboxHandle;
+
+    #[test]
+    fn write_guards_cover_git_config_hooks_and_info() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().canonicalize().unwrap();
+        std::fs::create_dir_all(p.join(".git/hooks")).unwrap();
+        std::fs::write(p.join(".git/config"), "[core]\n").unwrap();
+        let h = SandboxHandle {
+            sandbox: None,
+            cfg: SandboxConfig::default(),
+            protected_write: protected_write(&p, None),
+            deny_read: vec![],
+        };
+        for blocked in [
+            ".git/config",
+            ".git/hooks/post-commit",
+            ".git/hooks/sub/x",
+            ".git/info/exclude",
+            ".git/refs/remotes/origin/main",
+            ".git/hooks/../config",
+            ".ruckcode/config.toml",
+        ] {
+            assert!(h.blocks_write(&p.join(blocked)), "{blocked}");
+        }
+        for ok in [
+            ".git/index",
+            ".git/HEAD",
+            ".git/refs/heads/x",
+            "src/a.rs",
+            ".gitignore",
+        ] {
+            assert!(!h.blocks_write(&p.join(ok)), "{ok}");
+        }
     }
 }

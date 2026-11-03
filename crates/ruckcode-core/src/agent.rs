@@ -233,6 +233,8 @@ struct SessionState {
     warned_profiles: bool,
     /// Created on the first sandboxed command.
     sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
+    /// Project sandbox policy messages, sent once at the first prompt.
+    policy_notices: Vec<String>,
 }
 
 impl SessionState {
@@ -422,8 +424,9 @@ impl Agent {
         extra_mcp: BTreeMap<String, McpServerConfig>,
     ) -> Result<SessionState> {
         let user_dir = self.options.user_config_dir.as_deref();
-        let config = Config::load(&cwd, user_dir)?;
-        let modes = ModeSet::load(&cwd, user_dir)?;
+        let mut config = Config::load(&cwd, user_dir)?;
+        let mut modes = ModeSet::load(&cwd, user_dir)?;
+        let policy_notices = self.project_policy(&cwd, &mut config, &mut modes).await;
         let profile = self
             .options
             .profile_override
@@ -455,7 +458,40 @@ impl Agent {
             model_pin: None,
             warned_profiles: false,
             sandbox: None,
+            policy_notices,
         })
+    }
+
+    /// Lay the verified remote copy of the project's sandbox policy over the user's config. The
+    /// working tree's own sandbox settings were already dropped by the loaders.
+    async fn project_policy(
+        &self,
+        cwd: &Path,
+        config: &mut Config,
+        modes: &mut ModeSet,
+    ) -> Vec<String> {
+        use ruckcode_sandbox::ProjectPolicy;
+        if !config.sandbox.enabled || config.sandbox.project_policy == ProjectPolicy::Off {
+            return vec![];
+        }
+        let Some(data) = crate::project_policy::data_dir() else {
+            return vec![];
+        };
+        let (project, mode) = (cwd.to_path_buf(), config.sandbox.project_policy);
+        let Ok(res) = tokio::task::spawn_blocking(move || {
+            crate::project_policy::resolve(&project, &data, mode)
+        })
+        .await
+        else {
+            return vec![];
+        };
+        let mut notices = res.notices.clone();
+        notices.extend(crate::project_policy::apply(
+            &res,
+            &mut config.sandbox,
+            modes,
+        ));
+        notices
     }
 
     /// Resolve (model id, profile) for the session's current mode. The returned profile's
@@ -987,6 +1023,9 @@ impl Agent {
                 .run_hooks(s, HookEvent::SessionStart, None, &payload)
                 .await;
             notify_blocked(s, client, &out);
+        }
+        for n in std::mem::take(&mut s.policy_notices) {
+            client.send_event(&s.id, SessionEvent::Notice(n));
         }
         if !s.warned_profiles {
             s.warned_profiles = true;
