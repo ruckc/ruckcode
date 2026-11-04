@@ -45,6 +45,20 @@ def rc_name(triple):
     return f"rc-{VERSION}-{triple}." + ("zip" if "windows" in triple else "tar.gz")
 
 
+def release_rc_targets():
+    """Targets built by the release-rc job's matrix in ci.yml: the source of truth for the manifest."""
+    import re
+
+    wf = (HERE.parent / ".github/workflows/ci.yml").read_text()
+    job = re.search(r"^  release-rc:\n(.*?)(?=^  \S[^\n]*:\n)", wf, re.S | re.M)
+    if job is None:
+        raise AssertionError("release-rc job not found in ci.yml")
+    targets = re.findall(r"\{ target: ([\w-]+),", job.group(1))
+    if not targets:
+        raise AssertionError("no matrix entries found in release-rc")
+    return set(targets)
+
+
 def host_triple():
     m = platform.machine()
     if platform.system() == "Linux":
@@ -178,6 +192,7 @@ class BuildSite(unittest.TestCase):
         self.assertTrue(tauri["platforms"]["darwin-aarch64"]["url"].endswith(".app.tar.gz"))
         rc = json.loads((out / "rc" / "latest.json").read_text())
         self.assertEqual(set(rc["targets"]), {t for t, _l, _e in build_site.RC_TARGETS})
+        self.assertEqual(set(rc["targets"]), release_rc_targets())
         for t, e in rc["targets"].items():
             f = out / "download" / f"v{VERSION}" / e["url"].rsplit("/", 1)[1]
             self.assertEqual(e["sha256"], hashlib.sha256(f.read_bytes()).hexdigest(), t)
@@ -263,9 +278,11 @@ class Consistency(unittest.TestCase):
         self.assertIn(expected, (self.ROOT / "site/install.sh").read_text())
 
     def test_rc_targets_match_the_release_matrix(self):
+        """Every rc archive the release builds must be listed in the rc update manifest."""
+        self.assertEqual({t for t, _l, _e in build_site.RC_TARGETS}, release_rc_targets())
+
+    def test_updater_targets_are_built_by_the_release(self):
         wf = (self.ROOT / ".github/workflows/ci.yml").read_text()
-        for triple, _label, _ext in build_site.RC_TARGETS:
-            self.assertIn(f"target: {triple}", wf, triple)
         for _key, (triple, _suffix) in build_site.UPDATER_PLATFORMS.items():
             self.assertIn(f"target: {triple}", wf, triple)
 
