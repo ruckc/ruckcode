@@ -18,7 +18,7 @@ pub struct TodoItem {
 }
 
 /// Appended to the tool result when the last plan item is completed.
-pub const ALL_DONE: &str = "All plan items are complete. Tell the user the plan is finished and summarise what was done, then stop unless they ask for more.";
+const ALL_DONE: &str = "All plan items are complete. Tell the user the plan is finished and summarise what was done, then stop unless they ask for more.";
 
 pub struct TodoWrite;
 
