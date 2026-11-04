@@ -225,6 +225,17 @@ describe('ChatController', () => {
     expect(chat.error).toMatch(/unsupported/);
   });
 
+  it('clears the plan-complete confirmation on the next user message, keeps an open plan', async () => {
+    const { chat } = await ready();
+    await chat.send('hello');
+    chat.active!.model.planComplete = 3;
+    chat.active!.model.plan = [];
+    await chat.send('more');
+    expect(chat.active!.model.planComplete).toBeNull();
+    // the fake agent's plan has open items, so the box is shown, not the confirmation
+    expect(chat.active!.model.plan.length).toBeGreaterThan(0);
+  });
+
   it('loads an old session with its history and switches between open sessions', async () => {
     const { chat, agents } = await ready();
     await chat.openSession('old-1');
@@ -232,7 +243,9 @@ describe('ChatController', () => {
     const items = chat.active!.model.items;
     expect(items.map((i) => i.kind)).toEqual(['user', 'thought', 'tool', 'tool', 'assistant']);
     expect(items[3]).toMatchObject({ kind: 'tool', diffs: [{ path: 'src/auth.rs' }] });
-    expect(chat.active!.model.plan).toHaveLength(2);
+    // the stored session's plan was fully completed, so the box is hidden
+    expect(chat.active!.model.plan).toHaveLength(0);
+    expect(chat.active!.model.planComplete).toBe(2);
     expect(chat.active!.loading).toBe(false);
     expect(agents[0].received.filter((m) => m.method === 'session/load')).toHaveLength(1);
     // back to the first session and to the old one again: no second load

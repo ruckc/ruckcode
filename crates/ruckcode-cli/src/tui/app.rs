@@ -123,6 +123,9 @@ pub struct App {
     pub blocks: Vec<Block>,
     tool_index: HashMap<String, usize>,
     pub plan: Vec<PlanEntry>,
+    /// Size of the plan that just finished; shown as a one-line confirmation until the next
+    /// user message.
+    pub plan_complete: Option<usize>,
     pub session_id: Option<String>,
     pub mode_id: String,
     pub modes: Vec<SessionMode>,
@@ -191,6 +194,7 @@ impl App {
             blocks: vec![],
             tool_index: HashMap::new(),
             plan: vec![],
+            plan_complete: None,
             session_id: None,
             mode_id: String::new(),
             modes: vec![],
@@ -224,6 +228,7 @@ impl App {
         self.blocks.clear();
         self.tool_index.clear();
         self.plan.clear();
+        self.plan_complete = None;
         self.session_id = session_id;
         self.scroll = 0;
         self.running = false;
@@ -289,7 +294,7 @@ impl App {
             }
             SessionUpdate::ToolCall(tc) => self.on_tool_call(tc),
             SessionUpdate::ToolCallUpdate(up) => self.on_tool_update(up),
-            SessionUpdate::Plan(p) => self.plan = p.entries,
+            SessionUpdate::Plan(p) => self.set_plan(p.entries),
             SessionUpdate::CurrentModeUpdate(m) => self.mode_id = m.current_mode_id.to_string(),
             SessionUpdate::Notice(n) => self.notice(n.title),
             SessionUpdate::UsageUpdate(u) => self.usage = Some((u.used, u.size)),
@@ -437,11 +442,28 @@ impl App {
         }
     }
 
+    /// Take a plan update: a finished plan collapses into a short confirmation, an empty one
+    /// clears the box, anything else shows the box.
+    fn set_plan(&mut self, entries: Vec<PlanEntry>) {
+        let all_done = !entries.is_empty()
+            && entries
+                .iter()
+                .all(|e| e.status == ruckcode_acp::schema::PlanEntryStatus::Completed);
+        if all_done {
+            self.plan_complete = Some(entries.len());
+            self.plan.clear();
+        } else {
+            self.plan_complete = None;
+            self.plan = entries;
+        }
+    }
+
     // ---- turns ------------------------------------------------------------
 
     /// Record a user prompt and mark the agent busy.
     pub fn begin_turn(&mut self, text: String) -> String {
         self.blocks.push(Block::User(text.clone()));
+        self.plan_complete = None;
         self.running = true;
         self.scroll = 0;
         text
@@ -763,6 +785,7 @@ impl App {
                     self.blocks.clear();
                     self.tool_index.clear();
                     self.plan.clear();
+                    self.plan_complete = None;
                 }
                 let text = format!("/{cmd}").trim().to_string();
                 self.running = true;
@@ -1312,6 +1335,46 @@ mod tests {
             ToolCallUpdateFields::new().status(ToolCallStatus::Failed),
         )));
         assert_eq!(a.blocks.len(), 2);
+    }
+
+    fn plan_of(statuses: &[PlanEntryStatus]) -> SessionUpdate {
+        SessionUpdate::Plan(Plan::new(
+            statuses
+                .iter()
+                .map(|s| PlanEntry::new("step", PlanEntryPriority::High, s.clone()))
+                .collect(),
+        ))
+    }
+
+    #[test]
+    fn completed_plan_hides_and_a_new_plan_returns() {
+        use PlanEntryStatus::*;
+        let mut a = App::new("m");
+        a.handle_update(plan_of(&[Completed, Pending]));
+        assert_eq!(a.plan.len(), 2);
+        assert_eq!(a.plan_complete, None);
+        a.handle_update(plan_of(&[Completed, Completed]));
+        assert!(a.plan.is_empty());
+        assert_eq!(a.plan_complete, Some(2));
+        // The next user message clears the confirmation.
+        a.begin_turn("more".into());
+        assert_eq!(a.plan_complete, None);
+        a.handle_update(plan_of(&[Completed, Completed]));
+        a.handle_update(plan_of(&[InProgress]));
+        assert_eq!(a.plan.len(), 1);
+        assert_eq!(a.plan_complete, None);
+        // A plan the model clears hides the box without a confirmation.
+        a.handle_update(plan_of(&[]));
+        assert!(a.plan.is_empty() && a.plan_complete.is_none());
+    }
+
+    #[test]
+    fn cancelled_turn_keeps_an_unfinished_plan() {
+        use PlanEntryStatus::*;
+        let mut a = App::new("m");
+        a.handle_update(plan_of(&[Completed, InProgress]));
+        a.begin_turn("go".into());
+        assert_eq!(a.plan.len(), 2);
     }
 
     #[test]

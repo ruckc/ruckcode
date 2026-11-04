@@ -17,6 +17,9 @@ pub struct TodoItem {
     pub status: TodoStatus,
 }
 
+/// Appended to the tool result when the last plan item is completed.
+pub const ALL_DONE: &str = "All plan items are complete. Tell the user the plan is finished and summarise what was done, then stop unless they ask for more.";
+
 pub struct TodoWrite;
 
 #[async_trait]
@@ -68,10 +71,51 @@ impl Tool for TodoWrite {
             .iter()
             .filter(|t| t.status == TodoStatus::Completed)
             .count();
+        let mut content = format!("Plan updated ({done}/{} completed)", todos.len());
+        if !todos.is_empty() && done == todos.len() {
+            content.push_str(". ");
+            content.push_str(ALL_DONE);
+        }
         Ok(ToolOutput {
-            content: format!("Plan updated ({done}/{} completed)", todos.len()),
+            content,
             plan: Some(todos),
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn run(todos: Value) -> String {
+        let ctx = crate::test_util::ctx(std::path::Path::new("."));
+        TodoWrite
+            .call(json!({ "todos": todos }), &ctx)
+            .await
+            .unwrap()
+            .content
+    }
+
+    #[tokio::test]
+    async fn partial_completion_does_not_announce_done() {
+        let out = run(json!([
+            {"content": "a", "status": "completed"},
+            {"content": "b", "status": "in_progress"}
+        ]))
+        .await;
+        assert_eq!(out, "Plan updated (1/2 completed)");
+    }
+
+    #[tokio::test]
+    async fn last_item_completed_tells_the_model_to_report() {
+        let out = run(json!([
+            {"content": "a", "status": "completed"},
+            {"content": "b", "status": "completed"}
+        ]))
+        .await;
+        assert!(out.starts_with("Plan updated (2/2 completed). "));
+        assert!(out.ends_with(ALL_DONE));
+        assert_eq!(run(json!([])).await, "Plan updated (0/0 completed)");
     }
 }

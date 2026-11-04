@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PlanEntry } from '../state/reducer';
 
-  let { plan }: { plan: PlanEntry[] } = $props();
+  let { plan, complete = null }: { plan: PlanEntry[]; complete?: number | null } = $props();
   const done = $derived(plan.filter((p) => p.status === 'completed').length);
   const mark = { completed: '✓', in_progress: '▶', pending: '○' } as Record<string, string>;
 </script>
@@ -10,7 +10,9 @@
   <h2>
     Plan {#if plan.length}<span class="muted">{done}/{plan.length}</span>{/if}
   </h2>
-  {#if plan.length === 0}
+  {#if plan.length === 0 && complete != null}
+    <p class="done" role="status">✓ Plan complete ({complete}/{complete})</p>
+  {:else if plan.length === 0}
     <p class="muted">The agent's plan and todos appear here.</p>
   {:else}
     <ul>
@@ -57,6 +59,10 @@
   }
   li[data-status='in_progress'] .mark {
     color: var(--warn);
+  }
+  .done {
+    margin: 0;
+    color: var(--ok);
   }
   .mark {
     width: 1.2em;

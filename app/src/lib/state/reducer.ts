@@ -70,6 +70,8 @@ export interface ConfigOptionView {
 export interface ChatModel {
   items: ChatItem[];
   plan: PlanEntry[];
+  /** Size of the plan that just finished, shown as a confirmation until the next user message. */
+  planComplete: number | null;
   modes: ModeInfo[];
   currentModeId: string | null;
   usage: { used: number; size: number } | null;
@@ -92,6 +94,7 @@ export function emptyModel(): ChatModel {
   return {
     items: [],
     plan: [],
+    planComplete: null,
     modes: [],
     currentModeId: null,
     usage: null,
@@ -207,11 +210,17 @@ export function applyUpdate(m: ChatModel, u: SessionUpdate): void {
       break;
     }
     case 'plan':
-      m.plan = u.entries.map((e) => ({
-        content: e.content,
-        status: e.status,
-        priority: e.priority
-      }));
+      {
+        const entries = u.entries.map((e) => ({
+          content: e.content,
+          status: e.status,
+          priority: e.priority
+        }));
+        // A finished plan collapses into a confirmation; an empty one just clears the box.
+        const finished = entries.length > 0 && entries.every((e) => e.status === 'completed');
+        m.plan = finished ? [] : entries;
+        m.planComplete = finished ? entries.length : null;
+      }
       break;
     case 'current_mode_update':
       m.currentModeId = u.currentModeId;
