@@ -19,7 +19,11 @@ impl Tool for Bash {
 
     fn description(&self) -> String {
         "Run a shell command in the project root and return combined stdout/stderr and the exit code. \
-         Prefer dedicated tools (Read, Grep, Glob, mise tasks) when they fit."
+         Prefer dedicated tools (Read, Grep, Glob, mise tasks) when they fit. Commands run in a sandbox: \
+         they can read most of the system but write only to the project, temp directories and tool \
+         caches; secrets (~/.ssh, ~/.aws, .env files, ...) are unreadable; network access goes through \
+         a domain allowlist and the user may be asked to approve new domains. If something is blocked \
+         the result says what; do not try to bypass the sandbox, ask the user to widen the policy."
             .into()
     }
 
@@ -106,15 +110,18 @@ pub async fn run_shell(
     timeout: Duration,
     ctx: &ToolContext,
 ) -> anyhow::Result<ToolOutput> {
-    let mut cmd = tokio::process::Command::new("sh");
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    harden(&mut cmd);
-    let mut child = cmd.spawn()?;
+    let mut launch = match crate::launch(ctx, "sh", &["-c".to_string(), command.to_string()], cwd) {
+        Ok(l) => l,
+        Err(msg) => return Ok(ToolOutput::error(msg)),
+    };
+    {
+        let cmd = launch.cmd();
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        harden(cmd);
+    }
+    let mut child = launch.spawn()?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let read = async {
@@ -144,14 +151,22 @@ pub async fn run_shell(
     }
     let text = truncate_middle(&text, MAX_OUTPUT);
     let code = status.code().unwrap_or(-1);
+    let notes = launch.notes(&text, status.success());
+    let with_notes = |t: String| match &notes {
+        Some(n) => format!("{t}\n\n{n}"),
+        None => t,
+    };
     if status.success() {
-        Ok(ToolOutput::ok(if text.is_empty() {
+        Ok(ToolOutput::ok(with_notes(if text.is_empty() {
             "(no output)".to_string()
         } else {
             text
-        }))
+        })))
     } else {
-        Ok(ToolOutput::error(format!("{text}\n[exit code {code}]")))
+        Ok(ToolOutput::error(format!(
+            "{}\n[exit code {code}]",
+            with_notes(text)
+        )))
     }
 }
 

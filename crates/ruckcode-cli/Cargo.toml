@@ -23,6 +23,7 @@ ruckcode-core.workspace = true
 ruckcode-llm.workspace = true
 ruckcode-mcp.workspace = true
 ruckcode-mise.workspace = true
+ruckcode-sandbox.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true

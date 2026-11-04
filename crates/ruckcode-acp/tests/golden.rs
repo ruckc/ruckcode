@@ -60,6 +60,8 @@ fn harness(
     script: Vec<Message>,
 ) -> (ruckcode_acp::Connection, Arc<Recorder>) {
     let rec = Arc::new(Recorder::default());
+    // These tests run in a binary without the sandbox launcher: turn the sandbox off (user config only).
+    let _ = std::fs::write(user.join("config.toml"), "[sandbox]\nenabled = false\n");
     let agent = Arc::new(Agent::new(AgentOptions {
         provider_override: Some(Arc::new(MockProvider::new(script))),
         user_config_dir: Some(user.to_path_buf()),

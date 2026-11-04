@@ -49,12 +49,16 @@ fn mise_bin() -> String {
 struct Exec {
     output: String,
     code: i32,
+    /// Sandbox explanations to append to the tool result.
+    notes: Option<String>,
 }
 
 enum ExecError {
     Timeout,
     Cancelled,
     Io(std::io::Error),
+    /// The sandbox refused to start the command (strict mode); the message is for the model.
+    Refused(String),
 }
 
 /// Run `program args...` (no shell) capturing combined stdout/stderr.
@@ -64,16 +68,21 @@ async fn exec(
     cwd: &Path,
     timeout: Duration,
     cancel: Option<&CancellationToken>,
+    sandbox: Option<&ToolContext>,
 ) -> Result<Exec, ExecError> {
-    let mut child = tokio::process::Command::new(program)
-        .args(args)
-        .current_dir(cwd)
+    let mut launch = match sandbox {
+        Some(ctx) => ruckcode_tools::launch(ctx, program, args, cwd).map_err(ExecError::Refused)?,
+        None => {
+            ruckcode_tools::launch(&plain_ctx(), program, args, cwd).map_err(ExecError::Refused)?
+        }
+    };
+    launch
+        .cmd()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(ExecError::Io)?;
+        .kill_on_drop(true);
+    let mut child = launch.spawn().map_err(ExecError::Io)?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let read = async {
@@ -100,16 +109,41 @@ async fn exec(
         }
         output.push_str(&String::from_utf8_lossy(&e));
     }
+    let notes = launch.notes(&output, status.success());
     Ok(Exec {
         output,
         code: status.code().unwrap_or(-1),
+        notes,
     })
+}
+
+/// A context without a sandbox, for the discovery calls (`mise tasks ls`).
+fn plain_ctx() -> ToolContext {
+    struct NoUser;
+    #[async_trait]
+    impl ruckcode_tools::UserBridge for NoUser {
+        async fn ask_user(
+            &self,
+            _: &str,
+            _: Vec<ruckcode_tools::Question>,
+        ) -> anyhow::Result<Vec<ruckcode_tools::Answer>> {
+            anyhow::bail!("no user")
+        }
+    }
+    ToolContext {
+        cwd: std::path::PathBuf::new(),
+        session_id: String::new(),
+        user: std::sync::Arc::new(NoUser),
+        cancel: CancellationToken::new(),
+        tool_call_id: String::new(),
+        sandbox: None,
+    }
 }
 
 /// Runs `mise tasks ls --json` in cwd. Returns an empty list if mise is missing or fails.
 pub async fn discover(cwd: &Path) -> Vec<MiseTask> {
     let args: Vec<String> = ["tasks", "ls", "--json"].map(String::from).to_vec();
-    match exec(&mise_bin(), &args, cwd, DISCOVER_TIMEOUT, None).await {
+    match exec(&mise_bin(), &args, cwd, DISCOVER_TIMEOUT, None, None).await {
         Ok(r) if r.code == 0 => match parse_tasks(&r.output) {
             Ok(t) => t,
             Err(e) => {
@@ -198,9 +232,21 @@ async fn run_task(task: &str, args: &[String], ctx: &ToolContext) -> anyhow::Res
         argv.push("--".into());
         argv.extend(args.iter().cloned());
     }
-    match exec(&mise_bin(), &argv, &ctx.cwd, RUN_TIMEOUT, Some(&ctx.cancel)).await {
+    match exec(
+        &mise_bin(),
+        &argv,
+        &ctx.cwd,
+        RUN_TIMEOUT,
+        Some(&ctx.cancel),
+        Some(ctx),
+    )
+    .await
+    {
         Ok(r) => {
-            let text = truncate_middle(&r.output, MAX_OUTPUT);
+            let mut text = truncate_middle(&r.output, MAX_OUTPUT);
+            if let Some(n) = &r.notes {
+                text = format!("{text}\n\n{n}");
+            }
             if r.code == 0 {
                 Ok(ToolOutput::ok(if text.is_empty() {
                     "(no output)".to_string()
@@ -216,6 +262,7 @@ async fn run_task(task: &str, args: &[String], ctx: &ToolContext) -> anyhow::Res
             RUN_TIMEOUT.as_secs()
         ))),
         Err(ExecError::Cancelled) => Ok(ToolOutput::error("mise task cancelled")),
+        Err(ExecError::Refused(m)) => Ok(ToolOutput::error(m)),
         Err(ExecError::Io(e)) => Ok(ToolOutput::error(format!(
             "failed to run mise in {}: {e}",
             ctx.cwd.display()
@@ -428,6 +475,8 @@ mod tests {
             session_id: "t".into(),
             user: Arc::new(NoUser),
             cancel: CancellationToken::new(),
+            tool_call_id: String::new(),
+            sandbox: None,
         }
     }
 

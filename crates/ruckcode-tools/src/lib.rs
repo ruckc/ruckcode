@@ -3,12 +3,14 @@
 pub mod ask;
 mod bash;
 mod fs;
+mod sandboxed;
 mod search;
 mod todo;
 
 pub use ask::{Answer, AskUserQuestion, Question, QuestionOption};
 pub use bash::Bash;
 pub use fs::{Edit, Read, Write};
+pub use sandboxed::{launch, Launch, SandboxHandle, PROTECTED_WRITE_MSG};
 pub use search::{Glob, Grep};
 pub use todo::{TodoItem, TodoStatus, TodoWrite};
 
@@ -108,6 +110,10 @@ pub struct ToolContext {
     pub session_id: String,
     pub user: Arc<dyn UserBridge>,
     pub cancel: CancellationToken,
+    /// The id of the tool call being run (permission prompts raised by the call refer to it).
+    pub tool_call_id: String,
+    /// Set when commands run under the sandbox.
+    pub sandbox: Option<SandboxHandle>,
 }
 
 impl ToolContext {
@@ -216,6 +222,8 @@ pub(crate) mod test_util {
             session_id: "test".into(),
             user: Arc::new(NoUser),
             cancel: CancellationToken::new(),
+            tool_call_id: String::new(),
+            sandbox: None,
         }
     }
 }

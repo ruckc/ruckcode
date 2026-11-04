@@ -288,6 +288,35 @@ permissions = { Bash = "ask", Edit = "allow", Write = "allow" }
 `[mise] lazy_threshold` tasks match (default 12), the model gets two meta-tools, `MiseListTasks` and
 `MiseRun`, instead, so task schemas are loaded only on demand.
 
+## Command sandbox
+
+The `Bash` tool and mise task tools run inside a sandbox implemented in the `rc` binary itself
+(user/mount/pid/net namespaces, Landlock and seccomp on Linux, Seatbelt on macOS; no `bwrap` or
+`sandbox-exec`). Commands read most of the system but write only to the project, temp directories
+and tool caches; secrets (`~/.ssh`, `~/.aws`, project `.env*`, ...) are unreadable; network access
+goes through a domain allowlist and unknown domains prompt (allow once / always for this project /
+reject). There is no way for the model to run outside the sandbox: if something is blocked the tool
+result says what, and you widen the policy in `config.toml` or a mode in `modes.toml`.
+
+```toml
+# config.toml (sandbox.enabled is only honoured here, never from a project file)
+[sandbox]
+network = "allowlist"            # "off" | "full"
+extra_write_paths = ["~/.config/mytool"]
+project_policy = "remote"        # or "off": ignore the project's own sandbox settings
+```
+
+A project may carry its own `[sandbox]` (in `.ruckcode/config.toml`) and `[modes.<id>.sandbox]` (in
+`.ruckcode/modes.toml`), but because commands can write the project, that policy is honoured only
+as **committed on the remote's default branch**: ruckcode fetches it itself, by a pinned URL and
+outside the sandbox. Working-tree, staged and local-commit changes never take effect (you get a
+warning); if `origin` changes you re-pin it with `rc sandbox trust-remote`. Sandboxed commands also
+cannot modify `.git/config`, `.git/hooks/`, `.git/info/` or the remote-tracking refs.
+
+`rc sandbox status` shows what your system can enforce and where the project policy comes from. Native Windows has no sandbox (use WSL).
+See [docs/SANDBOX.md](docs/SANDBOX.md) for the layers, defaults, every config key, the Ubuntu
+AppArmor profile for user namespaces and the known limits.
+
 ## MCP servers
 
 `rc` is an MCP client (built on the official [`rmcp`](https://crates.io/crates/rmcp) SDK; stdio and
@@ -693,6 +722,7 @@ crates/
   ruckcode-llm      Provider trait + Anthropic and OpenAI-compatible clients
   ruckcode-tools    Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
   ruckcode-mise     mise task discovery, schema mapping, execution
+  ruckcode-sandbox  command sandbox: launcher, namespaces, Landlock, seccomp, Seatbelt, allowlist proxy
   ruckcode-mcp      MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
   ruckcode-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp      ACP agent server + client plumbing (official ACP SDK for JSON-RPC)

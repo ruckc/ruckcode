@@ -83,6 +83,11 @@ impl Env {
         self.proj.path().to_path_buf()
     }
     fn agent(&self, p: Arc<dyn Provider>) -> Arc<Agent> {
+        // These tests run in a binary without the sandbox launcher: turn the sandbox off (user config only).
+        let _ = std::fs::write(
+            self.user.path().join("config.toml"),
+            "[sandbox]\nenabled = false\n",
+        );
         Arc::new(Agent::new(AgentOptions {
             provider_override: Some(p),
             user_config_dir: Some(self.user.path().to_path_buf()),

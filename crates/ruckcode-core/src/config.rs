@@ -180,6 +180,9 @@ pub struct Config {
     /// Retry and wait behaviour for 429 / overloaded / transient API failures (`[rate_limit]`).
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
+    #[serde(default)]
+    pub sandbox: ruckcode_sandbox::SandboxConfig,
 }
 
 impl Default for Config {
@@ -326,7 +329,17 @@ impl Config {
         }
         // `.mcp.json` sits between user config and project config.toml.
         layers.extend(mcp_json_layer(project_dir)?);
-        layers.extend(read(project_dir.join(".ruckcode/config.toml"))?);
+        if let Some(mut t) = read(project_dir.join(".ruckcode/config.toml"))? {
+            // A project is writable by sandboxed commands, so nothing in its working tree may
+            // shape the sandbox: project `[sandbox]` settings are only honoured as committed on
+            // the remote (see `project_policy`), never from this file.
+            if t.remove("sandbox").is_some() {
+                tracing::debug!(
+                    "ignoring [sandbox] in the project config.toml (only the verified remote copy is honoured)"
+                );
+            }
+            layers.push(t);
+        }
         if let Ok(p) = std::env::var("RUCKCODE_PROFILE") {
             if !p.is_empty() {
                 let mut t = toml::Table::new();
@@ -455,6 +468,35 @@ mod tests {
         );
         assert_eq!(c.permissions["Bash"], Permission::Allow);
         assert_eq!(c.permissions["Write"], Permission::Deny);
+    }
+
+    #[test]
+    fn sandbox_enabled_only_from_user_config() {
+        let user = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(proj.path().join(".ruckcode")).unwrap();
+        std::fs::write(
+            proj.path().join(".ruckcode/config.toml"),
+            "[sandbox]\nenabled = false\nnetwork = \"off\"\nextra_write_paths = [\"/x\"]\n",
+        )
+        .unwrap();
+        let c = Config::load(proj.path(), Some(user.path())).unwrap();
+        assert!(
+            c.sandbox.enabled,
+            "project config must not disable the sandbox"
+        );
+        // The working-tree [sandbox] table is not read at all (only the verified remote copy is
+        // honoured, see `project_policy`).
+        assert_eq!(c.sandbox.network, ruckcode_sandbox::NetworkMode::Allowlist);
+        assert!(c.sandbox.extra_write_paths.is_empty());
+        std::fs::write(
+            user.path().join("config.toml"),
+            "[sandbox]\nenabled = false\n",
+        )
+        .unwrap();
+        let c = Config::load(proj.path(), Some(user.path())).unwrap();
+        assert!(!c.sandbox.enabled);
+        assert!(Config::default().sandbox.enabled);
     }
 
     #[test]

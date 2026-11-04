@@ -190,6 +190,9 @@ pub struct AgentOptions {
     pub persist: bool,
     /// Directory holding user `config.toml` / `modes.toml`; `None` means `~/.config/ruckcode`.
     pub user_config_dir: Option<PathBuf>,
+    /// The binary that acts as the sandbox launcher (`__sandbox-exec`); `None` re-executes the
+    /// running binary. Tests whose binary does not embed the launcher set this.
+    pub sandbox_exe: Option<ruckcode_sandbox::LauncherExe>,
 }
 
 impl Default for AgentOptions {
@@ -200,6 +203,7 @@ impl Default for AgentOptions {
             provider_override: None,
             persist: true,
             user_config_dir: None,
+            sandbox_exe: None,
         }
     }
 }
@@ -227,6 +231,10 @@ struct SessionState {
     model_pin: Option<String>,
     /// Whether the "profile isn't configured" notices were already sent.
     warned_profiles: bool,
+    /// Created on the first sandboxed command.
+    sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
+    /// Project sandbox policy messages, sent once at the first prompt.
+    policy_notices: Vec<String>,
 }
 
 impl SessionState {
@@ -416,8 +424,9 @@ impl Agent {
         extra_mcp: BTreeMap<String, McpServerConfig>,
     ) -> Result<SessionState> {
         let user_dir = self.options.user_config_dir.as_deref();
-        let config = Config::load(&cwd, user_dir)?;
-        let modes = ModeSet::load(&cwd, user_dir)?;
+        let mut config = Config::load(&cwd, user_dir)?;
+        let mut modes = ModeSet::load(&cwd, user_dir)?;
+        let policy_notices = self.project_policy(&cwd, &mut config, &mut modes).await;
         let profile = self
             .options
             .profile_override
@@ -448,7 +457,41 @@ impl Agent {
             request_counter: 0,
             model_pin: None,
             warned_profiles: false,
+            sandbox: None,
+            policy_notices,
         })
+    }
+
+    /// Lay the verified remote copy of the project's sandbox policy over the user's config. The
+    /// working tree's own sandbox settings were already dropped by the loaders.
+    async fn project_policy(
+        &self,
+        cwd: &Path,
+        config: &mut Config,
+        modes: &mut ModeSet,
+    ) -> Vec<String> {
+        use ruckcode_sandbox::ProjectPolicy;
+        if !config.sandbox.enabled || config.sandbox.project_policy == ProjectPolicy::Off {
+            return vec![];
+        }
+        let Some(data) = crate::project_policy::data_dir() else {
+            return vec![];
+        };
+        let (project, mode) = (cwd.to_path_buf(), config.sandbox.project_policy);
+        let Ok(res) = tokio::task::spawn_blocking(move || {
+            crate::project_policy::resolve(&project, &data, mode)
+        })
+        .await
+        else {
+            return vec![];
+        };
+        let mut notices = res.notices.clone();
+        notices.extend(crate::project_policy::apply(
+            &res,
+            &mut config.sandbox,
+            modes,
+        ));
+        notices
     }
 
     /// Resolve (model id, profile) for the session's current mode. The returned profile's
@@ -981,6 +1024,9 @@ impl Agent {
                 .await;
             notify_blocked(s, client, &out);
         }
+        for n in std::mem::take(&mut s.policy_notices) {
+            client.send_event(&s.id, SessionEvent::Notice(n));
+        }
         if !s.warned_profiles {
             s.warned_profiles = true;
             for n in Self::missing_profile_notices(s) {
@@ -1321,11 +1367,14 @@ impl Agent {
                     false,
                 );
             }
+            let sandbox = self.sandbox_handle(s, client, name, kind).await;
             let ctx = ToolContext {
                 cwd: s.cwd.clone(),
                 session_id: s.id.clone(),
                 user: client.clone(),
                 cancel: cancel.clone(),
+                tool_call_id: id.to_string(),
+                sandbox,
             };
             match tool.call(input.clone(), &ctx).await {
                 Ok(out) => {
@@ -1392,6 +1441,61 @@ impl Agent {
             },
             cancelled,
         )
+    }
+
+    /// The sandbox for a process-spawning tool call (created on first use), unless the user
+    /// turned it off in their config.
+    async fn sandbox_handle(
+        &self,
+        s: &mut SessionState,
+        client: &Arc<dyn Client>,
+        name: &str,
+        kind: ToolKind,
+    ) -> Option<ruckcode_tools::SandboxHandle> {
+        if name.starts_with("mcp__") || !s.config.sandbox.enabled {
+            return None;
+        }
+        let cfg = s
+            .config
+            .sandbox
+            .with_override(s.mode_def().sandbox.as_ref());
+        let config_dir = crate::config::user_config_dir(self.options.user_config_dir.as_deref());
+        // Only process-spawning tools need the sandbox itself (and its proxy); the others get
+        // the path guards for ruckcode's config and secrets.
+        let sb = if kind == ToolKind::Execute {
+            Some(match &s.sandbox {
+                Some(sb) => sb.clone(),
+                None => {
+                    let sb = ruckcode_sandbox::Sandbox::new(ruckcode_sandbox::SandboxOptions {
+                        project_root: s.cwd.clone(),
+                        exe: self
+                            .options
+                            .sandbox_exe
+                            .clone()
+                            .unwrap_or(ruckcode_sandbox::LauncherExe::SelfExe),
+                        prompter: Some(Arc::new(crate::sandbox::NetPrompter {
+                            client: client.clone(),
+                            session_id: s.id.clone(),
+                        })),
+                        store: ruckcode_sandbox::DomainStore::for_project(&s.cwd),
+                        config_dir: config_dir.clone(),
+                        home: None,
+                        caps: None,
+                    })
+                    .await;
+                    s.sandbox = Some(sb.clone());
+                    sb
+                }
+            })
+        } else {
+            None
+        };
+        Some(crate::sandbox::handle(
+            sb,
+            cfg,
+            &s.cwd,
+            config_dir.as_deref(),
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]

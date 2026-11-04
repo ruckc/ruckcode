@@ -21,6 +21,8 @@ fn ctx(cancel: CancellationToken) -> ToolContext {
         session_id: "t".into(),
         user: Arc::new(NoUser),
         cancel,
+        tool_call_id: String::new(),
+        sandbox: None,
     }
 }
 

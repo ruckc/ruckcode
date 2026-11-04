@@ -41,6 +41,12 @@ impl Tool for Read {
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput> {
         let path = ctx.resolve(str_arg(&input, "file_path")?);
+        if ctx.sandbox.as_ref().is_some_and(|h| h.blocks_read(&path)) {
+            return Ok(ToolOutput::error(format!(
+                "{}: refused: the sandbox policy marks this path as a secret (the user can change `sandbox.deny_read_paths`)",
+                path.display()
+            )));
+        }
         let text = match tokio::fs::read(&path).await {
             Ok(b) => String::from_utf8_lossy(&b).into_owned(),
             Err(e) => return Ok(ToolOutput::error(format!("{}: {e}", path.display()))),
@@ -111,6 +117,13 @@ impl Tool for Write {
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput> {
         let path = ctx.resolve(str_arg(&input, "file_path")?);
+        if ctx.sandbox.as_ref().is_some_and(|h| h.blocks_write(&path)) {
+            return Ok(ToolOutput::error(format!(
+                "{}: {}",
+                path.display(),
+                crate::PROTECTED_WRITE_MSG
+            )));
+        }
         let content = str_arg(&input, "content")?.to_string();
         let old = tokio::fs::read_to_string(&path).await.ok();
         if let Some(parent) = path.parent() {
@@ -173,6 +186,13 @@ impl Tool for Edit {
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput> {
         let path = ctx.resolve(str_arg(&input, "file_path")?);
+        if ctx.sandbox.as_ref().is_some_and(|h| h.blocks_write(&path)) {
+            return Ok(ToolOutput::error(format!(
+                "{}: {}",
+                path.display(),
+                crate::PROTECTED_WRITE_MSG
+            )));
+        }
         let old_string = str_arg(&input, "old_string")?;
         let new_string = str_arg(&input, "new_string")?;
         let replace_all = input["replace_all"].as_bool().unwrap_or(false);

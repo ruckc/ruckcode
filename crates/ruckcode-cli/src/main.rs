@@ -7,6 +7,7 @@ mod keys_cmd;
 mod mcp_cmd;
 mod models_cmd;
 mod modes_cmd;
+mod sandbox_cmd;
 mod sessions_cmd;
 mod setup_cmd;
 mod tui;
@@ -119,6 +120,11 @@ pub enum Command {
     Models(models_cmd::ModelsArgs),
     /// List sessions of this project.
     Sessions(sessions_cmd::SessionsArgs),
+    /// Inspect the command sandbox.
+    Sandbox {
+        #[command(subcommand)]
+        action: sandbox_cmd::SandboxAction,
+    },
     /// Inspect configured MCP servers.
     Mcp {
         #[command(subcommand)]
@@ -213,8 +219,15 @@ fn init_logging(to_file: bool) {
     }
 }
 
+fn main() -> ExitCode {
+    // `rc __sandbox-exec ...`: the sandbox launcher. Must run before anything else (no runtime,
+    // no threads); it never returns.
+    ruckcode_sandbox::launcher::maybe_run();
+    real_main()
+}
+
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn real_main() -> ExitCode {
     let cli = Cli::parse().normalize();
     let interactive = (cli.command.is_none() && !cli.print)
         || matches!(&cli.command, Some(Command::Setup(a)) if a.interactive());
@@ -244,6 +257,7 @@ async fn main() -> ExitCode {
             }
             .await
         }
+        Some(Command::Sandbox { action }) => sandbox_cmd::run(&cli, action).map(|_| 0),
         Some(Command::Mcp {
             action: McpAction::List,
         }) => mcp_cmd::list(&cli).await.map(|_| 0),
