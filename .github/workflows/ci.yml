@@ -265,7 +265,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
-      PNPM_VERSION: "10.28.0"
+      PNPM_VERSION: "10.34.9"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -364,7 +364,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     env:
-      PNPM_VERSION: "10.28.0"
+      PNPM_VERSION: "10.34.9"
     defaults:
       run:
         shell: bash
@@ -636,7 +636,7 @@ jobs:
       VERSION: ${{ needs.release-version.outputs.version }}
       TARGET: ${{ matrix.target }}
       RUCKCODE_VERSION: ${{ needs.release-version.outputs.version }}
-      PNPM_VERSION: "10.28.0"
+      PNPM_VERSION: "10.34.9"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1017,7 +1017,7 @@ jobs:
       contents: read
     env:
       VERSION: ${{ needs.release-version.outputs.version }}
-      PNPM_VERSION: "10.28.0"
+      PNPM_VERSION: "10.34.9"
       UPDATE_BASE_URL: https://ruckc.github.io/ruckcode
       PUBKEY: ${{ vars.RUCKCODE_UPDATER_PUBKEY }}
     outputs:
