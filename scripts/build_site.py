@@ -36,7 +36,8 @@ MAX_FILE = 100 * 1000 * 1000  # per file, GitHub's hard limit is 100 MiB
 MAX_SITE = 900 * 1000 * 1000  # whole site, Pages limit is 1 GB
 
 RC_TARGETS = [
-    ("x86_64-unknown-linux-musl", "Linux x86_64", "tar.gz"),
+    ("x86_64-unknown-linux-gnu", "Linux x86_64 (glibc)", "tar.gz"),
+    ("x86_64-unknown-linux-musl", "Linux x86_64 (static, musl)", "tar.gz"),
     ("aarch64-unknown-linux-gnu", "Linux aarch64", "tar.gz"),
     ("aarch64-apple-darwin", "macOS Apple Silicon", "tar.gz"),
     ("x86_64-apple-darwin", "macOS Intel", "tar.gz"),
