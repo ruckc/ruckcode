@@ -11,8 +11,8 @@ license = "MIT"
 repository = "https://github.com/ruckc/ruckcode"
 
 [workspace.dependencies]
-agent-client-protocol = { version = "3.4", default-features = false }
-agent-client-protocol-schema = { version = "=1.12.0", default-features = false }
+agent-client-protocol = { version = "5.0", default-features = false }
+agent-client-protocol-schema = { version = "=1.15.1", default-features = false }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
@@ -24,7 +24,7 @@ globset = "0.4"
 ignore = "0.4"
 ratatui = "0.30"
 regex = "1"
-rmcp = { version = "3.6", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "3.8", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -34,7 +34,7 @@ tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-toml = { version = "1.1", features = ["preserve_order"] }
+toml = { version = "1.2", features = ["preserve_order"] }
 toml_edit = "0.25"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

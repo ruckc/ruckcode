@@ -274,7 +274,8 @@ mod tests {
 
     #[test]
     fn error_conversion() {
-        let e: crate::rpc::RpcError = Error::method_not_found().into();
+        let e: crate::rpc::RpcError =
+            agent_client_protocol::Error::from(Error::method_not_found()).into();
         assert_eq!(e.code, -32601);
     }
 }

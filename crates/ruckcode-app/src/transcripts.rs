@@ -155,8 +155,14 @@ mod tests {
             ["sessions", "search", "x", "--json", "--limit", "7"]
         );
         assert!(search_call("x", None).stdin.is_none());
-        assert_eq!(unfinished_call().args, ["sessions", "--unfinished", "--json"]);
-        assert_eq!(dismiss_call("s1").args, ["sessions", "dismiss", "s1", "--json"]);
+        assert_eq!(
+            unfinished_call().args,
+            ["sessions", "--unfinished", "--json"]
+        );
+        assert_eq!(
+            dismiss_call("s1").args,
+            ["sessions", "dismiss", "s1", "--json"]
+        );
     }
 
     fn project(tag: &str) -> PathBuf {

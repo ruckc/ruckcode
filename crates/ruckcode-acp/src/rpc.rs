@@ -253,7 +253,7 @@ where
 {
     let on_req = handler.clone();
     let on_notif = handler;
-    host.builder()
+    sdk::Builder::new(host)
         .on_receive_request(
             async move |msg: UntypedMessage,
                         responder: Responder<Value>,
