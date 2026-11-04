@@ -246,18 +246,62 @@ impl ConfigSnapshot {
     }
 }
 
+/// The proxy endpoint handed to commands. A literal IPv4 address, never `localhost`: the proxy
+/// listens on 127.0.0.1 only, and `localhost` may resolve to `::1` first, which neither the proxy
+/// nor the Seatbelt/Landlock rules (which name 127.0.0.1's port) cover.
+pub(crate) fn proxy_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Environment that points a command's HTTP clients at the proxy. `loopback_is_local` is true
+/// when loopback is only "local" inside a network namespace (or for explicitly allowed ports).
+pub(crate) fn proxy_env(port: u16, loopback_is_local: bool) -> Vec<(&'static str, String)> {
+    let url = proxy_url(port);
+    let mut v: Vec<(&'static str, String)> = [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ]
+    .into_iter()
+    .map(|k| (k, url.clone()))
+    .collect();
+    if loopback_is_local {
+        for k in ["NO_PROXY", "no_proxy"] {
+            v.push((k, "localhost,127.0.0.1,::1".to_string()));
+        }
+    }
+    for k in [
+        "npm_config_proxy",
+        "npm_config_https_proxy",
+        "CARGO_HTTP_PROXY",
+    ] {
+        v.push((k, url.clone()));
+    }
+    v
+}
+
 impl Sandbox {
     pub async fn new(opts: SandboxOptions) -> Arc<Self> {
         let caps = opts.caps.clone().unwrap_or_else(|| caps::detect(&opts.exe));
         let gate = Arc::new(Gate::new(opts.store, opts.prompter));
-        let stage = std::env::temp_dir().join(format!(
-            "rc-sbx-{}-{:08x}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(0)
-        ));
+        // Unique per Sandbox: a securely created (O_EXCL, 0700) directory, not a name derived
+        // from the pid and clock, which two Sandboxes in one process could share. Removed in Drop.
+        let stage = tempfile::Builder::new()
+            .prefix("rc-sbx-")
+            .tempdir()
+            .map(tempfile::TempDir::keep)
+            .unwrap_or_else(|e| {
+                tracing::warn!("cannot create the sandbox stage dir ({e}); using a fallback");
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                std::env::temp_dir().join(format!(
+                    "rc-sbx-{}-{}",
+                    std::process::id(),
+                    N.fetch_add(1, Ordering::Relaxed)
+                ))
+            });
         let _ = std::fs::create_dir_all(stage.join("tmp"));
         let _ = std::fs::create_dir_all(stage.join("vartmp"));
         #[cfg(unix)]
@@ -374,26 +418,9 @@ impl Sandbox {
             std_cmd.env("TMPDIR", "/tmp");
         }
         if let (NetworkMode::Allowlist, Some(port)) = (cfg.network, policy.proxy_port) {
-            let url = format!("http://127.0.0.1:{port}");
-            for k in [
-                "HTTP_PROXY",
-                "HTTPS_PROXY",
-                "ALL_PROXY",
-                "http_proxy",
-                "https_proxy",
-                "all_proxy",
-            ] {
-                std_cmd.env(k, &url);
+            for (k, v) in proxy_env(port, policy.layers.netns || !cfg.allowed_ports.is_empty()) {
+                std_cmd.env(k, v);
             }
-            // Loopback is only "local" inside a network namespace (or for explicitly allowed ports).
-            if policy.layers.netns || !cfg.allowed_ports.is_empty() {
-                for k in ["NO_PROXY", "no_proxy"] {
-                    std_cmd.env(k, "localhost,127.0.0.1,::1");
-                }
-            }
-            std_cmd.env("npm_config_proxy", &url);
-            std_cmd.env("npm_config_https_proxy", &url);
-            std_cmd.env("CARGO_HTTP_PROXY", &url);
         }
         let l = policy.layers;
         let layers_note = format!(
@@ -444,6 +471,37 @@ mod tests {
         .unwrap();
         assert!(n.contains("/etc/foo") && n.contains("extra_write_paths"));
         assert!(fs_denial_note("all fine", &cfg, "", &[]).is_none());
+    }
+
+    #[test]
+    fn proxy_env_uses_the_literal_ipv4_loopback() {
+        let env = proxy_env(4242, false);
+        for k in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "CARGO_HTTP_PROXY",
+        ] {
+            let v = env
+                .iter()
+                .find(|(n, _)| *n == k)
+                .unwrap_or_else(|| panic!("{k} unset"));
+            assert_eq!(v.1, "http://127.0.0.1:4242", "{k}");
+        }
+        assert!(!env.iter().any(|(k, _)| k.eq_ignore_ascii_case("no_proxy")));
+        let env = proxy_env(4242, true);
+        assert!(env.iter().any(|(k, _)| *k == "NO_PROXY"));
+    }
+
+    #[tokio::test]
+    async fn proxy_listens_on_ipv4_loopback() {
+        let gate = Arc::new(Gate::new(None, None));
+        let p = proxy::start(gate, None).await.unwrap();
+        // The port in the Seatbelt rule and in HTTP_PROXY is reachable at exactly 127.0.0.1.
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", p.port))
+            .await
+            .is_ok());
     }
 
     #[test]
