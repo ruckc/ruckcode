@@ -17,8 +17,11 @@ fn lit(p: &Path) -> String {
     format!("(literal {})", q(&p.to_string_lossy()))
 }
 
-/// Generate the profile. Rules never depend on evaluation order: every restriction is a deny
-/// with `require-not` exceptions on top of `(allow default)`.
+/// Generate the profile. The file rules and `NetworkMode::Off` do not depend on evaluation
+/// order: every restriction is a deny with `require-not` exceptions on top of
+/// `(allow default)`. `NetworkMode::Allowlist` does: SBPL lets a later matching rule win, so
+/// the blanket `(deny network-outbound)` must come before the `(allow network-outbound ...)`
+/// rules for unix sockets and the proxy port. Keep those allows after that deny.
 pub fn profile(p: &Policy) -> String {
     let mut s = String::from("(version 1)\n(allow default)\n");
     // Writes: only the allowed roots, devices and temp.
@@ -63,14 +66,19 @@ pub fn profile(p: &Policy) -> String {
         }
         NetworkMode::Allowlist => {
             s.push_str("(deny network-bind network-inbound)\n");
-            let mut ok = vec!["(require-not (remote unix-socket))".to_string()];
+            // Deny every outbound connection, then re-allow unix sockets and the proxy. SBPL
+            // lets a later rule win, so the allows must come after the deny. The host part of a
+            // network filter can only be `*` or `localhost` (a literal address is a profile
+            // error), so the proxy is named by port on `localhost`, which the kernel matches
+            // against the loopback interface; the proxy listens on 127.0.0.1 and HTTP_PROXY
+            // names 127.0.0.1 so the connection is always to a loopback address.
+            s.push_str("(deny network-outbound)\n");
+            s.push_str("(allow network-outbound (remote unix-socket))\n");
             for port in &p.connect_ports {
-                ok.push(format!("(require-not (remote ip \"localhost:{port}\"))"));
+                s.push_str(&format!(
+                    "(allow network-outbound (remote ip \"localhost:{port}\"))\n"
+                ));
             }
-            s.push_str(&format!(
-                "(deny network-outbound (require-all {}))\n",
-                ok.join(" ")
-            ));
         }
     }
     s
@@ -155,7 +163,18 @@ mod tests {
         assert!(s.contains("(require-not (subpath \"/private/tmp\"))"));
         assert!(s.contains("(deny file-write* (subpath \"/work/.ruckcode\"))"));
         assert!(s.contains("(deny file-read* file-write* (subpath \"/Users/u/.ssh\"))"));
-        assert!(s.contains("(remote ip \"localhost:5555\")"));
+        assert!(s.contains("(allow network-outbound (remote ip \"localhost:5555\"))"));
+        // The allows must follow the blanket deny (later rules win in SBPL).
+        let deny = s.find("(deny network-outbound)").unwrap();
+        assert!(s.find("(allow network-outbound (remote ip").unwrap() > deny);
+        assert!(
+            s.find("(allow network-outbound (remote unix-socket))")
+                .unwrap()
+                > deny
+        );
+        // Only the proxy port is opened, never a wildcard host.
+        assert!(!s.contains("\"*:"));
+        assert_eq!(s.matches("remote ip").count(), 1);
         assert!(s.contains("(deny network-bind network-inbound)"));
     }
 
