@@ -17,8 +17,11 @@ fn lit(p: &Path) -> String {
     format!("(literal {})", q(&p.to_string_lossy()))
 }
 
-/// Generate the profile. Rules never depend on evaluation order: every restriction is a deny
-/// with `require-not` exceptions on top of `(allow default)`.
+/// Generate the profile. The file rules and `NetworkMode::Off` do not depend on evaluation
+/// order: every restriction is a deny with `require-not` exceptions on top of
+/// `(allow default)`. `NetworkMode::Allowlist` does: SBPL lets a later matching rule win, so
+/// the blanket `(deny network-outbound)` must come before the `(allow network-outbound ...)`
+/// rules for unix sockets and the proxy port. Keep those allows after that deny.
 pub fn profile(p: &Policy) -> String {
     let mut s = String::from("(version 1)\n(allow default)\n");
     // Writes: only the allowed roots, devices and temp.
