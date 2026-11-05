@@ -5,6 +5,8 @@ use crate::config::{NetworkMode, SandboxConfig};
 use crate::policy::{build_policy, BuildInput, Policy};
 use crate::proxy::{self, DomainPrompter, DomainStore, Gate, Proxy};
 use crate::spawn::{launcher_command, Fd, LauncherExe};
+#[cfg(unix)]
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -27,7 +29,9 @@ pub struct Sandbox {
     caps: Capabilities,
     gate: Arc<Gate>,
     proxy: Option<Proxy>,
-    stage: PathBuf,
+    /// `None` when the secure stage dir could not be established (see `stage_error`).
+    stage: Option<PathBuf>,
+    stage_error: Option<String>,
     project_root: PathBuf,
     config_dir: Option<PathBuf>,
     home: Option<PathBuf>,
@@ -36,7 +40,9 @@ pub struct Sandbox {
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.stage);
+        if let Some(st) = &self.stage {
+            let _ = std::fs::remove_dir_all(st);
+        }
     }
 }
 
@@ -283,55 +289,129 @@ pub(crate) fn proxy_env(port: u16, loopback_is_local: bool) -> Vec<(&'static str
     v
 }
 
+/// Make the per-Sandbox stage dir from `create` (which must create a *fresh* directory) and
+/// verify it: a real directory (not a symlink) owned by us with mode 0700, with `tmp` and
+/// `vartmp` created exclusively inside. Any failure is an error; nothing is silently ignored.
+fn establish_stage(create: impl FnOnce() -> std::io::Result<PathBuf>) -> Result<PathBuf, String> {
+    let stage = create().map_err(|e| format!("cannot create the sandbox stage dir: {e}"))?;
+    match verify_stage(&stage) {
+        Ok(()) => Ok(stage),
+        Err(e) => Err(format!(
+            "the sandbox stage dir {} is not safe to use: {e}",
+            stage.display()
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn verify_stage(stage: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let bad = |m: String| Err(std::io::Error::other(m));
+    let check = |p: &Path, mode: u32, what: &str| -> std::io::Result<()> {
+        let md = std::fs::symlink_metadata(p)?;
+        if !md.is_dir() {
+            return bad(format!("{what} is not a real directory"));
+        }
+        // SAFETY: geteuid has no preconditions.
+        if md.uid() != unsafe { libc::geteuid() } {
+            return bad(format!("{what} is not owned by the current user"));
+        }
+        if md.mode() & 0o7777 != mode {
+            return bad(format!(
+                "{what} has mode {:o}, expected {mode:o}",
+                md.mode() & 0o7777
+            ));
+        }
+        Ok(())
+    };
+    check(stage, 0o700, "the stage dir")?;
+    for d in ["tmp", "vartmp"] {
+        let p = stage.join(d);
+        std::fs::DirBuilder::new().mode(0o700).create(&p)?;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o1777))?;
+        check(&p, 0o1777, d)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_stage(stage: &Path) -> std::io::Result<()> {
+    for d in ["tmp", "vartmp"] {
+        std::fs::create_dir(stage.join(d))?;
+    }
+    Ok(())
+}
+
 impl Sandbox {
     pub async fn new(opts: SandboxOptions) -> Arc<Self> {
         let caps = opts.caps.clone().unwrap_or_else(|| caps::detect(&opts.exe));
-        let gate = Arc::new(Gate::new(opts.store, opts.prompter));
-        // Unique per Sandbox: a securely created (O_EXCL, 0700) directory, not a name derived
-        // from the pid and clock, which two Sandboxes in one process could share. Removed in Drop.
-        let stage = tempfile::Builder::new()
-            .prefix("rc-sbx-")
-            .tempdir()
-            .map(tempfile::TempDir::keep)
-            .unwrap_or_else(|e| {
-                tracing::warn!("cannot create the sandbox stage dir ({e}); using a fallback");
-                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                std::env::temp_dir().join(format!(
-                    "rc-sbx-{}-{}",
-                    std::process::id(),
-                    N.fetch_add(1, Ordering::Relaxed)
-                ))
-            });
-        let _ = std::fs::create_dir_all(stage.join("tmp"));
-        let _ = std::fs::create_dir_all(stage.join("vartmp"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o700));
-            for d in ["tmp", "vartmp"] {
-                let _ = std::fs::set_permissions(
-                    stage.join(d),
-                    std::fs::Permissions::from_mode(0o1777),
-                );
+        let SandboxOptions {
+            project_root,
+            exe,
+            prompter,
+            store,
+            config_dir,
+            home,
+            ..
+        } = opts;
+        let gate = Arc::new(Gate::new(store, prompter));
+        // Unique per Sandbox: a securely created (O_EXCL, 0700) directory. There is deliberately
+        // no fallback to a predictable name in the shared temp dir: if this fails the fallback
+        // would fail too, and accepting a pre-existing directory would let another local user own
+        // the proxy socket and private /tmp. On failure the sandbox fails closed (see `prepare`).
+        let stage = establish_stage(|| {
+            let d = tempfile::Builder::new().prefix("rc-sbx-").tempdir()?.keep();
+            // Tighten to 0700 (the umask may leave it wider); an error here is fatal.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700))
+                {
+                    let _ = std::fs::remove_dir(&d);
+                    return Err(e);
+                }
             }
-        }
-        let sock = stage.join("proxy.sock");
-        let proxy = match proxy::start(gate.clone(), Some(sock)).await {
-            Ok(p) => Some(p),
+            Ok(d)
+        });
+        Self::with_stage(exe, caps, gate, project_root, config_dir, home, stage).await
+    }
+
+    async fn with_stage(
+        exe: LauncherExe,
+        caps: Capabilities,
+        gate: Arc<Gate>,
+        project_root: PathBuf,
+        config_dir: Option<PathBuf>,
+        home: Option<PathBuf>,
+        stage: Result<PathBuf, String>,
+    ) -> Arc<Self> {
+        let (stage, stage_error) = match stage {
+            Ok(p) => (Some(p), None),
             Err(e) => {
-                tracing::warn!("sandbox proxy failed to start: {e}");
-                None
+                tracing::error!("{e}");
+                (None, Some(e))
             }
         };
+        let proxy = match &stage {
+            Some(st) => match proxy::start(gate.clone(), Some(st.join("proxy.sock"))).await {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!("sandbox proxy failed to start: {e}");
+                    None
+                }
+            },
+            None => None,
+        };
         Arc::new(Self {
-            exe: opts.exe,
+            exe,
             caps,
             gate,
             proxy,
             stage,
-            project_root: opts.project_root,
-            config_dir: opts.config_dir,
-            home: opts.home,
+            stage_error,
+            project_root,
+            config_dir,
+            home,
             warned: AtomicBool::new(false),
         })
     }
@@ -372,8 +452,8 @@ impl Sandbox {
             layers: plan.layers,
             proxy_port: self.proxy_port(),
             proxy_socket: self.proxy.as_ref().and_then(|p| p.socket.clone()),
-            stage_dir: Some(self.stage.clone()),
-            private_tmp: Some(self.stage.clone()),
+            stage_dir: self.stage.clone(),
+            private_tmp: self.stage.clone(),
         })
     }
 
@@ -400,6 +480,11 @@ impl Sandbox {
         };
         if plan.unsandboxed {
             return Ok(Prep::Unsandboxed { notice });
+        }
+        if let Some(e) = &self.stage_error {
+            return Err(format!(
+                "the command was not run: the sandbox is unavailable ({e}). The user can fix the temp directory or disable the sandbox with `sandbox.enabled = false` in their config.toml."
+            ));
         }
         let policy = self.policy_for(cfg, cwd, &plan);
         let (mut std_cmd, fds) = launcher_command(&self.exe, &policy, argv).map_err(|e| {
@@ -517,5 +602,78 @@ mod tests {
         assert_eq!(ch.len(), 2);
         assert_eq!(std::fs::read_to_string(&m).unwrap(), "orig");
         assert!(!d.path().join(".ruckcode/config.toml").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_rejects_a_preexisting_attacker_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        let d = base.path().join("rc-sbx-1-0");
+        std::fs::create_dir(&d).unwrap();
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let r = establish_stage(|| Ok(d.clone()));
+        assert!(r.unwrap_err().contains("mode"), "lax-mode dir reused");
+        // Pre-seeded subdir: `tmp` already exists, so the dir is not accepted as freshly ours.
+        let d2 = base.path().join("rc-sbx-1-1");
+        std::fs::create_dir(&d2).unwrap();
+        std::fs::set_permissions(&d2, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::create_dir(d2.join("tmp")).unwrap();
+        assert!(establish_stage(|| Ok(d2.clone())).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_does_not_follow_a_symlink() {
+        let base = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let link = base.path().join("rc-sbx-2-0");
+        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+        let r = establish_stage(|| Ok(link.clone()));
+        assert!(r.unwrap_err().contains("not a real directory"));
+        assert!(!target.path().join("tmp").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_accepts_a_fresh_private_dir() {
+        let d = tempfile::Builder::new()
+            .prefix("rc-sbx-")
+            .tempdir()
+            .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let p = establish_stage(|| Ok(d.path().to_path_buf())).unwrap();
+        assert!(p.join("tmp").is_dir() && p.join("vartmp").is_dir());
+    }
+
+    #[tokio::test]
+    async fn failed_stage_refuses_commands() {
+        let caps = Capabilities {
+            platform: "linux".into(),
+            landlock_abi: Some(4),
+            seccomp: true,
+            namespaces: true,
+            seatbelt: true,
+            ..Default::default()
+        };
+        let sb = Sandbox::with_stage(
+            LauncherExe::SelfExe,
+            caps,
+            Arc::new(Gate::new(None, None)),
+            std::env::temp_dir(),
+            None,
+            None,
+            establish_stage(|| Err(std::io::Error::other("boom"))),
+        )
+        .await;
+        let cfg = SandboxConfig::default();
+        let r = sb.prepare(&cfg, &std::env::temp_dir(), &["true".to_string()], "c1");
+        match r {
+            Err(m) => assert!(m.contains("boom") && m.contains("not run"), "{m}"),
+            Ok(_) => panic!("ran without a secure stage dir"),
+        }
     }
 }
