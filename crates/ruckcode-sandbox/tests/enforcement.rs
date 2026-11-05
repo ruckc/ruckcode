@@ -345,6 +345,79 @@ async fn network_through_proxy_landlock() {
     network_checks(NamespaceMode::Off).await;
 }
 
+/// Regression: every namespace probe used one directory per pid, so concurrent probes in a
+/// process deleted each other's directory ("cannot enter .../proj: No such file or directory")
+/// and reported namespaces as unavailable. Probes must be independent.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_namespace_probes_all_agree() {
+    let exe = LauncherExe::Path(PathBuf::from(env!("CARGO_BIN_EXE_rc-sandbox-exec")));
+    let reference = ruckcode_sandbox::caps::detect_uncached(&exe);
+    if !reference.namespaces {
+        return skip("user namespaces unavailable");
+    }
+    for _round in 0..4 {
+        let probes: Vec<_> = (0..16)
+            .map(|_| {
+                let exe = exe.clone();
+                tokio::task::spawn_blocking(move || ruckcode_sandbox::caps::detect_uncached(&exe))
+            })
+            .collect();
+        for p in probes {
+            let c = p.await.unwrap();
+            assert!(
+                c.namespaces,
+                "a concurrent probe failed: {:?}",
+                c.namespaces_reason
+            );
+        }
+    }
+}
+
+/// Regression: many Sandboxes created and used at once (parallel tests, parallel tool calls)
+/// must each get working namespaces and their own private stage directory.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_sandboxes_prepare_and_run() {
+    let e = env();
+    if !sandbox(&e).await.capabilities().namespaces {
+        return skip("user namespaces unavailable");
+    }
+    let tasks: Vec<_> = (0..12)
+        .map(|i| {
+            let (proj, home) = (e.proj.clone(), e.home.clone());
+            tokio::spawn(async move {
+                let e2 = Env {
+                    _base: tempfile::tempdir().unwrap(),
+                    proj,
+                    outside: PathBuf::new(),
+                    home,
+                };
+                let sb = sandbox(&e2).await;
+                let c = cfg(NamespaceMode::Required, NetworkMode::Allowlist);
+                let r = run(&sb, &c, &e2.proj, &format!("echo ok-{i}")).await;
+                assert!(r.text.contains(&format!("ok-{i}")), "{}", r.text);
+                sb
+            })
+        })
+        .collect();
+    let mut stages = std::collections::HashSet::new();
+    for t in tasks {
+        let sb = t.await.unwrap();
+        assert!(
+            stages.insert(
+                sb.policy_for(
+                    &cfg(NamespaceMode::Required, NetworkMode::Allowlist),
+                    &e.proj,
+                    &sb.plan(&cfg(NamespaceMode::Required, NetworkMode::Allowlist)),
+                )
+                .stage_dir
+            ),
+            "two sandboxes shared a stage dir"
+        );
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn network_through_proxy_in_netns() {

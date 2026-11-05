@@ -152,10 +152,38 @@ fn explain_userns_failure(raw: &str) -> String {
     raw.to_string()
 }
 
+/// Probe results that succeeded, keyed by launcher. Namespaces do not come and go while a process
+/// runs, so one success is enough; failures are not cached (they may be transient, e.g. EMFILE).
 #[cfg(target_os = "linux")]
 fn probe_namespaces(exe: &LauncherExe) -> Result<(), String> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static OK: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let key = format!("{exe:?}");
+    let ok = OK.get_or_init(Default::default);
+    if ok.lock().is_ok_and(|g| g.contains(&key)) {
+        return Ok(());
+    }
+    let r = probe_namespaces_uncached(exe);
+    if r.is_ok() {
+        if let Ok(mut g) = ok.lock() {
+            g.insert(key);
+        }
+    }
+    r
+}
+
+#[cfg(target_os = "linux")]
+fn probe_namespaces_uncached(exe: &LauncherExe) -> Result<(), String> {
     use crate::policy::{build_policy, BuildInput};
-    let base = std::env::temp_dir().join(format!("rc-sbx-probe-{}", std::process::id()));
+    // A private, securely created (mkdtemp: O_EXCL, 0700) directory per probe. A name derived
+    // from the pid alone is shared by concurrent probes in one process, which then delete each
+    // other's directory while the launcher is entering it. Dropped (removed) on every path.
+    let base_dir = tempfile::Builder::new()
+        .prefix("rc-sbx-probe-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    let base = base_dir.path();
     let stage = base.join("stage");
     let proj = base.join("proj");
     std::fs::create_dir_all(&proj).map_err(|e| e.to_string())?;
@@ -205,7 +233,7 @@ fn probe_namespaces(exe: &LauncherExe) -> Result<(), String> {
             Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
         }
     })();
-    let _ = std::fs::remove_dir_all(&base);
+    drop(base_dir);
     result
 }
 
@@ -253,6 +281,16 @@ fn launcher_check(exe: &LauncherExe) -> Result<(), String> {
 /// Probe the running system. Runs the real launcher to see whether it works and whether
 /// namespaces are usable.
 pub fn detect(exe: &LauncherExe) -> Capabilities {
+    detect_with(exe, true)
+}
+
+/// Like [`detect`] but always runs the namespace probe. For tests of the probe itself.
+#[doc(hidden)]
+pub fn detect_uncached(exe: &LauncherExe) -> Capabilities {
+    detect_with(exe, false)
+}
+
+fn detect_with(exe: &LauncherExe, use_cache: bool) -> Capabilities {
     #[allow(unused_mut)]
     let mut c = Capabilities {
         platform: std::env::consts::OS.to_string(),
@@ -267,7 +305,11 @@ pub fn detect(exe: &LauncherExe) -> Capabilities {
     {
         c.landlock_abi = crate::linux::landlock_abi();
         c.seccomp = crate::linux::seccomp_available();
-        match probe_namespaces(exe) {
+        match if use_cache {
+            probe_namespaces(exe)
+        } else {
+            probe_namespaces_uncached(exe)
+        } {
             Ok(()) => c.namespaces = true,
             Err(raw) => {
                 let raw = raw.trim_start_matches("rc sandbox: ").to_string();
@@ -277,11 +319,11 @@ pub fn detect(exe: &LauncherExe) -> Capabilities {
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = exe;
+        let _ = (exe, use_cache);
         c.seatbelt = true;
     }
-    #[cfg(not(target_os = "linux"))]
-    let _ = exe;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = (exe, use_cache);
     c
 }
 
