@@ -598,6 +598,20 @@ mod tests {
             turn_end("end_turn"),
         ]);
         assert!(!done.is_unfinished());
+        // A multi-item plan that was fully completed (and replaced an open one) has no open tasks.
+        let all = a(vec![
+            todo(serde_json::json!([
+                {"content": "a", "status": "completed"},
+                {"content": "b", "status": "pending"}
+            ])),
+            todo(serde_json::json!([
+                {"content": "a", "status": "completed"},
+                {"content": "b", "status": "completed"}
+            ])),
+            turn_end("end_turn"),
+        ]);
+        assert!(all.open_tasks.is_empty() && all.in_progress.is_none());
+        assert!(!all.is_unfinished());
         // Dismissal settles it until new work appears.
         let d = vec![user("x"), stamped(Record::SessionDismissed {})];
         assert!(!a(d.clone()).is_unfinished());

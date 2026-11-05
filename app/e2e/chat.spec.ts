@@ -121,7 +121,9 @@ test('open an old session, replaying its history, and close it', async ({ page }
   await expect(page.getByTestId('user-msg')).toHaveText('Fix the login bug in src/auth.rs');
   await expect(page.getByTestId('assistant-msg')).toContainText('Fixed:');
   await expect(page.getByTestId('tool-card')).toHaveCount(2);
-  await expect(page.getByRole('complementary', { name: 'Plan' })).toContainText('Fix it');
+  await expect(page.getByRole('complementary', { name: 'Plan' })).toContainText(
+    'Plan complete (2/2)'
+  );
   await picker(page);
   await page.getByRole('button', { name: 'Close session Fix the login bug' }).click();
   await expect(page.getByTestId('user-msg')).toHaveCount(0);

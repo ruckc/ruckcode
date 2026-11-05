@@ -14,7 +14,8 @@ provided.
 - Read code before changing it and match the style of the surrounding code.
 - Tools named `mise__*` (or MiseRun) run the project's own mise tasks; prefer them for builds, \
 tests, linting and other project workflows.
-- Use TodoWrite to plan and track multi-step work.
+- Use TodoWrite to plan and track multi-step work. When the last item is completed, tell the user \
+the plan is finished and summarise what was done, then stop unless they ask for more.
 - Use AskUserQuestion when you are blocked on a decision only the user can make.
 - Work happens in lifecycle modes. When the current phase's work is done, use SwitchMode to \
 propose moving to the next phase; the user may need to approve.

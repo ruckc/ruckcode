@@ -257,7 +257,7 @@ pub fn render(app: &App, f: &mut Frame) {
     };
     let input_h = (rows.len().clamp(1, 6) + 2) as u16;
     let plan_h = if app.plan.is_empty() {
-        0
+        u16::from(app.plan_complete.is_some())
     } else {
         (app.plan.len().min(6) + 2) as u16
     };
@@ -270,8 +270,14 @@ pub fn render(app: &App, f: &mut Frame) {
     .split(area);
 
     render_transcript(app, f, chunks[0]);
-    if plan_h > 0 {
+    if !app.plan.is_empty() {
         render_plan(app, f, chunks[1]);
+    } else if let Some(n) = app.plan_complete {
+        let line = Line::from(Span::styled(
+            format!(" ✓ Plan complete ({n}/{n})"),
+            Style::default().fg(Color::Green),
+        ));
+        f.render_widget(Paragraph::new(line), chunks[1]);
     }
     render_input(app, f, chunks[2], &rows, cpos);
     render_status(app, f, chunks[3]);
@@ -733,6 +739,27 @@ mod tests {
             s.contains("esc to interrupt") && !s.contains("self-update"),
             "{s}"
         );
+    }
+
+    #[test]
+    fn plan_box_hides_when_complete() {
+        let mut app = App::new("mock/mock");
+        let plan = |s: PlanEntryStatus| {
+            SessionUpdate::Plan(Plan::new(vec![PlanEntry::new(
+                "write tests",
+                PlanEntryPriority::High,
+                s,
+            )]))
+        };
+        app.handle_update(plan(PlanEntryStatus::Pending));
+        assert!(draw(&app, 80, 24).contains("write tests"));
+        app.handle_update(plan(PlanEntryStatus::Completed));
+        let s = draw(&app, 80, 24);
+        assert!(!s.contains("write tests"));
+        assert!(s.contains("Plan complete (1/1)"));
+        app.handle_update(plan(PlanEntryStatus::InProgress));
+        let s = draw(&app, 80, 24);
+        assert!(s.contains("write tests") && !s.contains("Plan complete"));
     }
 
     #[test]

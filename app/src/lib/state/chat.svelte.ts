@@ -425,8 +425,10 @@ export class ChatController {
       // The agent forgets the history; so does the view.
       v.model.items = [];
       v.model.plan = [];
+      v.model.planComplete = null;
     } else {
       v.model.items.push({ kind: 'user', text });
+      v.model.planComplete = null;
     }
     v.running = true;
     try {

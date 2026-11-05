@@ -96,8 +96,10 @@
   });
 
   const active = $derived(chat.active);
-  /** The plan panel appears only while the agent has a plan. */
-  const showPlan = $derived(view === 'chat' && (active?.model.plan.length ?? 0) > 0);
+  /** The plan panel appears only while the agent has an unfinished plan (or just finished one). */
+  const showPlan = $derived(
+    view === 'chat' && ((active?.model.plan.length ?? 0) > 0 || active?.model.planComplete != null)
+  );
   const dialogOpen = $derived(!!chat.permission || !!chat.question);
 
   async function connectProject(project: Project, skipOnboarding = false) {
@@ -379,7 +381,9 @@
   </div>
 
   {#if showPlan}
-    <div class="planp"><PlanPanel plan={active?.model.plan ?? []} /></div>
+    <div class="planp">
+      <PlanPanel plan={active?.model.plan ?? []} complete={active?.model.planComplete ?? null} />
+    </div>
   {/if}
 </div>
 

@@ -160,4 +160,26 @@ describe('applyUpdate: tools, history and options', () => {
     expect(m.title).toBe('T');
     expect(m.items).toEqual([]);
   });
+
+  it('hides a finished plan, shows a confirmation, and brings the box back for a new plan', () => {
+    const m = emptyModel();
+    const plan = (...statuses: string[]) =>
+      applyUpdate(m, {
+        sessionUpdate: 'plan',
+        entries: statuses.map((status) => ({ content: 's', priority: 'high', status }))
+      } as never);
+    plan('completed', 'pending');
+    expect(m.plan).toHaveLength(2);
+    expect(m.planComplete).toBeNull();
+    plan('completed', 'completed');
+    expect(m.plan).toEqual([]);
+    expect(m.planComplete).toBe(2);
+    plan('in_progress');
+    expect(m.plan).toHaveLength(1);
+    expect(m.planComplete).toBeNull();
+    plan('completed');
+    plan();
+    expect(m.plan).toEqual([]);
+    expect(m.planComplete).toBeNull();
+  });
 });
