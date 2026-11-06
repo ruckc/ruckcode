@@ -11,15 +11,14 @@ agent to editors such as Zed. See [docs/PLAN.md](docs/PLAN.md) for the design.
 
 ## Install
 
-The repository is private, so GitHub Release assets are not publicly downloadable. Releases are
-published to **GitHub Pages** instead: <https://ruckc.github.io/ruckcode/> has a download page
+The repository is public (MIT). Releases are also published to **GitHub Pages**, served at <https://code.ruck.io/>, which has a download page
 (desktop installers, `rc` archives, checksums, signatures, release notes) for the **latest**
-version. Older versions stay on the (private) GitHub Releases.
+version. Older versions stay on the GitHub Releases.
 
 `rc` on Linux, macOS and WSL:
 
 ```sh
-curl -fsSL https://ruckc.github.io/ruckcode/install.sh | sh
+curl -fsSL https://code.ruck.io/install.sh | sh
 ```
 
 The script picks the right archive, verifies its SHA-256 and, **if `minisign` is installed**, its
@@ -529,7 +528,7 @@ libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev build-ess
 
 The desktop app currently ships for **Windows only** (macOS and Linux users: use the `rc` command
 line tool, see `install.sh` above; the macOS/Linux desktop builds are disabled in the release
-pipeline for now). Download the installer from <https://ruckc.github.io/ruckcode/> (the latest
+pipeline for now). Download the installer from <https://code.ruck.io/> (the latest
 release; the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sha256`, all listed in
 `SHA256SUMS`, under `download/v<version>/`):
 
@@ -537,7 +536,7 @@ release; the files are `ruckcode-app-<version>-<target>.<ext>`, each with a `.sh
 |----|------|-------|
 | Windows 10/11 x64 | `...-x86_64-pc-windows-msvc.msi` | per-user by default, no administrator needed (see below); includes `rc` for WSL2 |
 | Windows 10/11 x64 (no installer) | `...-x86_64-pc-windows-msvc-portable.zip` | portable: unzip and run `ruckcode.exe`; for machines where policy blocks installers (see below) |
-| macOS, Linux | not available yet | use `rc` (`curl -fsSL https://ruckc.github.io/ruckcode/install.sh \| sh`) |
+| macOS, Linux | not available yet | use `rc` (`curl -fsSL https://code.ruck.io/install.sh \| sh`) |
 
 Release builds are **unsigned** until signing secrets are configured: Windows SmartScreen shows
 "Windows protected your PC": More info, then Run anyway. Verify downloads with
@@ -584,7 +583,7 @@ WSL2 distribution:
    bundled binary; an aarch64 distro, or a development build without the resource, falls back to
    the download used by `install.sh` (reads `rc/latest.json` on the download site, verifies the
    SHA-256 and, if `minisign` is installed, the signature). You can also install `rc` yourself with
-   `curl -fsSL https://ruckc.github.io/ruckcode/install.sh | sh` inside the distro.
+   `curl -fsSL https://code.ruck.io/install.sh | sh` inside the distro.
 3. Enter the project folder as a Windows path (`C:\Users\me\proj`, `\\wsl.localhost\Ubuntu\home\me\proj`,
    `\\wsl$\Ubuntu\...`) or a Linux path (`/home/me/proj`), or use Browse. The translated Linux path
    is shown under the field; a path in another distro is rejected. Then **Connect**.
@@ -671,8 +670,8 @@ chromium`, or `PLAYWRIGHT_BROWSERS_PATH` pointing at an existing install).
 
 ## Updates
 
-Only the latest version is hosted, on GitHub Pages (the repository is private, so release assets
-are not downloadable). Everything is verified with the project's minisign key (the same key
+Only the latest version is hosted, on GitHub Pages (the repository is public, but only the latest
+release is deployed to the site). Everything is verified with the project's minisign key (the same key
 `tauri signer` makes; the public key is built into the app and `rc`).
 
 - **Desktop app.** Checks at startup and every six hours (not in dev builds). By default it
@@ -762,7 +761,7 @@ GitHub Release `vX.Y.Z` with:
 - `CHANGELOG.md` and release notes generated from the commits
 
 After the release is published, a `release-pages` job deploys the latest version to GitHub Pages
-(`https://ruckc.github.io/ruckcode/`): `index.html` (download page), `install.sh`,
+(`https://code.ruck.io/`): `index.html` (download page), `install.sh`,
 `latest.json` (Tauri updater manifest), `rc/latest.json` (manifest for `rc self-update`) and every
 artifact under `download/v<version>/`. The manifests exist only when signing is configured. To
 redeploy Pages from an existing release (for example after editing release notes, which the "Edit

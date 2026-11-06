@@ -65,7 +65,7 @@ export class FakeUpdates implements UpdatesApi {
             this.scenario === 'manual'
               ? 'This copy was installed from a Linux package, which cannot update itself.'
               : null,
-          downloadPage: 'https://ruckc.github.io/ruckcode/'
+          downloadPage: 'https://code.ruck.io/'
         };
     }
   }

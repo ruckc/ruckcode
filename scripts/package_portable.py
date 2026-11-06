@@ -25,7 +25,7 @@ This build updates itself like the installed app (Settings, check for updates): 
 the new signed zip, verifies it and swaps the files in this folder, so the folder must be
 writable. No installer, no administrator rights. Leftover *.old files are removed on the next
 start. Keep portable.txt: it tells the app to update in place. If an update ever fails you can
-still download a zip from https://ruckc.github.io/ruckcode/ and replace this folder.
+still download a zip from https://code.ruck.io/ and replace this folder.
 The executable is not code-signed, so SmartScreen may show "Windows protected your PC"
 on first launch: More info, then Run anyway.
 Verify the download against SHA256SUMS on the download page.

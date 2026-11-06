@@ -9,7 +9,7 @@ Layout of the output directory:
     rc/latest.json                   `rc self-update` manifest   (only when signed)
     download/v<version>/<files...>   every release artifact (+ .sha256, .sig, SHA256SUMS)
 
-The repository is private, so GitHub Release assets are not publicly downloadable; this site is
+This site (https://code.ruck.io) is
 where users, the desktop updater and `rc self-update` fetch releases from.
 
 "Signed" means the minisign signatures (`<file>.sig`, made with the Tauri updater key) exist for

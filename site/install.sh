@@ -1,7 +1,7 @@
 #!/bin/sh
 # ruckcode `rc` installer for Linux, macOS and WSL.
 #
-#   curl -fsSL https://ruckc.github.io/ruckcode/install.sh | sh
+#   curl -fsSL https://code.ruck.io/install.sh | sh
 #
 # Downloads the latest `rc` release from the ruckcode site (GitHub Pages), verifies its SHA-256
 # checksum and, when `minisign` is installed, its minisign signature, then installs it into
@@ -22,7 +22,7 @@ DEFAULT_VERSION='@VERSION@'
 # An unreplaced token (running the template directly) means "not configured".
 case "$PUBKEY" in "@"*) PUBKEY="" ;; esac
 case "$DEFAULT_VERSION" in "@"*) DEFAULT_VERSION="" ;; esac
-case "$BASE_URL" in "@"*) BASE_URL="https://ruckc.github.io/ruckcode" ;; esac
+case "$BASE_URL" in "@"*) BASE_URL="https://code.ruck.io" ;; esac
 BASE_URL="${BASE_URL%/}"
 
 say() { printf '[rc-install] %s\n' "$*"; }

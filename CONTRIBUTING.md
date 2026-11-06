@@ -65,11 +65,10 @@ unsigned (Gatekeeper/SmartScreen warnings). To replace the placeholder icons run
 
 ## Publishing and updates (one-time setup)
 
-The repository is **private** but its GitHub Pages site is **public**. Release assets on a private
-repository cannot be downloaded without credentials, so the release workflow deploys the *latest*
-release to Pages (`https://ruckc.github.io/ruckcode/`), and the desktop updater, `rc self-update`
+The repository and its GitHub Pages site are both **public**. The release workflow deploys the *latest*
+release to Pages (`https://code.ruck.io/`), and the desktop updater, `rc self-update`
 and `install.sh` all fetch from there. Everything on Pages is public: do not put anything private
-into a release. Older versions stay only on the private GitHub Releases.
+into a release. Older versions stay only on GitHub Releases.
 
 One-time steps (repository admin):
 
@@ -128,7 +127,7 @@ tooling run `python3 -m unittest scripts/test_build_site.py`; `scripts/build_sit
 site from a directory of artifacts.
 
 **Testing against another site.** `RUCKCODE_UPDATE_BASE_URL` (runtime, must be https for the
-desktop app) overrides `https://ruckc.github.io/ruckcode` for `rc self-update`, `install.sh` and
+desktop app) overrides `https://code.ruck.io` for `rc self-update`, `install.sh` and
 the desktop app. The default is a constant in `crates/ruckcode-cli/src/update.rs` and
 `crates/ruckcode-app/src/update.rs` (a test keeps them, the workflow and `tauri.conf.json` in sync).
 

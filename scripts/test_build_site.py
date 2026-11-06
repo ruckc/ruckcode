@@ -264,7 +264,7 @@ class Consistency(unittest.TestCase):
     def test_base_url_everywhere(self):
         import re
 
-        expected = "https://ruckc.github.io/ruckcode"
+        expected = "https://code.ruck.io"
         for rel in ("crates/ruckcode-cli/src/update.rs", "crates/ruckcode-app/src/update.rs"):
             text = (self.ROOT / rel).read_text()
             m = re.search(r'DEFAULT_BASE_URL: &str = "([^"]+)"', text)

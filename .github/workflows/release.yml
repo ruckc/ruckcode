@@ -5,7 +5,7 @@ name: Release
 #   actions/configure-pages    v6.0.0  45bfe0192ca1faeb007ade9deae92b16b8254a0d
 #   actions/upload-pages-artifact v5.0.0 fc324d3547104276b827a68afc52ff2a11cc49c9
 #   actions/deploy-pages       v5.0.1  368f82528645a54fb793d4d04e342629a3f51346
-# The repository is private, so Release assets are not publicly downloadable. After the release is
+# The repository is public. After the release is
 # published, ci.yml's `release-pages` job deploys the LATEST version to GitHub Pages (download page, install.sh,
 # updater manifests, all artifacts); that is what users, the desktop updater and `rc self-update`
 # fetch from. Updater signing needs the secrets TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) and the
@@ -37,7 +37,7 @@ defaults:
 env:
   # Where releases are published; must equal DEFAULT_BASE_URL in crates/ruckcode-cli/src/update.rs
   # and crates/ruckcode-app/src/update.rs (scripts/test_build_site.py checks this).
-  UPDATE_BASE_URL: https://ruckc.github.io/ruckcode
+  UPDATE_BASE_URL: https://code.ruck.io
 
 jobs:
   # Manual run with "redeploy_pages": rebuild and redeploy the Pages site from an existing release

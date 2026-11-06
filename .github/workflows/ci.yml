@@ -1018,7 +1018,7 @@ jobs:
     env:
       VERSION: ${{ needs.release-version.outputs.version }}
       PNPM_VERSION: "10.34.9"
-      UPDATE_BASE_URL: https://ruckc.github.io/ruckcode
+      UPDATE_BASE_URL: https://code.ruck.io
       PUBKEY: ${{ vars.RUCKCODE_UPDATER_PUBKEY }}
     outputs:
       signed: ${{ steps.mode.outputs.signed }}

@@ -33,7 +33,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://ruckc.github.io/ruckcode/latest.json"],
+      "endpoints": ["https://code.ruck.io/latest.json"],
       "pubkey": "",
       "requireSignedVersion": true,
       "windows": {

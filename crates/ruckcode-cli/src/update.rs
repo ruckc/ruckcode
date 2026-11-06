@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Where updates are published (GitHub Pages).
-pub const DEFAULT_BASE_URL: &str = "https://ruckc.github.io/ruckcode";
+pub const DEFAULT_BASE_URL: &str = "https://code.ruck.io";
 /// Overrides [`DEFAULT_BASE_URL`] (testing, mirrors).
 pub const BASE_URL_ENV: &str = "RUCKCODE_UPDATE_BASE_URL";
 /// `1` (or any non-empty value other than `0`) disables the daily hint.

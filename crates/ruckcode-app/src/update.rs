@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use crate::portable;
 
 /// Where releases are published (GitHub Pages of the private repository).
-pub const DEFAULT_BASE_URL: &str = "https://ruckc.github.io/ruckcode";
+pub const DEFAULT_BASE_URL: &str = "https://code.ruck.io";
 /// Overrides [`DEFAULT_BASE_URL`] (testing against a staging site). Must be https.
 pub const BASE_URL_ENV: &str = "RUCKCODE_UPDATE_BASE_URL";
 
@@ -336,7 +336,7 @@ mod tests {
         );
         assert_eq!(
             manifest_url(DEFAULT_BASE_URL),
-            "https://ruckc.github.io/ruckcode/latest.json"
+            "https://code.ruck.io/latest.json"
         );
     }
 

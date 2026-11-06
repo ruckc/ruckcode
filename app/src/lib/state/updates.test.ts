@@ -66,7 +66,7 @@ describe('UpdateController', () => {
     await u.check();
     expect(u.phase).toBe('manual');
     expect(u.reason).toContain('Linux package');
-    expect(u.downloadPage).toBe('https://ruckc.github.io/ruckcode/');
+    expect(u.downloadPage).toBe('https://code.ruck.io/');
     expect(api.calls).toEqual(['check']);
   });
 

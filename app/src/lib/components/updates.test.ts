@@ -72,9 +72,9 @@ describe('UpdateBanner', () => {
     render(UpdateBanner, { props: { updates: u } });
     await u.check();
     expect(await screen.findByText(/Linux package/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'https://ruckc.github.io/ruckcode/' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'https://code.ruck.io/' })).toHaveAttribute(
       'href',
-      'https://ruckc.github.io/ruckcode/'
+      'https://code.ruck.io/'
     );
     expect(screen.queryByRole('button', { name: 'Restart now' })).toBeNull();
   });
