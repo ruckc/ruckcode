@@ -64,10 +64,7 @@ test('install types that cannot self-update link to the download page', async ({
   await open(page, 'manual');
   const banner = page.getByTestId('update-banner');
   await expect(banner).toContainText('Linux package');
-  await expect(banner.getByRole('link')).toHaveAttribute(
-    'href',
-    'https://code.ruck.io/'
-  );
+  await expect(banner.getByRole('link')).toHaveAttribute('href', 'https://code.ruck.io/');
   await expect(banner.getByRole('button', { name: 'Restart now' })).toHaveCount(0);
   expect(await calls(page)).toEqual(['check']);
 });
