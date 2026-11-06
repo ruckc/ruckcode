@@ -439,6 +439,9 @@ def build(args: argparse.Namespace) -> None:
     (out / "install.sh").write_text(script)
     (out / "install.sh").chmod(0o755)
 
+    # Custom domain for GitHub Pages (a CNAME file in the published output).
+    (out / "CNAME").write_text("code.ruck.io\n")
+
     (out / "index.html").write_text(
         render_index(version, pub_date, notes_md, base, dest, files, sums, pubkey, signed)
     )
