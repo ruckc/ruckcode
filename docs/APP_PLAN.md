@@ -398,7 +398,7 @@ Built as planned, with these deviations and details:
 
 ## Milestone 7 notes
 
-- **`app` job in `release.yml`.** Matrix: macOS aarch64 and x86_64 (both on macos-14, the latter
+- **`app` job in `release.yml`.** Matrix: macOS aarch64 and x86_64 (both on macos-15, the latter
   cross-built via rustup target), Windows x86_64 (windows-2022), Linux x86_64 (ubuntu-22.04: older
   glibc 2.35 means the AppImage and deb run on more distributions; webkit2gtk-4.1 exists there). Uses
   only `actions/*` (checkout, setup-node, cache, upload-artifact) and `pnpm -C app tauri build`.
