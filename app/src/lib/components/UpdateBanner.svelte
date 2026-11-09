@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { UpdateController } from '../state/updates.svelte';
-  import Markdown from './Markdown.svelte';
+  import { Button, Callout, Link, ProgressBar } from '@ruckc/truss-ui';
+  import { Markdown } from '@ruckc/truss-markdown';
 
   let {
     updates,
@@ -25,17 +26,17 @@
     <!-- Subtle: one muted line, no buttons. -->
     <div class="line" role="status" data-testid="update-downloading">
       <span>Downloading update v{updates.version}{pct === null ? '…' : `… ${pct}%`}</span>
-      <progress max="100" value={pct ?? undefined} aria-label="Update download progress"></progress>
+      <div class="bar">
+        <ProgressBar value={pct} size="sm" label="Update download progress" />
+      </div>
     </div>
   {:else}
-    <div class="banner" role="status" data-testid="update-banner" data-phase={updates.phase}>
-      <div class="msg">
+    <div role="status" data-testid="update-banner" data-phase={updates.phase}>
+      <Callout intent={updates.phase === 'error' ? 'danger' : busy ? 'warning' : 'primary'}>
         {#if updates.phase === 'ready' || updates.phase === 'installing'}
           <strong>Update v{updates.version} ready.</strong>
           {#if busy}
-            <span class="warn">
-              An agent is working, so restarting now would interrupt it. Restart once it is done.
-            </span>
+            An agent is working, so restarting now would interrupt it. Restart once it is done.
           {:else if openSessions > 0}
             <span class="muted">
               {openSessions === 1 ? 'The open session ends' : `${openSessions} open sessions end`}
@@ -53,63 +54,55 @@
         {:else if updates.phase === 'manual'}
           <strong>Update v{updates.version} is available.</strong>
           <span class="muted">{updates.reason}</span>
-          <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-          <a href={updates.downloadPage} target="_blank" rel="noopener noreferrer"
-            >{updates.downloadPage}</a
-          >
+          <Link href={updates.downloadPage} external>{updates.downloadPage}</Link>
         {:else}
-          <strong class="err">Update v{updates.version} failed.</strong>
-          <span class="err">{updates.error}</span>
+          <strong>Update v{updates.version} failed.</strong>
+          {updates.error}
         {/if}
-      </div>
-      <div class="actions">
-        {#if updates.notes}
-          <button
-            type="button"
-            class="ghost"
-            aria-expanded={notes}
-            onclick={() => (notes = !notes)}
-          >
-            Release notes
-          </button>
-        {/if}
-        {#if updates.phase === 'ready' || updates.phase === 'installing'}
-          {#if busy && !confirmForce}
-            <button type="button" onclick={() => (confirmForce = true)}>Restart anyway…</button>
-          {:else if busy && confirmForce}
-            <button
-              type="button"
-              class="danger"
-              onclick={() => {
-                confirmForce = false;
-                void updates.restartNow(true);
-              }}>Interrupt the agent and restart</button
+        {#snippet actions()}
+          {#if updates.notes}
+            <Button
+              variant="minimal"
+              intent="neutral"
+              aria-expanded={notes}
+              onclick={() => (notes = !notes)}
             >
-            <button type="button" onclick={() => (confirmForce = false)}>Cancel</button>
-          {:else}
-            <button
-              type="button"
-              class="primary"
-              disabled={updates.phase === 'installing'}
-              onclick={() => void updates.restartNow()}
-              >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</button
-            >
+              Release notes
+            </Button>
           {/if}
-          <button type="button" onclick={() => updates.later()}>Later</button>
-        {:else if updates.phase === 'available'}
-          <button type="button" class="primary" onclick={() => void updates.download()}
-            >Download</button
-          >
-          <button type="button" onclick={() => updates.later()}>Later</button>
-        {:else if updates.phase === 'error'}
-          <button type="button" class="primary" onclick={() => void updates.download()}
-            >Retry</button
-          >
-          <button type="button" onclick={() => updates.later()}>Dismiss</button>
-        {:else}
-          <button type="button" onclick={() => updates.later()}>Dismiss</button>
-        {/if}
-      </div>
+          {#if updates.phase === 'ready' || updates.phase === 'installing'}
+            {#if busy && !confirmForce}
+              <Button variant="outlined" onclick={() => (confirmForce = true)}>
+                Restart anyway…
+              </Button>
+            {:else if busy && confirmForce}
+              <Button
+                intent="danger"
+                onclick={() => {
+                  confirmForce = false;
+                  void updates.restartNow(true);
+                }}>Interrupt the agent and restart</Button
+              >
+              <Button variant="outlined" onclick={() => (confirmForce = false)}>Cancel</Button>
+            {:else}
+              <Button
+                disabled={updates.phase === 'installing'}
+                onclick={() => void updates.restartNow()}
+                >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</Button
+              >
+            {/if}
+            <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
+          {:else if updates.phase === 'available'}
+            <Button onclick={() => void updates.download()}>Download</Button>
+            <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
+          {:else if updates.phase === 'error'}
+            <Button onclick={() => void updates.download()}>Retry</Button>
+            <Button variant="outlined" onclick={() => updates.later()}>Dismiss</Button>
+          {:else}
+            <Button variant="outlined" onclick={() => updates.later()}>Dismiss</Button>
+          {/if}
+        {/snippet}
+      </Callout>
     </div>
     {#if notes && updates.notes}
       <div class="notes" aria-label="Release notes"><Markdown text={updates.notes} /></div>
@@ -120,53 +113,24 @@
 <style>
   .line {
     display: flex;
-    gap: 10px;
+    gap: var(--tr-space-3);
     align-items: center;
-    padding: 2px 12px;
-    font-size: 12px;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
+    padding: 2px var(--tr-space-3);
+    font-size: var(--tr-text-sm);
+    color: var(--tr-on-surface-variant);
+    border-bottom: 1px solid var(--tr-outline-variant);
   }
-  progress {
+  .bar {
     width: 120px;
-    height: 6px;
   }
-  .banner {
-    padding: 6px 12px;
-    background: var(--code-bg);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  .msg {
-    min-width: 0;
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    align-items: baseline;
-  }
-  .actions {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  .warn {
-    color: var(--warn);
-  }
-  .err {
-    color: var(--err);
+  .bar :global(.meta) {
+    display: none;
   }
   .notes {
-    padding: 4px 16px 8px;
-    border-bottom: 1px solid var(--border);
-    background: var(--code-bg);
+    padding: var(--tr-space-1) var(--tr-space-4) var(--tr-space-2);
+    border-bottom: 1px solid var(--tr-outline-variant);
+    background: var(--tr-surface-container);
     max-height: 30vh;
     overflow: auto;
-  }
-  .danger {
-    color: var(--err);
   }
 </style>

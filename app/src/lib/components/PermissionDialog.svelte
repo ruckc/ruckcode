@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { focusTrap } from '../a11y';
+  import { Badge, Button, Kbd } from '@ruckc/truss-ui';
   import { summarizeInput } from '../format';
   import type { DiffContent } from '../state/reducer';
   import type { PendingPermission } from '../state/chat.svelte';
-  import DiffView from './DiffView.svelte';
+  import DiffPanel from './DiffPanel.svelte';
   import KindIcon from './KindIcon.svelte';
+  import Modal from './Modal.svelte';
 
   let { pending, total = 1 }: { pending: PendingPermission; total?: number } = $props();
 
@@ -35,6 +36,8 @@
   };
   const keyFor = (kind: string) => KEYS[kind] ?? '';
 
+  const cancel = () => pending.resolve({ outcome: { outcome: 'cancelled' } });
+
   function choose(optionId: string) {
     pending.resolve({ outcome: { outcome: 'selected', optionId } });
   }
@@ -43,7 +46,7 @@
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      pending.resolve({ outcome: { outcome: 'cancelled' } });
+      cancel();
       return;
     }
     const o = options.find((x) => keyFor(x.kind) === e.key.toLowerCase());
@@ -56,95 +59,78 @@
 
 <svelte:window {onkeydown} />
 
-<div class="backdrop" role="presentation">
-  <div
-    class="dialog wide"
-    role="alertdialog"
-    aria-modal="true"
-    aria-labelledby="perm-title"
-    aria-describedby="perm-desc"
-    use:focusTrap
-  >
-    <h2 id="perm-title">
-      {#if isSwitch}Mode switch proposed{:else}Permission requested{/if}
-      {#if total > 1}<span class="muted count">1 of {total} pending</span>{/if}
-    </h2>
-    <p id="perm-desc" class="what">
-      {#if isSwitch}
-        The agent wants to switch to mode <strong>{target ?? '(unknown)'}</strong>. Allowing changes
-        which tools and rules apply to the rest of this session.
-      {:else}
-        <KindIcon kind={call.kind ?? 'other'} />
-        <span>The agent wants to run <strong>{call.title ?? 'a tool call'}</strong></span>
-        <span class="muted kind">{(call.kind ?? 'other').replace('_', ' ')}</span>
-      {/if}
-    </p>
-    {#if isSwitch && reason}<p class="reason">Reason: {reason}</p>{/if}
-    {#if summary.length}
-      <ul class="input" aria-label="Tool input">
-        {#each summary as line, i (i)}<li><code>{line}</code></li>{/each}
-      </ul>
+<Modal
+  alert
+  size="lg"
+  backdropClose={false}
+  title={isSwitch ? 'Mode switch proposed' : 'Permission requested'}
+  onclose={cancel}
+  aria-describedby="perm-desc"
+>
+  {#if total > 1}<Badge intent="neutral">1 of {total} pending</Badge>{/if}
+  <p id="perm-desc" class="what">
+    {#if isSwitch}
+      The agent wants to switch to mode <strong>{target ?? '(unknown)'}</strong>. Allowing changes
+      which tools and rules apply to the rest of this session.
+    {:else}
+      <KindIcon kind={call.kind ?? 'other'} />
+      <span>The agent wants to run <strong>{call.title ?? 'a tool call'}</strong></span>
+      <span class="muted kind">{(call.kind ?? 'other').replace('_', ' ')}</span>
     {/if}
-    {#each diffs as d, i (i)}<DiffView diff={d} compact />{/each}
-    <div class="actions">
-      {#each options as o, i (o.optionId)}
-        {@const key = keyFor(o.kind)}
-        <button
-          class:danger={o.kind.startsWith('reject')}
-          class:primary={o.kind === 'allow_once'}
-          data-autofocus={i === 0 ? '' : undefined}
-          data-kind={o.kind}
-          onclick={() => choose(o.optionId)}
-        >
-          {isSwitch && o.kind === 'allow_once'
-            ? `Switch to ${target ?? 'mode'}`
-            : isSwitch && o.kind.startsWith('reject')
-              ? 'Stay in current mode'
-              : o.name}
-          {#if key}<kbd>{key}</kbd>{/if}
-        </button>
-      {/each}
-      <button class="ghost" onclick={() => pending.resolve({ outcome: { outcome: 'cancelled' } })}>
-        Cancel turn <kbd>Esc</kbd>
-      </button>
-    </div>
-  </div>
-</div>
+  </p>
+  {#if isSwitch && reason}<p class="reason">Reason: {reason}</p>{/if}
+  {#if summary.length}
+    <ul class="input" aria-label="Tool input">
+      {#each summary as line, i (i)}<li><code>{line}</code></li>{/each}
+    </ul>
+  {/if}
+  {#each diffs as d, i (i)}<DiffPanel diff={d} compact />{/each}
+
+  {#snippet footer()}
+    {#each options as o, i (o.optionId)}
+      {@const key = keyFor(o.kind)}
+      <Button
+        intent={o.kind.startsWith('reject') ? 'danger' : 'primary'}
+        variant={o.kind === 'allow_once' ? 'filled' : 'outlined'}
+        autofocus={i === 0}
+        data-kind={o.kind}
+        onclick={() => choose(o.optionId)}
+      >
+        {isSwitch && o.kind === 'allow_once'
+          ? `Switch to ${target ?? 'mode'}`
+          : isSwitch && o.kind.startsWith('reject')
+            ? 'Stay in current mode'
+            : o.name}
+        {#if key}<Kbd keys={key} />{/if}
+      </Button>
+    {/each}
+    <Button variant="minimal" intent="neutral" onclick={cancel}>
+      Cancel turn <Kbd keys="Esc" />
+    </Button>
+  {/snippet}
+</Modal>
 
 <style>
   .what {
     display: flex;
-    gap: 6px;
+    gap: var(--tr-space-2);
     align-items: center;
     flex-wrap: wrap;
-    margin: 0 0 8px;
   }
-  .count {
-    font-size: 12px;
-    font-weight: 400;
-    margin-left: 8px;
+  .kind {
+    font-size: var(--tr-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   .reason {
-    margin: 0 0 8px;
-    color: var(--muted);
+    margin: 0 0 var(--tr-space-2);
   }
   .input {
-    margin: 0 0 8px;
-    padding: 6px 10px;
+    margin: 0 0 var(--tr-space-3);
+    padding: var(--tr-space-2) var(--tr-space-3);
     list-style: none;
-    background: var(--code-bg);
-    border-radius: 6px;
-  }
-  .input li {
+    background: var(--tr-surface-container);
+    border-radius: var(--tr-radius-md);
     overflow-wrap: anywhere;
-  }
-  kbd {
-    font: inherit;
-    font-size: 11px;
-    opacity: 0.8;
-    border: 1px solid currentColor;
-    border-radius: 3px;
-    padding: 0 4px;
-    margin-left: 6px;
   }
 </style>

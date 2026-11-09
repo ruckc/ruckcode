@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { focusTrap } from '../a11y';
+  import { Button, Checkbox, Input, Kbd, RadioGroup, Tabs } from '@ruckc/truss-ui';
   import { parseRecommended } from '../format';
   import type { PendingQuestion } from '../state/chat.svelte';
+  import Modal from './Modal.svelte';
 
   let { pending, total = 1 }: { pending: PendingQuestion; total?: number } = $props();
 
+  // TODO(truss-ui#138): truss-chat's QuestionForm is a linear wizard; this keeps ruckcode's tabbed,
+  // keyboard-driven flow (number keys, Alt+Arrow, Ctrl+Enter, "Recommended") on truss-ui controls.
   const questions = $derived(pending.request.questions);
   let step = $state(0);
   let selected = $state<Record<number, string[]>>({});
   let other = $state<Record<number, string>>({});
-  let otherInputs: (HTMLInputElement | undefined)[] = $state([]);
 
   const q = $derived(questions[step]);
   const last = $derived(step === questions.length - 1);
@@ -91,203 +93,112 @@
     }
   }
 
-  function tabKey(e: KeyboardEvent, i: number) {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-      e.preventDefault();
-      const n = (i + (e.key === 'ArrowRight' ? 1 : -1) + questions.length) % questions.length;
-      step = n;
-      queueMicrotask(() => document.getElementById(`ask-tab-${n}`)?.focus());
-    }
-  }
+  const tabs = $derived(
+    questions.map((qq, i) => ({
+      id: String(i),
+      label: `${qq.header || `Q${i + 1}`}${answered(i) ? ' ✓' : ''}`
+    }))
+  );
+  /** "(Recommended)" moves from the label to a marker the option shows. */
+  const recommended = (label: string) => {
+    const p = parseRecommended(label);
+    return p.recommended ? `${p.label} — Recommended` : p.label;
+  };
 </script>
 
-<div class="backdrop" role="presentation">
-  <div
-    class="dialog wide"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="ask-title"
-    tabindex="-1"
-    {onkeydown}
-    use:focusTrap
-  >
-    <h2 id="ask-title">
-      The agent has {questions.length > 1 ? 'questions' : 'a question'}
-      {#if total > 1}<span class="muted count">1 of {total} pending</span>{/if}
-    </h2>
-    {#if questions.length > 1}
-      <div class="tabs" role="tablist" aria-label="Questions">
-        {#each questions as qq, i (i)}
-          <button
-            id={`ask-tab-${i}`}
-            role="tab"
-            type="button"
-            aria-selected={i === step}
-            aria-controls="ask-panel"
-            tabindex={i === step ? 0 : -1}
-            class:done={answered(i)}
-            onclick={() => (step = i)}
-            onkeydown={(e) => tabKey(e, i)}
-          >
-            {qq.header || `Q${i + 1}`}
-            {#if answered(i)}<span class="check" aria-label="answered">&#10003;</span>{/if}
-          </button>
-        {/each}
+{#snippet content()}
+  {#key step}
+    <fieldset class="q">
+      <legend>{q.question}</legend>
+      <p class="muted">
+        {q.multiSelect ? 'Choose any number.' : 'Choose one.'} Number keys pick options.
+      </p>
+      <div class="opts">
+        {#if q.multiSelect}
+          {#each q.options as o, oi (o.label)}
+            <Checkbox
+              label={`${oi + 1}. ${recommended(o.label)}`}
+              description={o.description ?? undefined}
+              checked={(selected[step] ?? []).includes(o.label)}
+              autofocus={oi === 0}
+              oncheckedchange={() => toggle(step, o.label, true)}
+            />
+          {/each}
+        {:else}
+          <RadioGroup
+            aria-label={q.question}
+            options={q.options.map((o, oi) => ({
+              value: o.label,
+              label: `${oi + 1}. ${recommended(o.label)}`,
+              description: o.description ?? undefined
+            }))}
+            value={selected[step]?.[0]}
+            onchange={(e) => toggle(step, (e.target as HTMLInputElement).value, false)}
+          />
+        {/if}
       </div>
+      <Input
+        aria-label="Other answer"
+        placeholder="Other…"
+        value={other[step] ?? ''}
+        oninput={(e) => {
+          other[step] = e.currentTarget.value;
+          typeOther(step, q.multiSelect);
+        }}
+      />
+    </fieldset>
+  {/key}
+{/snippet}
+
+<Modal
+  title={`The agent has ${questions.length > 1 ? 'questions' : 'a question'}`}
+  size="lg"
+  backdropClose={false}
+  {onkeydown}
+  onclose={cancel}
+>
+  {#if total > 1}<p class="muted count">1 of {total} pending</p>{/if}
+  {#if questions.length > 1}
+    <Tabs
+      {tabs}
+      label="Questions"
+      value={String(step)}
+      onchange={(v) => (step = Number(v))}
+      panel={content}
+    />
+  {:else}
+    {@render content()}
+  {/if}
+
+  {#snippet footer()}
+    {#if questions.length > 1}
+      <Button variant="outlined" disabled={step === 0} onclick={() => step--}>Back</Button>
+      {#if !last}<Button variant="outlined" onclick={next}>Next</Button>{/if}
     {/if}
-    <div
-      id="ask-panel"
-      role={questions.length > 1 ? 'tabpanel' : undefined}
-      aria-labelledby={questions.length > 1 ? `ask-tab-${step}` : undefined}
-    >
-      {#key step}
-        <fieldset>
-          <legend>{q.question}</legend>
-          <p class="hint muted">
-            {q.multiSelect ? 'Choose any number.' : 'Choose one.'} Number keys pick options.
-          </p>
-          <div class="opts">
-            {#each q.options as o, oi (o.label)}
-              {@const p = parseRecommended(o.label)}
-              <label class="opt" class:picked={(selected[step] ?? []).includes(o.label)}>
-                <input
-                  type={q.multiSelect ? 'checkbox' : 'radio'}
-                  name={`q${step}`}
-                  data-autofocus={oi === 0 ? '' : undefined}
-                  checked={(selected[step] ?? []).includes(o.label)}
-                  onchange={() => toggle(step, o.label, q.multiSelect)}
-                />
-                <span class="num muted">{oi + 1}</span>
-                <span class="text">
-                  <span class="label">{p.label}</span>
-                  {#if p.recommended}<span class="badge">Recommended</span>{/if}
-                  {#if o.description}<span class="muted desc">{o.description}</span>{/if}
-                </span>
-              </label>
-            {/each}
-            <label class="opt other">
-              <span class="num muted">&#8230;</span>
-              <span class="text">
-                <span class="label">Other</span>
-                <input
-                  type="text"
-                  placeholder="Other…"
-                  aria-label="Other answer"
-                  bind:this={otherInputs[step]}
-                  bind:value={other[step]}
-                  oninput={() => typeOther(step, q.multiSelect)}
-                />
-              </span>
-            </label>
-          </div>
-        </fieldset>
-      {/key}
-    </div>
-    <div class="actions">
-      {#if questions.length > 1}
-        <button type="button" disabled={step === 0} onclick={() => step--}>Back</button>
-        {#if !last}<button type="button" onclick={next}>Next</button>{/if}
-      {/if}
-      <button class="primary" type="button" disabled={!allAnswered} onclick={submit}>
-        Submit <kbd>Ctrl+Enter</kbd>
-      </button>
-      <button type="button" class="ghost" onclick={cancel}>Cancel <kbd>Esc</kbd></button>
-    </div>
-  </div>
-</div>
+    <Button disabled={!allAnswered} onclick={submit}>Submit <Kbd keys="ctrl+enter" /></Button>
+    <Button variant="minimal" intent="neutral" onclick={cancel}>Cancel <Kbd keys="Esc" /></Button>
+  {/snippet}
+</Modal>
 
 <style>
-  .count {
-    font-size: 12px;
-    font-weight: 400;
-    margin-left: 8px;
-  }
-  .tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  .tabs button {
+  .q {
     border: 0;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    background: none;
-  }
-  .tabs button[aria-selected='true'] {
-    border-bottom-color: var(--accent);
-    font-weight: 600;
-  }
-  .check {
-    color: var(--ok);
-    margin-left: 4px;
-  }
-  fieldset {
-    border: 0;
-    padding: 0;
     margin: 0;
+    padding: var(--tr-space-3) 0 0;
+    display: grid;
+    gap: var(--tr-space-2);
   }
   legend {
     font-weight: 600;
     padding: 0;
   }
-  .hint {
-    margin: 2px 0 6px;
-    font-size: 12px;
+  .q p,
+  .count {
+    margin: 0;
+    font-size: var(--tr-text-sm);
   }
   .opts {
     display: grid;
-    gap: 4px;
-  }
-  .opt {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    padding: 5px 8px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  .opt.picked {
-    border-color: var(--accent);
-    background: var(--code-bg);
-  }
-  .opt:has(input:focus-visible) {
-    outline: 2px solid var(--accent);
-  }
-  .num {
-    width: 1.2em;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-  .text {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 8px;
-    align-items: baseline;
-    flex: 1;
-  }
-  .other .text input {
-    flex: 1;
-    min-width: 8em;
-  }
-  .badge {
-    font-size: 11px;
-    padding: 0 6px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-text);
-  }
-  .desc {
-    flex-basis: 100%;
-  }
-  kbd {
-    font: inherit;
-    font-size: 11px;
-    opacity: 0.8;
-    border: 1px solid currentColor;
-    border-radius: 3px;
-    padding: 0 4px;
-    margin-left: 6px;
+    gap: var(--tr-space-2);
   }
 </style>

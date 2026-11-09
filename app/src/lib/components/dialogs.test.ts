@@ -38,7 +38,7 @@ describe('PermissionDialog', () => {
     expect(dlg).toHaveTextContent('Write a.txt');
     expect(dlg).toHaveTextContent('file_path: a.txt');
     expect(dlg).toHaveTextContent('1 of 3 pending');
-    expect(screen.getByRole('group', { name: 'Diff of a.txt' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Diff: a.txt' })).toBeInTheDocument();
     expect(dlg.contains(document.activeElement)).toBe(true);
   });
 
@@ -117,7 +117,7 @@ describe('AskDialog', () => {
     const { pending, resolve } = question();
     render(AskDialog, { pending });
     expect(screen.getAllByRole('tab')).toHaveLength(2);
-    expect(screen.getByText('Recommended')).toBeInTheDocument();
+    expect(screen.getByText(/Recommended/)).toBeInTheDocument();
     const submit = screen.getByRole('button', { name: /Submit/ });
     expect(submit).toBeDisabled();
 
