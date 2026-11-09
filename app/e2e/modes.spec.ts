@@ -1,4 +1,4 @@
-import { closeSettings, connected, openModes as modesTab } from './helpers';
+import { choose, closeSettings, connected, openModes as modesTab } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const goto = (page: Page, extra = '') =>
@@ -60,7 +60,8 @@ test('edits a prompt and the tools, reviews the diff and saves', async ({ page }
 
 test('adds a mode from a lifecycle template', async ({ page }) => {
   await openModes(page);
-  await editor(page).getByLabel('Add mode from template').selectOption({ label: 'Review' });
+  // Truss Select: options are listed as "<name> <group>", e.g. "Review Lifecycle template".
+  await choose(editor(page).getByRole('combobox', { name: 'Add mode from template' }), /^Review/);
   await editor(page).getByRole('button', { name: 'Add mode', exact: true }).click();
   await expect(editor(page).getByRole('heading', { level: 2 })).toContainText('Review');
   await expect(editor(page).getByRole('textbox', { name: 'Prompt' })).toHaveValue(/review phase/);
@@ -118,7 +119,10 @@ test('a hook with an invalid regex blocks saving until it is fixed', async ({ pa
   await matcher.fill('Bash|Edit');
   await expect(editor(page)).not.toContainText('Invalid regex');
   await expect(reviewBtn(page)).toBeEnabled();
-  await editor(page).getByLabel('On failure for pre_tool_use hook 1').selectOption('block');
+  await choose(
+    editor(page).getByRole('combobox', { name: 'On failure for pre_tool_use hook 1' }),
+    'block'
+  );
   await reviewBtn(page).click();
   const diff = editor(page).getByLabel('Changes to modes.toml');
   await expect(diff).toContainText('+[[modes.build.hooks.pre_tool_use]]');
@@ -133,9 +137,9 @@ test('edits the permissions table', async ({ page }) => {
   await pick(page, 'verify').click();
   const table = editor(page).getByRole('table', { name: 'Permissions' });
   await expect(table).toContainText('Bash');
-  await editor(page).getByLabel('Permission for Bash').selectOption('deny');
+  await choose(editor(page).getByRole('combobox', { name: 'Permission for Bash' }), 'deny');
   await editor(page).getByLabel('Tool or glob').fill('mise__*');
-  await editor(page).getByLabel('New rule permission').selectOption('allow');
+  await choose(editor(page).getByRole('combobox', { name: 'New rule permission' }), 'allow');
   await editor(page).getByRole('button', { name: 'Add rule' }).click();
   await expect(table).toContainText('mise__*');
   await reviewBtn(page).click();

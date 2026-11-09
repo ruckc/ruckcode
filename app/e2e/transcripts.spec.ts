@@ -1,4 +1,4 @@
-import { connected, menu } from './helpers';
+import { choose, connected, menu } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const BIG = 'Refactor step 1';
@@ -18,18 +18,18 @@ test('lists transcripts, sorts and filters them', async ({ page }) => {
   await expect(rows(page).first()).toContainText('Rename the helper');
   await expect(rows(page).first()).toContainText('1 bad line');
 
-  await page.getByLabel('Sort by').selectOption('tokens');
+  await choose(page.getByLabel('Sort by'), 'Tokens');
   await expect(rows(page).first()).toContainText(BIG);
-  await page.getByLabel('Sort by').selectOption('created');
+  await choose(page.getByLabel('Sort by'), 'Created');
   await expect(rows(page).first()).toContainText('Rename the helper');
   await page.getByRole('button', { name: 'Sort descending' }).click();
   await expect(rows(page).first()).toContainText('Fix the login bug');
 
-  await page.getByLabel('Filter by mode', { exact: true }).selectOption('plan');
+  await choose(page.getByLabel('Filter by mode', { exact: true }), 'plan');
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page).first()).toContainText('Plan the database migration');
-  await page.getByLabel('Filter by mode', { exact: true }).selectOption('');
-  await page.getByLabel('Filter by model').selectOption('mock-small');
+  await choose(page.getByLabel('Filter by mode', { exact: true }), 'All modes');
+  await choose(page.getByLabel('Filter by model'), 'mock-small');
   await expect(rows(page)).toHaveCount(3);
 });
 
@@ -69,7 +69,7 @@ test('opens a transcript and shows every kind of record', async ({ page }) => {
   await expect(tl.getByText('The failing path is probably the token refresh.')).toBeVisible();
 
   const edit = tl.getByRole('region', { name: 'Tool Edit src/auth.rs' });
-  await expect(edit.getByRole('group', { name: 'Diff of src/auth.rs' })).toContainText(
+  await expect(edit.getByRole('group', { name: 'Diff: src/auth.rs' })).toContainText(
     'verify_signature(token)'
   );
   await expect(edit.getByTestId('permission')).toHaveText('approved by you');

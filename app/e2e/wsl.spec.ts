@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { connected, menu, picker, send } from './helpers';
+import { choose, connected, menu, picker, send } from './helpers';
 
 const open = (page: Page, platform = 'windows') =>
   page.goto(`/?mock=1&delay=2&platform=${platform}`);
@@ -11,7 +11,7 @@ const connects = (page: Page) =>
 
 async function chooseWsl(page: Page) {
   await page.getByRole('radio', { name: 'WSL2' }).click();
-  await expect(page.getByRole('combobox', { name: 'WSL distro' })).toHaveValue('Ubuntu-24.04');
+  await expect(page.getByRole('combobox', { name: 'WSL distro' })).toHaveText('Ubuntu-24.04');
 }
 
 test('WSL2 host is hidden outside Windows', async ({ page }) => {
@@ -29,12 +29,15 @@ test('lists distros, installs the bundled rc automatically, then connects throug
 
   // distro list: default first, WSL1 and Docker Desktop are not selectable
   const select = page.getByRole('combobox', { name: 'WSL distro' });
-  await expect(select.getByRole('option')).toHaveCount(4);
-  await expect(select.getByRole('option', { name: /Alpine/ })).toHaveAttribute('disabled', '');
-  await expect(select.getByRole('option', { name: /docker-desktop/ })).toHaveAttribute(
-    'disabled',
-    ''
+  await select.click();
+  const options = page.locator('.tr-popover').getByRole('option');
+  await expect(options).toHaveCount(4);
+  await expect(options.filter({ hasText: /Alpine/ })).toHaveAttribute('aria-disabled', 'true');
+  await expect(options.filter({ hasText: /docker-desktop/ })).toHaveAttribute(
+    'aria-disabled',
+    'true'
   );
+  await page.keyboard.press('Escape');
 
   // rc is missing in the distro: it is installed from the bundled copy without any click
   const connect = page.getByRole('button', { name: 'Connect', exact: true });
@@ -80,7 +83,7 @@ test('connect is blocked while the bundled rc is being installed', async ({ page
 test('a distro with an older rc is updated automatically', async ({ page }) => {
   await open(page);
   await chooseWsl(page);
-  await page.getByRole('combobox', { name: 'WSL distro' }).selectOption('Debian');
+  await choose(page.getByRole('combobox', { name: 'WSL distro' }), 'Debian');
   await expect(page.locator('[data-rc="ok"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Project folder' }).fill('/home/dev/app');
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
