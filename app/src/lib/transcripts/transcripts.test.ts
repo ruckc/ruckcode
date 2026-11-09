@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeTranscripts, seedSessions } from '../host/fake-transcripts';
 import type { RecordType, TranscriptRecord } from '../host/transcripts';
-import { parseUnifiedDiff } from '../diff';
+import { parsePatch } from '@ruckc/truss-code';
 import { distinct, filterItems, sortItems } from './list';
 import { computeMetrics } from './metrics';
 import { buildTimeline, keyForRecord, toMarkdown } from './timeline';
@@ -174,19 +174,27 @@ describe('fake api', () => {
   });
 });
 
-describe('parseUnifiedDiff', () => {
+describe('stored unified diffs (truss-code parsePatch)', () => {
   it('parses hunks, counts and line numbers', () => {
     const edit = auth().records.find((r) => r.type === 'tool_result' && r.edits.length)!;
     const text = edit.type === 'tool_result' ? edit.edits[0].diff : '';
-    const m = parseUnifiedDiff(text);
-    expect(m.hunks).toHaveLength(1);
-    expect(m.hunks[0].header).toBe('@@ -38,7 +38,10 @@');
-    expect(m.added).toBe(4);
-    expect(m.removed).toBe(1);
-    expect(m.hunks[0].rows[0]).toMatchObject({ type: 'ctx', oldNo: 38, newNo: 38 });
-    expect(m.hunks[0].rows[1]).toMatchObject({ type: 'del', oldNo: 39, newNo: null });
-    expect(m.hunks[0].rows[2]).toMatchObject({ type: 'add', oldNo: null, newNo: 39 });
-    expect(parseUnifiedDiff('not a diff').hunks).toEqual([]);
-    expect(parseUnifiedDiff('@@ -1 +1 @@\n-a\n+b\n\\ No newline at end of file\n').added).toBe(1);
+    const [f] = parsePatch(text);
+    expect(f.hunks).toHaveLength(1);
+    expect(f.hunks[0].oldStart).toBe(38);
+    expect(f.hunks[0].newStart).toBe(38);
+    expect(f.hunks[0].section).toContain('impl Session');
+    expect(f.additions).toBe(4);
+    expect(f.deletions).toBe(1);
+    const rows = f.hunks[0].lines;
+    expect(rows[0]).toMatchObject({ type: 'ctx', oldNo: 38, newNo: 38 });
+    expect(rows[1]).toMatchObject({ type: 'del', oldNo: 39 });
+    expect(rows[1].newNo).toBeUndefined();
+    expect(rows[2]).toMatchObject({ type: 'add', newNo: 39 });
+    expect(rows[2].oldNo).toBeUndefined();
+    expect(parsePatch('not a diff').flatMap((x) => x.hunks)).toEqual([]);
+    const noEol = parsePatch(
+      '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n\\ No newline at end of file\n'
+    );
+    expect(noEol[0].additions).toBe(1);
   });
 });

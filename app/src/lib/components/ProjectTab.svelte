@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, Callout, Checkbox, Tag } from '@ruckc/truss-ui';
   import type { SetupApi, SetupState, SetupTarget } from '../host/setup';
 
   let {
@@ -41,9 +42,8 @@
     Project: <code>{target.project}</code>
     {#if target.distro}<span class="muted">(WSL: {target.distro})</span>{/if}
   </p>
-  {#if error}<p class="errbox" role="alert">{error}</p>{/if}
-  {#if notice}<p class="ok" role="status">{notice}</p>{/if}
-
+  {#if error}<Callout intent="danger">{error}</Callout>{/if}
+  {#if notice}<div role="status"><Callout intent="success">{notice}</Callout></div>{/if}
   {#if modes.status === 'missing'}
     <div class="box">
       <strong>No modes.toml</strong>
@@ -52,21 +52,19 @@
         Create it from the built-in templates and this project's mise tasks, like
         <code>rc init</code>.
       </p>
-      <label class="choice"
-        ><input type="checkbox" bind:checked={minimal} /> Minimal (plan, build, verify)</label
-      >
+      <Checkbox label="Minimal (plan, build, verify)" bind:checked={minimal} />
       <div class="actions">
-        <button type="button" class="primary" disabled={busy} onclick={() => init(false)}>
+        <Button disabled={busy} loading={busy} onclick={() => init(false)}>
           {busy ? 'Creating...' : 'Create modes.toml'}
-        </button>
+        </Button>
       </div>
     </div>
   {:else if modes.status === 'broken'}
-    <p class="errbox" role="alert">modes.toml cannot be read: {modes.error}</p>
+    <Callout intent="danger">modes.toml cannot be read: {modes.error}</Callout>
     <div class="actions">
-      <button type="button" class="danger" disabled={busy} onclick={() => init(true)}
-        >Regenerate (overwrite)</button
-      >
+      <Button intent="danger" variant="outlined" disabled={busy} onclick={() => init(true)}>
+        Regenerate (overwrite)
+      </Button>
     </div>
   {:else}
     <p>
@@ -78,7 +76,7 @@
         <li>
           <code>{m.id}</code>
           <span class="muted">{m.description}</span>
-          {#if m.model}<span class="tag">{m.profile ? `${m.profile}: ` : ''}{m.model}</span>{/if}
+          {#if m.model}<Tag size="sm">{m.profile ? `${m.profile}: ` : ''}{m.model}</Tag>{/if}
         </li>
       {/each}
     </ul>
@@ -89,32 +87,33 @@
 <style>
   .project {
     display: grid;
-    gap: 8px;
+    gap: var(--tr-space-2);
   }
   .box {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
+    padding: var(--tr-space-3);
+    display: grid;
+    gap: var(--tr-space-2);
   }
   .box p {
-    margin: 4px 0;
+    margin: 0;
+  }
+  .actions {
+    display: flex;
+    gap: var(--tr-space-2);
   }
   .list {
+    list-style: none;
     margin: 0;
-    padding-left: 18px;
+    padding: 0;
+    display: grid;
+    gap: var(--tr-space-1);
   }
-  .tag {
-    font-size: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 0 6px;
-  }
-  .errbox {
-    color: var(--err);
-    margin: 0;
-  }
-  .ok {
-    color: var(--ok);
-    margin: 0;
+  .list li {
+    display: flex;
+    gap: var(--tr-space-2);
+    align-items: baseline;
+    flex-wrap: wrap;
   }
 </style>

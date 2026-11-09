@@ -10,12 +10,29 @@ import HooksEditor from './HooksEditor.svelte';
 import FlowDiagram from './FlowDiagram.svelte';
 import ModesView from './ModesView.svelte';
 
+// truss Select/Popover use browser APIs jsdom lacks (top-layer popovers, ResizeObserver, scrollIntoView).
+const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+proto.showPopover ??= () => {};
+proto.hidePopover ??= () => {};
+Element.prototype.scrollIntoView ??= () => {};
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
 const target = { project: '/demo/project' };
-/** The list button that selects mode `id` (not its move buttons). */
+/** The list button that selects mode `id` (not its icon-only move buttons, which carry an aria-label). */
 const pick = (list: HTMLElement, id: string) =>
   within(list)
     .getAllByRole('button')
-    .find((b) => b.className.includes('pick') && b.textContent?.includes(id))!;
+    .find((b) => !b.hasAttribute('aria-label') && b.textContent?.includes(id))!;
+/** Choose an option in a truss Select: a combobox button plus a listbox popover. */
+async function choose(trigger: HTMLElement, option: string | RegExp) {
+  await fireEvent.click(trigger);
+  // jsdom never opens a `popover="manual"` surface, so it counts as hidden to the accessibility tree.
+  await fireEvent.click(await screen.findByRole('option', { name: option, hidden: true }));
+}
 const catalog = async (): Promise<Catalog> =>
   (await new FakeModes({ delayMs: 0 }).get(target)).catalog;
 
@@ -67,17 +84,13 @@ describe('PermissionsTable', () => {
       }
     });
     expect(screen.getByRole('table', { name: 'Permissions' })).toHaveTextContent('default ask');
-    await fireEvent.change(screen.getByLabelText('Permission for Bash'), {
-      target: { value: 'deny' }
-    });
+    await choose(screen.getByLabelText('Permission for Bash'), 'deny');
     await waitFor(() => expect(permissions).toEqual({ Bash: 'deny' }));
     const input = screen.getByLabelText('Tool or glob');
     await fireEvent.input(input, { target: { value: '[' } });
     expect(screen.getByRole('button', { name: 'Add rule' })).toBeDisabled();
     await fireEvent.input(input, { target: { value: 'mise__*' } });
-    await fireEvent.change(screen.getByLabelText('New rule permission'), {
-      target: { value: 'allow' }
-    });
+    await choose(screen.getByLabelText('New rule permission'), 'allow');
     await fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
     await waitFor(() => expect(permissions).toEqual({ Bash: 'deny', 'mise__*': 'allow' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Remove rule Bash' }));
@@ -115,9 +128,7 @@ describe('HooksEditor', () => {
     expect(screen.queryByLabelText('Matcher for post_edit hook 1')).toBeNull();
     // fix turns appear only for fix_turn
     expect(screen.queryByLabelText('Max fix turns for post_edit hook 1')).toBeNull();
-    await fireEvent.change(screen.getByLabelText('On failure for post_edit hook 1'), {
-      target: { value: 'fix_turn' }
-    });
+    await choose(screen.getByLabelText('On failure for post_edit hook 1'), 'fix_turn');
     await waitFor(() =>
       expect(screen.getByLabelText('Max fix turns for post_edit hook 1')).toHaveValue(2)
     );
@@ -266,9 +277,7 @@ describe('ModesView', () => {
   it('adds modes from a template and shows the new mode with its id', async () => {
     await mounted();
     await screen.findByRole('list', { name: 'Modes list' });
-    await fireEvent.change(screen.getByLabelText('Add mode from template'), {
-      target: { value: 'full:release' }
-    });
+    await choose(screen.getByLabelText('Add mode from template'), /^Release/);
     await fireEvent.click(screen.getByRole('button', { name: 'Add mode' }));
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Release');
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveDisplayValue(/release phase/);

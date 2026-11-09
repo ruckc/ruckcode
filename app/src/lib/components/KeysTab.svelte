@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, Callout, Combobox, Input, RadioGroup } from '@ruckc/truss-ui';
   import { KEY_NAME_RE, type SetupApi, type SetupState, type SetupTarget } from '../host/setup';
 
   let {
@@ -90,11 +91,10 @@
 </script>
 
 <div class="keys">
-  {#if error}<p class="errbox" role="alert">{error}</p>{/if}
-  {#if notice}<p class="ok" role="status">{notice}</p>{/if}
-
+  {#if error}<Callout intent="danger">{error}</Callout>{/if}
+  {#if notice}<div role="status"><Callout intent="success">{notice}</Callout></div>{/if}
   {#if keys.length}
-    <table aria-label="API keys">
+    <table class="data" aria-label="API keys">
       <thead>
         <tr
           ><th>Name</th><th>Description</th><th>Created</th><th>Key</th><th>Used by</th><th
@@ -110,23 +110,27 @@
             <td><code>{k.masked}</code></td>
             <td>{k.usedBy.length ? k.usedBy.join(', ') : 'unused'}</td>
             <td class="rowactions">
-              <button type="button" disabled={busy} onclick={() => openUse(k.name)}
-                >Use for profile</button
-              >
+              <Button size="sm" variant="outlined" disabled={busy} onclick={() => openUse(k.name)}>
+                Use for profile
+              </Button>
               {#if confirmRemove === k.name}
-                <button type="button" class="danger" disabled={busy} onclick={() => remove(k.name)}
-                  >Confirm remove</button
+                <Button size="sm" intent="danger" disabled={busy} onclick={() => remove(k.name)}
+                  >Confirm remove</Button
                 >
-                <button type="button" class="ghost" onclick={() => (confirmRemove = null)}
-                  >Cancel</button
+                <Button
+                  size="sm"
+                  variant="minimal"
+                  intent="neutral"
+                  onclick={() => (confirmRemove = null)}>Cancel</Button
                 >
               {:else}
-                <button
-                  type="button"
-                  class="danger"
+                <Button
+                  size="sm"
+                  variant="outlined"
+                  intent="danger"
                   aria-label={`Remove ${k.name}`}
                   disabled={busy}
-                  onclick={() => (confirmRemove = k.name)}>Remove</button
+                  onclick={() => (confirmRemove = k.name)}>Remove</Button
                 >
               {/if}
             </td>
@@ -139,11 +143,11 @@
       No saved keys. Add one below; secrets are stored in a private file and never shown.
     </p>
   {/if}
-
   {#each info.keys.missing as m (m.name + m.usedBy)}
-    <p class="warn">{m.usedBy} references the missing key "{m.name}". Add a key with that name.</p>
+    <Callout intent="warning">
+      {m.usedBy} references the missing key "{m.name}". Add a key with that name.
+    </Callout>
   {/each}
-
   {#if useFor}
     <form
       class="box"
@@ -154,49 +158,46 @@
       }}
     >
       <strong>Use "{useFor}" for a profile</strong>
-      <label class="field">
-        <span>Profile</span>
-        <input type="text" list="profile-names" bind:value={useProfile} data-autofocus />
-        <datalist id="profile-names">
-          {#each info.profiles as p (p.name)}<option value={p.name}></option>{/each}
-        </datalist>
-      </label>
-      <fieldset>
-        <legend>Scope</legend>
-        <label class="choice">
-          <input type="radio" name="use-scope" value="user" bind:group={useScope} /> My profile (all projects)
-        </label>
-        <label class="choice">
-          <input type="radio" name="use-scope" value="project" bind:group={useScope} /> This project only
-        </label>
-      </fieldset>
+      <Combobox
+        label="Profile"
+        allowCustom
+        autofocus
+        options={info.profiles.map((p) => ({ value: p.name, label: p.name }))}
+        bind:value={useProfile}
+      />
+      <RadioGroup
+        label="Scope"
+        options={[
+          { value: 'user', label: 'My profile (all projects)' },
+          { value: 'project', label: 'This project only' }
+        ]}
+        bind:value={useScope}
+      />
       <div class="actions">
-        <button type="submit" class="primary" disabled={!useProfile.trim()}>Apply</button>
-        <button type="button" onclick={() => (useFor = null)}>Cancel</button>
+        <Button type="submit" disabled={!useProfile.trim()}>Apply</Button>
+        <Button type="button" variant="outlined" onclick={() => (useFor = null)}>Cancel</Button>
       </div>
     </form>
   {/if}
-
   <form class="box" aria-label="Add key" onsubmit={add}>
     <strong>Add a key</strong>
-    <label class="field">
-      <span>Name</span>
-      <input type="text" bind:value={name} spellcheck="false" autocomplete="off" />
-    </label>
-    <label class="field">
-      <span>API key</span>
-      <input type="password" bind:value={secret} autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="field">
-      <span>Description (optional)</span>
-      <input type="text" bind:value={description} />
-    </label>
-    {#if name && !nameOk}<p class="warn">Name: letters, digits, ".", "-" or "_".</p>{/if}
-    {#if replacing}<p class="warn">A key named "{name.trim()}" exists and will be replaced.</p>{/if}
+    <Input label="Name" bind:value={name} spellcheck="false" autocomplete="off" />
+    <Input
+      label="API key"
+      type="password"
+      bind:value={secret}
+      autocomplete="off"
+      spellcheck="false"
+    />
+    <Input label="Description (optional)" bind:value={description} />
+    {#if name && !nameOk}
+      <Callout intent="warning">Name: letters, digits, ".", "-" or "_".</Callout>
+    {/if}
+    {#if replacing}
+      <Callout intent="warning">A key named "{name.trim()}" exists and will be replaced.</Callout>
+    {/if}
     <div class="actions">
-      <button type="submit" class="primary" disabled={busy || !nameOk || !secret.trim()}
-        >Save key</button
-      >
+      <Button type="submit" disabled={busy || !nameOk || !secret.trim()}>Save key</Button>
     </div>
   </form>
 </div>
@@ -204,59 +205,26 @@
 <style>
   .keys {
     display: grid;
-    gap: 10px;
+    gap: var(--tr-space-3);
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
+  .box {
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
+    padding: var(--tr-space-3);
+    display: grid;
+    gap: var(--tr-space-2);
+    max-width: 480px;
   }
-  th,
-  td {
-    text-align: left;
-    padding: 4px 6px;
-    border-bottom: 1px solid var(--border);
-    vertical-align: top;
+  .actions {
+    display: flex;
+    gap: var(--tr-space-2);
   }
   .rowactions {
     display: flex;
-    gap: 4px;
+    gap: var(--tr-space-1);
     flex-wrap: wrap;
   }
-  .box {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
-    display: grid;
-    gap: 6px;
-  }
-  .field {
-    display: grid;
-    gap: 2px;
-  }
-  .field input {
-    width: 100%;
-  }
-  fieldset {
-    border: 1px solid var(--border);
-    border-radius: 6px;
+  p {
     margin: 0;
-  }
-  .errbox {
-    color: var(--err);
-    margin: 0;
-  }
-  .ok {
-    color: var(--ok);
-    margin: 0;
-  }
-  .warn {
-    color: var(--warn);
-    margin: 0;
-  }
-  @media (max-width: 640px) {
-    th:nth-child(3),
-    td:nth-child(3) {
-      display: none;
-    }
   }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  // TODO(truss-ui#150): replace with a truss-code view for loose, annotated unified text.
   /** Renders unified-diff text from the setup preview (added/removed lines coloured). */
   let {
     text,
@@ -28,8 +29,8 @@
   .diff {
     margin: 0;
     padding: 8px 0;
-    background: var(--code-bg);
-    border: 1px solid var(--border);
+    background: var(--tr-surface-container);
+    border: 1px solid var(--tr-outline-variant);
     border-radius: 6px;
     overflow: auto;
     max-height: 340px;
@@ -43,17 +44,17 @@
     overflow-wrap: anywhere;
   }
   .add {
-    background: var(--add-bg);
+    background: var(--tr-success-container);
   }
   .del {
-    background: var(--del-bg);
+    background: var(--tr-danger-container);
   }
   .hunk {
-    background: var(--hunk-bg);
-    color: var(--muted);
+    background: var(--tr-surface-container-high);
+    color: var(--tr-on-surface-variant);
   }
   .file {
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
   }
   .head {
     font-weight: 600;

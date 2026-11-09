@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, Callout, Stat } from '@ruckc/truss-ui';
   import { formatDuration, formatTokens } from '../format';
   import { computeMetrics } from '../transcripts/metrics';
   import type { TranscriptRecord } from '../host/transcripts';
@@ -46,43 +47,36 @@
 
 <div class="metrics" data-testid="metrics">
   {#if partial}
-    <p class="partial" role="status">
-      Based on {records.length.toLocaleString()} of {total.toLocaleString()} records.
-      <button type="button" class="small" disabled={loading} onclick={onloadall}>
-        {loading ? 'Loading...' : 'Load all records'}
-      </button>
-    </p>
+    <div role="status">
+      <Callout intent="primary">
+        Based on {records.length.toLocaleString()} of {total.toLocaleString()} records.
+        {#snippet actions()}
+          <Button
+            variant="outlined"
+            intent="neutral"
+            size="sm"
+            disabled={loading}
+            onclick={onloadall}
+          >
+            {loading ? 'Loading...' : 'Load all records'}
+          </Button>
+        {/snippet}
+      </Callout>
+    </div>
   {/if}
 
   {#if m.requests.length === 0}
     <p class="muted">No model requests in the loaded records.</p>
   {:else}
-    <dl class="tiles" aria-label="Summary">
-      <div>
-        <dt>Requests</dt>
-        <dd data-testid="m-requests">{m.totals.requests}</dd>
-      </div>
-      <div>
-        <dt>Avg latency</dt>
-        <dd>{formatDuration(m.totals.avgDurationMs)}</dd>
-      </div>
-      <div>
-        <dt>Avg TTFT</dt>
-        <dd>{formatDuration(m.totals.avgTtftMs)}</dd>
-      </div>
-      <div>
-        <dt>Avg tokens/s</dt>
-        <dd>{fmt1(m.totals.avgTokensPerSec)}</dd>
-      </div>
-      <div>
-        <dt>Input tokens</dt>
-        <dd>{formatTokens(m.totals.inputTokens)}</dd>
-      </div>
-      <div>
-        <dt>Output tokens</dt>
-        <dd>{formatTokens(m.totals.outputTokens)}</dd>
-      </div>
-    </dl>
+    {#snippet requestsValue()}<span data-testid="m-requests">{m.totals.requests}</span>{/snippet}
+    <div class="tiles" role="group" aria-label="Summary">
+      <Stat class="tile" value={requestsValue} label="Requests" />
+      <Stat class="tile" value={formatDuration(m.totals.avgDurationMs)} label="Avg latency" />
+      <Stat class="tile" value={formatDuration(m.totals.avgTtftMs)} label="Avg TTFT" />
+      <Stat class="tile" value={fmt1(m.totals.avgTokensPerSec)} label="Avg tokens/s" />
+      <Stat class="tile" value={formatTokens(m.totals.inputTokens)} label="Input tokens" />
+      <Stat class="tile" value={formatTokens(m.totals.outputTokens)} label="Output tokens" />
+    </div>
 
     <figure>
       <figcaption>
@@ -223,61 +217,34 @@
 </div>
 
 <style>
+  /* Chart colours are truss tokens, so light and dark follow the theme without media queries. */
   .metrics {
-    --chart-bar: #93c5fd;
-    --chart-ttft: #1d4ed8;
-    --chart-in: #1d4ed8;
-    --chart-out: #b45309;
-    --chart-axis: var(--border);
+    --chart-bar: var(--tr-primary);
+    --chart-ttft: var(--tr-primary);
+    --chart-in: var(--tr-primary);
+    --chart-out: var(--tr-warning);
+    --chart-axis: var(--tr-outline-variant);
     display: grid;
-    gap: 12px;
-    padding: 4px 2px 16px;
-  }
-  @media (prefers-color-scheme: dark) {
-    .metrics {
-      --chart-bar: #1e40af;
-      --chart-ttft: #93c5fd;
-      --chart-in: #93c5fd;
-      --chart-out: #fbbf24;
-    }
-  }
-  .partial {
-    margin: 0;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--code-bg);
-    display: flex;
-    gap: 10px;
-    align-items: center;
+    gap: var(--tr-space-3);
+    padding: var(--tr-space-1) 2px var(--tr-space-4);
   }
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 8px;
-    margin: 0;
+    gap: var(--tr-space-2);
   }
-  .tiles div {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    padding: 6px 10px;
-  }
-  dt {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  dd {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
+  .tiles :global(.tile) {
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
+    background: var(--tr-surface-container-low);
+    padding: var(--tr-space-2) var(--tr-space-3);
+    --tr-text-2xl: var(--tr-text-xl);
   }
   figure {
     margin: 0;
-    border: 1px solid var(--border);
+    border: 1px solid var(--tr-outline-variant);
     border-radius: 8px;
-    background: var(--surface);
+    background: var(--tr-surface-container-low);
     padding: 6px 10px 2px;
   }
   figcaption {
@@ -299,11 +266,12 @@
     stroke-width: 1;
   }
   .tick {
-    fill: var(--muted);
+    fill: var(--tr-on-surface-variant);
     font-size: 10px;
   }
   .bar {
     fill: var(--chart-bar);
+    fill-opacity: 0.4;
   }
   .ttft {
     fill: var(--chart-ttft);
@@ -327,7 +295,7 @@
   }
   details > summary {
     cursor: pointer;
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
   }
   .scroll {
     overflow: auto;
@@ -341,7 +309,7 @@
   }
   th,
   td {
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--tr-outline-variant);
     padding: 2px 8px;
     text-align: right;
     white-space: nowrap;
@@ -354,6 +322,6 @@
   thead th {
     position: sticky;
     top: 0;
-    background: var(--surface);
+    background: var(--tr-surface-container-low);
   }
 </style>

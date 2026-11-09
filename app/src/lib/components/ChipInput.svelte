@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button, Input, Tag } from '@ruckc/truss-ui';
+
   /** A list of strings edited as chips, with a text box (Enter adds), suggestions and live checks. */
   let {
     values = $bindable(),
@@ -19,8 +21,9 @@
     preview?: (v: string) => string | null;
   } = $props();
 
+  // TODO(truss-ui#143): TagInput has no suggestions, per-tag notes/preview or non-blocking validation, so the
+  // chip list is composed from Tag + Input + Button here.
   let draft = $state('');
-  const inputId = `chip-${Math.random().toString(36).slice(2, 8)}`;
 
   const draftProblem = $derived(draft.trim() && problem ? problem(draft.trim()) : null);
   const offered = $derived(
@@ -51,15 +54,12 @@
         {@const bad = problem?.(v)}
         {@const note = preview?.(v)}
         <li>
-          <span class="chip" class:bad={!!bad}>
-            <code>{v}</code>
-            <button
-              type="button"
-              class="x"
-              aria-label={`Remove ${v}`}
-              onclick={() => (values = values.filter((x) => x !== v))}>&times;</button
-            >
-          </span>
+          <Tag
+            size="sm"
+            intent={bad ? 'danger' : 'neutral'}
+            removeLabel={`Remove ${v}`}
+            onremove={() => (values = values.filter((x) => x !== v))}><code>{v}</code></Tag
+          >
           {#if bad}<span class="err small">{bad}</span>
           {:else if note}<span class="muted small">{note}</span>{/if}
         </li>
@@ -67,22 +67,27 @@
     </ul>
   {/if}
   <div class="row">
-    <input
-      id={inputId}
-      type="text"
-      aria-label={`Add to ${label}`}
-      {placeholder}
-      bind:value={draft}
-      {onkeydown}
-      spellcheck="false"
-    />
-    <button type="button" disabled={!draft.trim()} onclick={() => add()}>Add</button>
+    <div class="grow">
+      <Input
+        size="sm"
+        aria-label={`Add to ${label}`}
+        {placeholder}
+        value={draft}
+        oninput={(e) => (draft = e.currentTarget.value)}
+        {onkeydown}
+        spellcheck="false"
+        style="font-family: var(--tr-font-mono)"
+      />
+    </div>
+    <Button size="sm" variant="outlined" disabled={!draft.trim()} onclick={() => add()}>Add</Button>
   </div>
   {#if draftProblem}<p class="err small" role="status">{draftProblem}</p>{/if}
   {#if offered.length}
     <div class="sugg" aria-label={`Suggestions for ${label}`} role="group">
       {#each offered.slice(0, 14) as s (s)}
-        <button type="button" class="s" onclick={() => add(s)} title={`Add ${s}`}>+ {s}</button>
+        <Button size="sm" variant="tonal" intent="neutral" onclick={() => add(s)} title={`Add ${s}`}
+          >+ {s}</Button
+        >
       {/each}
     </div>
   {/if}
@@ -91,7 +96,7 @@
 <style>
   .chips {
     display: grid;
-    gap: 4px;
+    gap: var(--tr-space-1);
   }
   .list {
     list-style: none;
@@ -99,57 +104,33 @@
     padding: 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 10px;
+    gap: var(--tr-space-1) var(--tr-space-3);
   }
   .list li {
     display: flex;
-    align-items: baseline;
-    gap: 6px;
-  }
-  .chip {
-    display: inline-flex;
     align-items: center;
-    gap: 2px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 0 2px 0 8px;
-    background: var(--code-bg);
-  }
-  .chip.bad {
-    border-color: var(--err);
-  }
-  .x {
-    border: none;
-    background: none;
-    padding: 0 6px;
-    line-height: 1.3;
+    gap: var(--tr-space-2);
   }
   .row {
     display: flex;
-    gap: 6px;
+    gap: var(--tr-space-2);
+    align-items: center;
   }
-  .row input {
+  .grow {
     flex: 1;
     min-width: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12.5px;
   }
   .sugg {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-  }
-  .s {
-    font-size: 12px;
-    padding: 0 8px;
-    border-radius: 12px;
-    color: var(--muted);
+    gap: var(--tr-space-1);
   }
   .small {
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
+    margin: 0;
   }
   .err {
-    color: var(--err);
+    color: var(--tr-danger);
     margin: 0;
   }
 </style>

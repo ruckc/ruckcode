@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Badge, Button, Input } from '@ruckc/truss-ui';
   import {
     baseName,
     hostLabel,
@@ -74,26 +75,24 @@
         >{(current?.path ?? cwd) ? baseName(current?.path ?? cwd) : 'No project'}</strong
       >
       {#if connected}
-        <button
-          type="button"
-          class="small"
+        <Button
+          size="sm"
+          variant="outlined"
           aria-expanded={picking}
-          onclick={() => (picking = !picking)}>Switch project</button
+          onclick={() => (picking = !picking)}>Switch project</Button
         >
       {/if}
     </div>
     {#if current && connected}
       <div class="prow">
         <div class="ppath muted" title={current.path}>
-          {#if hostLabel(current)}<span class="badge">{hostLabel(current)}</span>{/if}
+          {#if hostLabel(current)}<Badge intent="neutral">{hostLabel(current)}</Badge>{/if}
           {current.path}
         </div>
       </div>
     {/if}
     {#if showPicker && !showForm}
-      <button type="button" class="primary open" onclick={() => (choosing = true)}
-        >Open a project…</button
-      >
+      <Button onclick={() => (choosing = true)}>Open a project…</Button>
     {/if}
     {#if showPicker && showForm}
       <form
@@ -114,24 +113,23 @@
           {platform}
           disabled={connecting}
         />
-        <input
-          type="text"
+        <Input
           placeholder={host === 'wsl' ? 'Project folder (Windows or Linux path)' : 'Project folder'}
           aria-label="Project folder"
           bind:value={cwd}
         />
         <div class="row">
-          {#if canBrowse}<button type="button" onclick={onbrowse}>Browse…</button>{/if}
+          {#if canBrowse}<Button type="button" variant="outlined" onclick={onbrowse}>
+              Browse…
+            </Button>{/if}
           {#if recent.length}
-            <button type="button" onclick={() => (choosing = false)}>Cancel</button>
+            <Button type="button" variant="outlined" onclick={() => (choosing = false)}>
+              Cancel
+            </Button>
           {/if}
-          <button
-            class="primary"
-            type="submit"
-            disabled={!cwd.trim() || connecting || noHost || !hostReady}
-          >
+          <Button type="submit" disabled={!cwd.trim() || connecting || noHost || !hostReady}>
             {connecting ? 'Connecting…' : connected ? 'Open' : 'Connect'}
-          </button>
+          </Button>
         </div>
       </form>
     {/if}
@@ -159,24 +157,25 @@
                 <span class="muted">{hostLabel(r) ? `${hostLabel(r)} · ` : ''}{r.path}</span
                 ></button
               >
-              <button
-                type="button"
-                class="x"
+              <Button
+                variant="minimal"
+                intent="neutral"
+                size="sm"
+                icon="cross"
                 aria-label={`Forget ${r.path}`}
-                onclick={() => onforget(r)}>&times;</button
-              >
+                onclick={() => onforget(r)}
+              />
             </li>
           {/each}
         </ul>
       {/if}
     {/if}
   </section>
-
   {#if connected}
     <section class="sessions">
       <div class="shead">
         <h2>Sessions</h2>
-        <button type="button" class="small primary" onclick={onnew}>New session</button>
+        <Button size="sm" onclick={onnew}>New session</Button>
       </div>
       <ul aria-label="Sessions">
         {#each sessions as s (s.id)}
@@ -194,13 +193,15 @@
               </span>
             </button>
             {#if s.open}
-              <button
-                type="button"
-                class="x"
+              <Button
+                variant="minimal"
+                intent="neutral"
+                size="sm"
+                icon="cross"
                 aria-label={`Close session ${s.title}`}
                 title="Close session"
-                onclick={() => onclose(s.id)}>&times;</button
-              >
+                onclick={() => onclose(s.id)}
+              />
             {/if}
           </li>
         {:else}
@@ -218,21 +219,19 @@
     min-width: 0;
   }
   section {
-    padding: 10px 16px;
+    padding: var(--tr-space-3) var(--tr-space-4);
     min-width: 0;
   }
-  .open {
-    width: 100%;
-  }
   .project {
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--tr-outline-variant);
     display: grid;
-    gap: 6px;
+    gap: var(--tr-space-2);
   }
   .phead,
-  .shead {
+  .shead,
+  .prow {
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-items: center;
     justify-content: space-between;
   }
@@ -244,44 +243,28 @@
     white-space: nowrap;
   }
   .ppath {
-    font-size: 11px;
+    flex: 1;
+    min-width: 0;
+    font-size: var(--tr-text-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .badge {
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0 4px;
-    margin-right: 4px;
-  }
   .picker {
     display: grid;
-    gap: 6px;
-  }
-  .picker input {
-    width: 100%;
+    gap: var(--tr-space-2);
   }
   .row {
     display: flex;
-    gap: 6px;
+    gap: var(--tr-space-2);
   }
   h2,
   h3 {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--muted);
-  }
-  .prow {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .prow .ppath {
-    flex: 1;
-    min-width: 0;
+    color: var(--tr-on-surface-variant);
   }
   ul {
     list-style: none;
@@ -293,54 +276,50 @@
     display: flex;
     align-items: center;
   }
-  .link {
+  .link,
+  .item {
     flex: 1;
     min-width: 0;
     border: 0;
     background: none;
+    color: inherit;
+    font: inherit;
     text-align: left;
-    padding: 3px 0;
+    cursor: pointer;
     display: flex;
     flex-direction: column;
+    border-radius: var(--tr-radius-sm);
+  }
+  .link {
+    padding: 3px 0;
+  }
+  .item {
+    padding: 5px var(--tr-space-2);
+  }
+  .link:hover:not(:disabled),
+  .item:hover {
+    background: var(--tr-surface-container-high);
   }
   .link .muted {
-    font-size: 11px;
+    font-size: var(--tr-text-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .x {
-    border: 0;
-    background: none;
-    padding: 0 6px;
-    font-size: 16px;
-    line-height: 1;
-    color: var(--muted);
   }
   .sessions {
     flex: 1;
     min-height: 0;
   }
   .shead {
-    margin-bottom: 6px;
+    margin-bottom: var(--tr-space-2);
   }
   .sessions li {
-    border-radius: 6px;
+    border-radius: var(--tr-radius-md);
     border: 1px solid transparent;
   }
   .sessions li.active {
-    background: var(--code-bg);
-    border-color: var(--border);
-  }
-  .item {
-    flex: 1;
-    min-width: 0;
-    border: 0;
-    background: none;
-    text-align: left;
-    padding: 5px 8px;
-    display: flex;
-    flex-direction: column;
+    background: var(--tr-surface-container);
+    border-color: var(--tr-outline-variant);
   }
   .title {
     overflow: hidden;
@@ -348,18 +327,18 @@
     white-space: nowrap;
   }
   .sub {
-    font-size: 11px;
+    font-size: var(--tr-text-xs);
     display: flex;
-    gap: 4px;
+    gap: var(--tr-space-1);
     align-items: center;
   }
   .dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--ok);
+    background: var(--tr-success);
   }
   .empty {
-    padding: 6px 8px;
+    padding: var(--tr-space-2);
   }
 </style>

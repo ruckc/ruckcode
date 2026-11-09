@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, Input, Select } from '@ruckc/truss-ui';
   import type { Catalog, PermissionValue } from '../host/modes';
   import { globProblem } from '../modes/glob';
 
@@ -12,6 +13,9 @@
     /** Messages by tool or glob. */
     errors?: Record<string, string>;
   } = $props();
+
+  const PERMS: PermissionValue[] = ['allow', 'ask', 'deny'];
+  const permOptions = PERMS.map((o) => ({ value: o, label: o }));
 
   let pattern = $state('');
   let value = $state<PermissionValue>('ask');
@@ -53,9 +57,13 @@
 </script>
 
 {#if rows.length}
-  <table aria-label="Permissions">
+  <table class="data" aria-label="Permissions">
     <thead>
-      <tr><th>Tool or glob</th><th>Permission</th><th><span class="sr-only">Actions</span></th></tr>
+      <tr
+        ><th>Tool or glob</th><th>Permission</th><th
+          ><span class="tr-visually-hidden">Actions</span></th
+        ></tr
+      >
     </thead>
     <tbody>
       {#each rows as [p, v] (p)}
@@ -65,23 +73,26 @@
             {#if defaultFor(p)}<span class="muted small">(default {defaultFor(p)})</span>{/if}
             {#if errors[p]}<div class="err small">{errors[p]}</div>{/if}
           </td>
-          <td>
-            <select
-              aria-label={`Permission for ${p}`}
+          <td class="perm">
+            <Select
+              size="sm"
+              searchable={false}
+              ariaLabel={`Permission for ${p}`}
+              options={permOptions}
               value={v}
-              onchange={(e) => set(p, e.currentTarget.value as PermissionValue)}
-            >
-              {#each ['allow', 'ask', 'deny'] as o (o)}<option value={o}>{o}</option>{/each}
-            </select>
+              onchange={(x) => set(p, x)}
+            />
           </td>
-          <td
-            ><button
-              type="button"
-              class="ghost"
+          <td>
+            <Button
+              size="sm"
+              variant="minimal"
+              intent="neutral"
+              icon="cross"
               aria-label={`Remove rule ${p}`}
-              onclick={() => remove(p)}>&times;</button
-            ></td
-          >
+              onclick={() => remove(p)}
+            />
+          </td>
         </tr>
       {/each}
     </tbody>
@@ -90,63 +101,70 @@
   <p class="muted small">No rules: tools use their defaults (read-only tools allow, others ask).</p>
 {/if}
 <div class="add">
-  <input
-    type="text"
-    aria-label="Tool or glob"
-    placeholder="Tool name or glob, e.g. Bash or mise__*"
-    list="perm-names"
-    bind:value={pattern}
-    spellcheck="false"
-    onkeydown={(e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        add();
-      }
-    }}
-  />
-  <datalist id="perm-names"
-    >{#each names as n (n)}<option value={n}></option>{/each}</datalist
-  >
-  <select aria-label="New rule permission" bind:value>
-    {#each ['allow', 'ask', 'deny'] as o (o)}<option value={o}>{o}</option>{/each}
-  </select>
-  <button type="button" disabled={!pattern.trim() || !!problem} onclick={add}>
+  <div class="pattern">
+    <!-- TODO(truss-ui#144): Combobox with allowCustom only commits its value on Enter/blur and has no
+         onkeydown/oninput passthrough, so a "type a glob, press Enter to add" field cannot be built on it.
+         Using Input with a native <datalist> for the suggestions instead. -->
+    <Input
+      size="sm"
+      aria-label="Tool or glob"
+      placeholder="Tool name or glob, e.g. Bash or mise__*"
+      list="perm-names"
+      value={pattern}
+      oninput={(e) => (pattern = e.currentTarget.value)}
+      spellcheck="false"
+      onkeydown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          add();
+        }
+      }}
+    />
+    <datalist id="perm-names"
+      >{#each names as n (n)}<option value={n}></option>{/each}</datalist
+    >
+  </div>
+  <div class="perm">
+    <Select
+      size="sm"
+      searchable={false}
+      ariaLabel="New rule permission"
+      options={permOptions}
+      {value}
+      onchange={(x) => (value = x)}
+    />
+  </div>
+  <Button size="sm" variant="outlined" disabled={!pattern.trim() || !!problem} onclick={add}>
     {exists ? 'Replace rule' : 'Add rule'}
-  </button>
+  </Button>
 </div>
 {#if problem}<p class="err small" role="status">{problem}</p>{/if}
 
 <style>
   table {
-    border-collapse: collapse;
-    width: 100%;
-    margin-bottom: 6px;
-  }
-  th {
-    text-align: left;
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  th,
-  td {
-    padding: 3px 6px 3px 0;
-    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--tr-space-2);
   }
   .add {
     display: flex;
-    gap: 6px;
+    gap: var(--tr-space-2);
     flex-wrap: wrap;
+    align-items: center;
   }
-  .add input {
+  .pattern {
     flex: 1;
     min-width: 200px;
   }
+  .perm {
+    min-width: 110px;
+  }
+  .add .perm {
+    width: 120px;
+  }
   .small {
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
   }
   .err {
-    color: var(--err);
+    color: var(--tr-danger);
     margin: 0;
   }
 </style>

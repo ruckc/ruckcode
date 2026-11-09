@@ -2,9 +2,10 @@
   import { formatDuration, formatTokens } from '../format';
   import type { TimelineItem } from '../transcripts/timeline';
   import { blocksText, permissionLabel, userSourceLabel } from '../transcripts/timeline';
-  import DiffView from './DiffView.svelte';
+  import { Badge, Button, Tag } from '@ruckc/truss-ui';
+  import { Markdown } from '@ruckc/truss-markdown';
+  import DiffPanel from './DiffPanel.svelte';
   import KindIcon from './KindIcon.svelte';
-  import Markdown from './Markdown.svelte';
 
   let {
     item,
@@ -136,14 +137,15 @@
           <KindIcon {kind} />
           <span class="title">{item.call?.title ?? item.result?.name ?? 'tool'}</span>
           <span class="muted kindname">{item.call?.name ?? ''}</span>
-          <span
+          <Badge
             class="status"
+            intent={item.result ? (item.result.isError ? 'danger' : 'success') : 'neutral'}
             data-state={item.result ? (item.result.isError ? 'error' : 'ok') : 'pending'}
           >
             {#if !item.result}{complete ? 'no result' : 'result not loaded'}
             {:else if item.result.isError}error
             {:else}ok{/if}
-          </span>
+          </Badge>
           {#if item.result}
             <span class="muted">{formatDuration(item.result.durationMs)}</span>
           {/if}
@@ -158,19 +160,20 @@
               </p>
             {/if}
             {#each item.result?.edits ?? [] as e, i (i)}
-              <DiffView patch={{ path: e.path, text: e.diff }} />
+              <DiffPanel patch={{ path: e.path, text: e.diff }} />
             {/each}
             {#if item.result?.output}
               <pre class="out" class:err={item.result.isError} aria-label="Tool output">{item.result
                   .output}</pre>
             {/if}
             {#if item.call}
-              <button
-                type="button"
+              <Button
                 class="link"
+                variant="minimal"
+                size="sm"
                 aria-expanded={showInput}
                 onclick={() => (showInput = !showInput)}
-                >{showInput ? 'Hide input' : 'Show input'}</button
+                >{showInput ? 'Hide input' : 'Show input'}</Button
               >
               {#if showInput}
                 <pre class="out" aria-label="Tool input">{pretty(item.call.input)}</pre>
@@ -189,9 +192,13 @@
           <strong>Hook</strong>
           <span class="muted">{item.rec.event}</span>
           <code class="cmd">{item.rec.command}</code>
-          <span class="status" data-state={item.rec.success ? 'ok' : 'error'}>
+          <Badge
+            class="status"
+            intent={item.rec.success ? 'success' : 'danger'}
+            data-state={item.rec.success ? 'ok' : 'error'}
+          >
             {item.rec.success ? 'passed' : `failed (exit ${item.rec.exitCode ?? '?'})`}
-          </span>
+          </Badge>
           <span class="muted">{formatDuration(item.rec.durationMs)}</span>
         </div>
         {#if item.rec.output}
@@ -203,7 +210,7 @@
       </section>
     {:else if item.kind === 'mode'}
       <p class="line">
-        <span class="chip">Mode</span>
+        <Tag size="sm" class="chip">Mode</Tag>
         <code>{item.rec.from}</code> &rarr; <code>{item.rec.to}</code>
         <span class="muted"
           >({item.rec.initiatedBy === 'agent' ? 'agent' : 'you'}) {item.rec.reason}</span
@@ -211,7 +218,7 @@
       </p>
     {:else if item.kind === 'model'}
       <p class="line">
-        <span class="chip">Model</span>
+        <Tag size="sm" class="chip">Model</Tag>
         <code>{item.rec.from ?? 'default'}</code> &rarr; <code>{item.rec.to ?? 'default'}</code>
       </p>
     {:else if item.kind === 'compaction'}
@@ -227,7 +234,7 @@
       </section>
     {:else if item.kind === 'turn_end'}
       <p class="line turn" aria-label="Turn summary">
-        <span class="chip">Turn end</span>
+        <Tag size="sm" class="chip">Turn end</Tag>
         {item.rec.stopReason.replace('_', ' ')} · {formatDuration(item.rec.durationMs)} ·
         {item.rec.modelRequests} requests · {item.rec.toolCalls} tool calls ·
         {formatTokens(item.rec.inputTokens)} in / {formatTokens(item.rec.outputTokens)} out
@@ -249,7 +256,7 @@
         </ul>
       </section>
     {:else if item.kind === 'resumed'}
-      <p class="line resumed"><span class="chip">Session resumed</span></p>
+      <p class="line resumed"><Tag size="sm" class="chip">Session resumed</Tag></p>
     {/if}
   </div>
 </li>
@@ -263,16 +270,16 @@
     border-radius: 6px;
   }
   .item.focused {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--tr-primary);
     outline-offset: 1px;
-    background: var(--code-bg);
+    background: var(--tr-surface-container);
   }
   .gutter {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     font-size: 11px;
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
     font-variant-numeric: tabular-nums;
     padding-top: 6px;
   }
@@ -282,23 +289,23 @@
   .msg,
   .card,
   .note {
-    border: 1px solid var(--border);
+    border: 1px solid var(--tr-outline-variant);
     border-radius: 8px;
-    background: var(--surface);
+    background: var(--tr-surface-container-low);
     padding: 6px 10px;
   }
   .msg.user {
-    border-left: 4px solid var(--accent);
+    border-left: 4px solid var(--tr-primary);
   }
   .msg.user[data-source='hook'],
   .msg.user[data-source='fix_turn'] {
-    border-left-color: var(--warn);
+    border-left-color: var(--tr-warning);
   }
   .msg.user[data-source='tool_results'] {
-    border-left-color: var(--border);
+    border-left-color: var(--tr-outline-variant);
   }
   .msg.assistant {
-    border-left: 4px solid var(--ok);
+    border-left: 4px solid var(--tr-success);
   }
   header {
     display: flex;
@@ -311,12 +318,12 @@
   }
   .thinking {
     margin: 4px 0;
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
   }
   .thinking .plain {
     font-style: italic;
     padding: 4px 0 4px 10px;
-    border-left: 2px solid var(--border);
+    border-left: 2px solid var(--tr-outline-variant);
   }
   footer {
     display: flex;
@@ -331,33 +338,39 @@
   }
   .card {
     padding: 0;
-    border-left: 4px solid var(--ok);
+    border-left: 4px solid var(--tr-success);
   }
   .card.bad {
-    border-left-color: var(--err);
+    border-left-color: var(--tr-danger);
   }
   .card.hook {
-    border-left-color: var(--warn);
+    border-left-color: var(--tr-warning);
   }
   .card.hook.bad {
-    border-left-color: var(--err);
+    border-left-color: var(--tr-danger);
   }
   .card.compaction {
-    border-left-color: var(--accent);
+    border-left-color: var(--tr-primary);
   }
   .head {
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-items: center;
     width: 100%;
     border: 0;
     background: none;
+    color: inherit;
+    font: inherit;
     text-align: left;
     padding: 6px 10px;
     flex-wrap: wrap;
   }
-  .head.static {
-    cursor: default;
+  button.head {
+    cursor: pointer;
+  }
+  button.head:focus-visible {
+    outline: 2px solid var(--tr-primary);
+    outline-offset: -2px;
   }
   .title {
     font-weight: 600;
@@ -366,18 +379,8 @@
   .kindname {
     font-size: 11px;
   }
-  .status {
+  .head :global(.status) {
     margin-left: auto;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-  }
-  .status[data-state='ok'] {
-    color: var(--ok);
-  }
-  .status[data-state='error'] {
-    color: var(--err);
   }
   .body,
   details {
@@ -391,7 +394,7 @@
   }
   summary {
     cursor: pointer;
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
   }
   .perm {
     margin: 0;
@@ -400,7 +403,7 @@
   .out {
     margin: 0;
     padding: 6px 8px;
-    background: var(--code-bg);
+    background: var(--tr-surface-container);
     border-radius: 4px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -408,19 +411,13 @@
     overflow: auto;
   }
   .out.err {
-    color: var(--err);
+    color: var(--tr-danger);
   }
   .cmd {
     overflow-wrap: anywhere;
   }
-  .link {
+  .body > :global(.link) {
     justify-self: start;
-    border: 0;
-    background: none;
-    color: var(--accent-link);
-    padding: 0;
-    font-size: 12px;
-    text-decoration: underline;
   }
   .line {
     margin: 0;
@@ -428,26 +425,18 @@
     font-size: 13px;
   }
   .line.turn {
-    color: var(--muted);
-    border-bottom: 1px dashed var(--border);
+    color: var(--tr-on-surface-variant);
+    border-bottom: 1px dashed var(--tr-outline-variant);
     padding-bottom: 8px;
   }
   .line.resumed {
     text-align: center;
   }
-  .chip {
-    display: inline-block;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 0 6px;
-    margin-right: 4px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--muted);
+  .line :global(.chip) {
+    margin-right: var(--tr-space-1);
   }
   .note {
-    background: var(--code-bg);
+    background: var(--tr-surface-container);
   }
   .kv {
     display: grid;
@@ -456,7 +445,7 @@
     margin: 4px 0 0;
   }
   .kv dt {
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
   }
   .kv dd {
     margin: 0;
@@ -467,10 +456,10 @@
     padding-left: 18px;
   }
   .ok {
-    color: var(--ok);
+    color: var(--tr-success);
   }
   .bad-text {
-    color: var(--err);
+    color: var(--tr-danger);
   }
   @media (max-width: 600px) {
     .item {

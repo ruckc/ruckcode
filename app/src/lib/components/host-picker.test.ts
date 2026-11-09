@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import type { ComponentProps } from 'svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import HostPicker from './HostPicker.svelte';
@@ -31,13 +31,16 @@ describe('HostPicker', () => {
     render(HostPicker, props());
     expect(screen.getByRole('radio', { name: 'WSL2' })).toHaveAttribute('aria-checked', 'true');
     const select = await screen.findByRole('combobox', { name: 'WSL distro' });
-    await screen.findByRole('option', { name: 'Ubuntu-24.04' });
+    // the default distro is selected
+    await waitFor(() => expect(select).toHaveTextContent('Ubuntu-24.04'));
+    await fireEvent.click(select);
+    // the popover is never shown in jsdom, hence `hidden`
+    const opt = (name: string | RegExp) => screen.getByRole('option', { name, hidden: true });
     // no default/running/stopped noise in the list
-    expect(screen.getByRole('option', { name: 'Debian' })).toBeInTheDocument();
-    expect((select as HTMLSelectElement).value).toBe('Ubuntu-24.04'); // the default distro
-    expect(screen.getByRole('option', { name: /Alpine.*WSL1/ })).toBeDisabled();
-    expect(screen.getByRole('option', { name: /docker-desktop/ })).toBeDisabled();
-    expect(screen.getByRole('option', { name: /Debian/ })).not.toBeDisabled();
+    expect(opt('Debian')).toBeInTheDocument();
+    expect(opt(/Alpine.*WSL1/)).toHaveAttribute('aria-disabled', 'true');
+    expect(opt(/docker-desktop/)).toHaveAttribute('aria-disabled', 'true');
+    expect(opt(/Debian/)).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('installs the bundled rc automatically and then shows nothing', async () => {

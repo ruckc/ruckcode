@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, Switch } from '@ruckc/truss-ui';
   import type { UpdateController } from '../state/updates.svelte';
 
   let { updates }: { updates: UpdateController } = $props();
@@ -29,14 +30,11 @@
 </script>
 
 <section aria-label="Updates">
-  <label class="row">
-    <input
-      type="checkbox"
-      checked={updates.auto}
-      onchange={(e) => updates.setAuto(e.currentTarget.checked)}
-    />
-    <span>Automatically download updates</span>
-  </label>
+  <Switch
+    label="Automatically download updates"
+    checked={updates.auto}
+    onchange={(on) => updates.setAuto(on)}
+  />
   <p class="muted">
     ruckcode checks for a new version at startup and every six hours. Downloaded updates are
     installed only when you choose Restart. With this off, you are asked before anything is
@@ -47,31 +45,30 @@
     <p class="muted">Last checked {new Date(updates.lastChecked).toLocaleString()}.</p>
   {/if}
   {#if updates.phase === 'ready' || updates.phase === 'installing'}
-    <button
-      type="button"
-      class="primary"
+    <Button
       disabled={updates.phase === 'installing' || updates.busy}
       title={updates.busy ? 'Waiting for the agent to finish its turn' : undefined}
       onclick={() => void updates.restartNow()}
-      >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</button
+      >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</Button
     >
   {:else if updates.phase === 'available'}
-    <button type="button" class="primary" onclick={() => void updates.download()}
-      >Download v{updates.version}</button
-    >
+    <Button onclick={() => void updates.download()}>Download v{updates.version}</Button>
   {:else}
-    <button
-      type="button"
+    <Button
+      variant="outlined"
       disabled={updates.phase === 'checking' || updates.phase === 'downloading'}
-      onclick={() => void updates.check(true)}>Check for updates</button
+      onclick={() => void updates.check(true)}>Check for updates</Button
     >
   {/if}
 </section>
 
 <style>
-  .row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+  section {
+    display: grid;
+    gap: var(--tr-space-2);
+    justify-items: start;
+  }
+  p {
+    margin: 0;
   }
 </style>

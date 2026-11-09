@@ -89,7 +89,7 @@ describe('KeysTab', () => {
 });
 
 describe('SettingsDialog', () => {
-  it('lists providers, hands off to the wizard, switches tabs with arrows and closes on Escape', async () => {
+  it('lists providers, hands off to the wizard, switches tabs with arrows and closes', async () => {
     const api = new FakeSetup({ delayMs: 0 });
     let closed = false;
     let added = false;
@@ -102,9 +102,11 @@ describe('SettingsDialog', () => {
     expect(screen.queryByText('How should ruckcode authenticate?')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add provider…' }));
     expect(added).toBe(true);
+    tab.focus();
     await fireEvent.keyDown(tab, { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: 'API keys' })).toHaveAttribute('aria-selected', 'true');
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    // Escape closes the native <dialog> (covered in e2e); the close button takes the same path.
+    await fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
     expect(closed).toBe(true);
   });
 });
