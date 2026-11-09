@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { svelteTesting } from '@testing-library/svelte/vite';
@@ -12,6 +13,15 @@ export default defineConfig({
     }),
     svelteTesting()
   ],
+  resolve: {
+    // See src/lib/monaco-stub.ts: diffs are drawn without Monaco, keep it out of the bundle.
+    alias: [
+      {
+        find: /^monaco-editor(\/.*)?$/,
+        replacement: fileURLToPath(new URL('./src/lib/monaco-stub.ts', import.meta.url))
+      }
+    ]
+  },
   clearScreen: false,
   // Tauri expects a fixed dev port (see crates/ruckcode-app/tauri.conf.json devUrl).
   server: { port: 5173, strictPort: true },
