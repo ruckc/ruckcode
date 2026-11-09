@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Button, Callout } from '@ruckc/truss-ui';
   import AskDialog from '../lib/components/AskDialog.svelte';
   import ChatView from '../lib/components/ChatView.svelte';
   import Composer from '../lib/components/Composer.svelte';
@@ -299,15 +300,19 @@
       onmode={(id) => chat.setMode(id)}
       onconfig={(id, v) => chat.setConfig(id, v)}
       menu={[
-        { label: 'New session', onclick: () => void chat.newSession(), disabled: !chat.connected },
-        { label: 'Open project or session…', onclick: () => (sessionsOpen = true) },
-        'sep',
-        { label: 'Transcripts', onclick: () => void openTranscripts() },
-        { label: 'Settings', onclick: () => void openSettings() },
+        {
+          label: 'New session',
+          onselect: () => void chat.newSession(),
+          disabled: !chat.connected
+        },
+        { label: 'Open project or session…', onselect: () => (sessionsOpen = true) },
+        { divider: true },
+        { label: 'Transcripts', onselect: () => void openTranscripts() },
+        { label: 'Settings', onselect: () => void openSettings() },
         ...(chat.connected
           ? [
-              'sep' as const,
-              { label: 'Disconnect', onclick: () => chat.disconnect(), danger: true }
+              { divider: true as const },
+              { label: 'Disconnect', onselect: () => chat.disconnect(), danger: true }
             ]
           : [])
       ]}
@@ -318,21 +323,20 @@
     {/if}
 
     {#if mode === 'none'}
-      <p class="banner">
+      <Callout intent="primary">
         No agent host available. Run the desktop app (<code>mise run app:dev</code>), or open this
         page with <code>?mock=1</code> for a scripted demo agent.
-      </p>
+      </Callout>
     {/if}
     {#if chat.status === 'lost'}
-      <div class="banner error" role="alert">
-        <span>{chat.error}</span>
-        <button class="primary" onclick={() => chat.reconnect()}>Reconnect</button>
-      </div>
+      <Callout intent="danger">
+        {chat.error}
+        {#snippet actions()}
+          <Button onclick={() => chat.reconnect()}>Reconnect</Button>
+        {/snippet}
+      </Callout>
     {:else if chat.error}
-      <div class="banner error" role="alert">
-        <span>{chat.error}</span>
-        <button onclick={() => chat.dismissError()}>Dismiss</button>
-      </div>
+      <Callout intent="danger" onclose={() => chat.dismissError()}>{chat.error}</Callout>
     {/if}
 
     {#if view === 'transcripts' && transcripts}
@@ -355,7 +359,7 @@
       <div class="welcome">
         {#if chat.connected}
           <p class="muted">No session is open.</p>
-          <button class="primary" onclick={() => chat.newSession()}>New session</button>
+          <Button onclick={() => chat.newSession()}>New session</Button>
         {:else if chat.status === 'lost'}
           <p class="muted">The agent is not running. Reconnect to continue.</p>
         {:else}
@@ -478,10 +482,8 @@
   .planp {
     min-height: 0;
     overflow-y: auto;
-  }
-  .planp {
-    border-left: 1px solid var(--border);
-    background: var(--surface);
+    border-left: 1px solid var(--tr-outline-variant);
+    background: var(--tr-surface-container-low);
   }
   .main {
     display: flex;
@@ -489,32 +491,19 @@
     min-width: 0;
     min-height: 0;
   }
-  .banner {
-    margin: 0;
-    padding: 6px 12px;
-    background: var(--code-bg);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .banner.error {
-    color: var(--err);
-  }
   .welcome {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--tr-space-2);
   }
   .start {
     width: min(460px, 94vw);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface);
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-lg);
+    background: var(--tr-surface-container-low);
   }
   @media (max-width: 900px) {
     .shell.with-plan {

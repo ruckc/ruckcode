@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolItem } from '../state/reducer';
 import ChatView from './ChatView.svelte';
 import Composer from './Composer.svelte';
-import DiffView from './DiffView.svelte';
-import Markdown from './Markdown.svelte';
+import { Markdown } from '@ruckc/truss-markdown';
+import DiffPanel from './DiffPanel.svelte';
 import ToolCard from './ToolCard.svelte';
 
 const tool = (over: Partial<ToolItem> = {}): ToolItem => ({
@@ -24,63 +24,78 @@ const tool = (over: Partial<ToolItem> = {}): ToolItem => ({
 describe('ToolCard', () => {
   it('starts collapsed when quietly completed, then truncates output and shows raw input', async () => {
     render(ToolCard, { tool: tool() });
-    expect(screen.queryByLabelText('Tool output')).toBeNull();
+    expect(screen.queryByLabelText('Output')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: /Run tests/ }));
     expect(screen.getByText('src/a.rs:4')).toBeInTheDocument();
-    const out = screen.getByLabelText('Tool output');
+    const out = screen.getByLabelText('Output');
     expect(out.textContent).toContain('line 11');
     expect(out.textContent).not.toContain('line 12');
     await fireEvent.click(screen.getByRole('button', { name: /Show all \(18 more lines\)/ }));
     expect(out.textContent).toContain('line 29');
-    await fireEvent.click(screen.getByRole('button', { name: 'Show input' }));
-    expect(screen.getByLabelText('Tool input').textContent).toContain('"command": "cargo test"');
+    expect(screen.getByLabelText('Input').textContent).toContain('"command": "cargo test"');
   });
 
   it('shows running and failed calls open, with status text', () => {
     const { unmount } = render(ToolCard, { tool: tool({ status: 'in_progress' }) });
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByLabelText('Tool output')).toBeInTheDocument();
+    expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Output')).toBeInTheDocument();
     unmount();
     render(ToolCard, { tool: tool({ status: 'failed' }) });
-    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.getAllByText('Failed').length).toBeGreaterThan(0);
   });
 
-  it('renders diffs and toggles side by side', async () => {
+  it('keeps the status and kind on the card for tests and styling', () => {
+    render(ToolCard, { tool: tool({ status: 'failed' }) });
+    const card = screen.getByTestId('tool-card');
+    expect(card).toHaveAttribute('data-status', 'failed');
+    expect(card).toHaveAttribute('data-kind', 'execute');
+  });
+
+  it('renders diffs open', () => {
     render(ToolCard, {
       tool: tool({
         output: '',
         diffs: [{ path: 'a.rs', oldText: 'a\nb\n', newText: 'a\nc\n' }]
       })
     });
-    expect(screen.getByRole('group', { name: 'Diff of a.rs' })).toBeInTheDocument();
-    expect(document.querySelectorAll('tr.add')).toHaveLength(1);
-    await fireEvent.click(screen.getByLabelText('side by side'));
-    expect(document.querySelector('table.split')).not.toBeNull();
-    expect(document.querySelectorAll('td.add')).toHaveLength(1);
-    expect(document.querySelectorAll('td.del')).toHaveLength(1);
+    expect(screen.getByRole('group', { name: 'Diff: a.rs' })).toBeInTheDocument();
+    expect(screen.getByTestId('summary')).toHaveTextContent('+1');
   });
 });
 
-describe('DiffView', () => {
+describe('DiffPanel', () => {
   it('shows counts and a new-file tag', () => {
-    render(DiffView, { diff: { path: 'n.txt', oldText: null, newText: 'x\ny\n' } });
+    render(DiffPanel, { diff: { path: 'n.txt', oldText: null, newText: 'x\ny\n' } });
     expect(screen.getByText('new file')).toBeInTheDocument();
-    expect(screen.getByText('+2')).toBeInTheDocument();
-    expect(screen.getByText('-0')).toBeInTheDocument();
+    expect(screen.getByTestId('summary')).toHaveTextContent('+2');
+  });
+
+  it('renders stored unified-diff text', () => {
+    render(DiffPanel, {
+      patch: { path: 'a.rs', text: '--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n' }
+    });
+    expect(screen.getByRole('group', { name: 'Diff: a.rs' })).toBeInTheDocument();
+    expect(screen.queryByText('new file')).toBeNull();
   });
 });
 
-describe('Markdown', () => {
-  it('renders sanitized markdown and adds a working copy button to code blocks', async () => {
+describe('Markdown (truss-markdown)', () => {
+  it('renders markdown, shows script tags as text and offers a working copy button', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     render(Markdown, { text: '**hi** <script>x()</script>\n\n```ts\nconst a = 1;\n```' });
     expect(document.querySelector('strong')?.textContent).toBe('hi');
     expect(document.querySelector('script')).toBeNull();
-    const btn = await screen.findByRole('button', { name: 'Copy code' });
-    await fireEvent.click(btn);
-    expect(writeText).toHaveBeenCalledWith('const a = 1;\n');
-    await vi.waitFor(() => expect(btn.textContent).toBe('Copied'));
+    expect(document.body.textContent).toContain('<script>x()</script>');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Copy code' }));
+    expect(writeText).toHaveBeenCalledWith('const a = 1;');
+    await vi.waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Copied'));
+  });
+
+  it('never makes a link out of a javascript: URL', () => {
+    render(Markdown, { text: '[x](javascript:alert(1)) [ok](https://example.com)' });
+    const links = [...document.querySelectorAll('a')];
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://example.com']);
   });
 });
 
@@ -98,9 +113,10 @@ describe('ChatView', () => {
       loading: false
     });
     expect(screen.getByTestId('user-msg')).toHaveTextContent('hello');
-    expect(screen.getByText('Reasoning')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Show reasoning/ })).toBeInTheDocument();
     expect(screen.getByTestId('assistant-msg')).toHaveTextContent('answer');
-    expect(screen.getByRole('status')).toHaveTextContent('Careful details');
+    expect(screen.getByRole('alert')).toHaveTextContent('Careful');
+    expect(screen.getByRole('alert')).toHaveTextContent('details');
     expect(screen.getByTestId('turn-end')).toHaveTextContent('Cancelled');
     expect(screen.getByTestId('turn-end')).toHaveTextContent('cancelled');
   });

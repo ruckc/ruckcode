@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { tick } from 'svelte';
-  import type { ChatItem } from '../state/reducer';
-  import Markdown from './Markdown.svelte';
-  import ToolCard from './ToolCard.svelte';
-
   import { onDestroy } from 'svelte';
+  import { ChatMessage, ChatStatus, ChatThread } from '@ruckc/truss-chat';
+  import { Button, Callout } from '@ruckc/truss-ui';
+  import type { ChatItem } from '../state/reducer';
   import { rateWaitText, type RateWait } from '../state/ratelimit';
+  import ToolCard from './ToolCard.svelte';
 
   let {
     items,
@@ -26,26 +25,6 @@
   const timer = setInterval(() => (now = Date.now()), 250);
   onDestroy(() => clearInterval(timer));
 
-  let scroller: HTMLElement | undefined = $state();
-  let stick = true;
-
-  function onscroll() {
-    if (!scroller) return;
-    stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
-  }
-
-  // Follow the stream, unless the reader scrolled up.
-  $effect(() => {
-    void items.length;
-    const last = items.at(-1);
-    if (last && 'text' in last) void last.text;
-    if (last && last.kind === 'tool') void last.output;
-    if (stick)
-      tick().then(() => {
-        if (scroller) scroller.scrollTop = scroller.scrollHeight;
-      });
-  });
-
   const reasons: Record<string, string> = {
     end_turn: 'Turn complete',
     cancelled: 'Cancelled',
@@ -55,39 +34,40 @@
     rate_limited: 'Stopped: rate limited (resume after the reset)',
     error: 'Turn failed'
   };
+
+  // TODO(truss-ui#139): Callout takes no attributes/role, hence the wrapper div on notices.
+  /** truss-ui intents for the agent's notice severities. */
+  const intents = { error: 'danger', warning: 'warning' } as const;
+  const intentOf = (severity: string) => intents[severity as keyof typeof intents] ?? 'primary';
 </script>
 
-<div
-  class="chat"
-  bind:this={scroller}
-  {onscroll}
-  role="log"
-  aria-live="polite"
-  aria-relevant="additions"
-  aria-label="Conversation"
-  aria-busy={running || loading}
->
+<ChatThread label="Conversation" aria-busy={running || loading} class="thread">
   {#if loading}<p class="muted center">Loading history…</p>{/if}
   {#each items as item, i (i)}
     {#if item.kind === 'user'}
-      <div class="msg user" data-testid="user-msg">{item.text}</div>
+      <ChatMessage role="user" text={item.text} data-testid="user-msg" />
     {:else if item.kind === 'assistant'}
-      <div class="msg assistant" data-testid="assistant-msg"><Markdown text={item.text} /></div>
+      <ChatMessage
+        role="assistant"
+        text={item.text}
+        streaming={running && i === items.length - 1}
+        data-testid="assistant-msg"
+      />
     {:else if item.kind === 'thought'}
-      <details class="thought">
-        <summary>Reasoning</summary>
-        <div class="thought-body">{item.text}</div>
-      </details>
+      <ChatMessage
+        role="assistant"
+        label="Reasoning"
+        reasoning={item.text}
+        streaming={running && i === items.length - 1}
+        data-testid="thought"
+      />
     {:else if item.kind === 'tool'}
       <ToolCard tool={item} />
     {:else if item.kind === 'notice'}
-      <div
-        class="notice"
-        data-severity={item.severity}
-        role={item.severity === 'error' ? 'alert' : 'status'}
-      >
-        <span class="sev">{item.severity}</span>
-        <span><strong>{item.title}</strong>{item.description ? ` ${item.description}` : ''}</span>
+      <div data-severity={item.severity} role={item.severity === 'error' ? undefined : 'status'}>
+        <Callout intent={intentOf(item.severity)} title={item.title}>
+          {item.description}
+        </Callout>
       </div>
     {:else}
       <div class="turn-end" data-reason={item.stopReason} data-testid="turn-end">
@@ -97,136 +77,47 @@
     {/if}
   {/each}
   {#if rateWait}
-    <div class="ratelimit" role="status" data-testid="rate-wait">
-      <span>{rateWaitText(rateWait, now)}</span>
-      {#if oncancel}<button onclick={oncancel} aria-label="Cancel the wait">Cancel</button>{/if}
-    </div>
+    <ChatStatus variant="progress" label={rateWaitText(rateWait, now)} data-testid="rate-wait">
+      {#if oncancel}
+        <Button size="sm" variant="outlined" aria-label="Cancel the wait" onclick={oncancel}>
+          Cancel
+        </Button>
+      {/if}
+    </ChatStatus>
   {:else if running}
-    <div class="working muted" aria-hidden="true"><span class="pulse"></span> working…</div>
+    <ChatStatus variant="progress" label="Working…" aria-hidden="true" />
   {/if}
-</div>
+</ChatThread>
 
 <style>
-  .chat {
+  :global(.thread) {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
-    padding: 12px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    align-items: flex-start;
-  }
-  .chat > :global(*) {
-    max-width: min(860px, 100%);
   }
   .center {
-    align-self: center;
-  }
-  .ratelimit {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    padding: 6px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    font-variant-numeric: tabular-nums;
-  }
-  .msg {
-    padding: 6px 12px;
-    border-radius: 10px;
-  }
-  .msg.user {
-    background: var(--accent);
-    color: var(--accent-text);
-    align-self: flex-end;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .msg.assistant {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    width: 100%;
-  }
-  .thought {
-    color: var(--muted);
-    width: 100%;
-  }
-  .thought summary {
-    cursor: pointer;
-    font-size: 12px;
-  }
-  .thought-body {
-    font-style: italic;
-    white-space: pre-wrap;
-    padding: 2px 0 2px 12px;
-    border-left: 2px solid var(--border);
-  }
-  .notice {
-    display: flex;
-    gap: 8px;
-    align-items: baseline;
-    width: 100%;
-    padding: 4px 10px;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    background: var(--code-bg);
-    font-size: 12.5px;
-  }
-  .sev {
-    text-transform: uppercase;
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-  .notice[data-severity='warning'] {
-    border-color: var(--warn);
-  }
-  .notice[data-severity='warning'] .sev {
-    color: var(--warn);
-  }
-  .notice[data-severity='error'] {
-    border-color: var(--err);
-  }
-  .notice[data-severity='error'] .sev {
-    color: var(--err);
+    text-align: center;
   }
   .turn-end {
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-items: center;
-    width: 100%;
-    color: var(--muted);
-    font-size: 11.5px;
+    color: var(--tr-on-surface-variant);
+    font-size: var(--tr-text-xs);
   }
   .turn-end::before,
   .turn-end::after {
     content: '';
     flex: 1;
     height: 1px;
-    background: var(--border);
+    background: var(--tr-outline-variant);
   }
   .turn-end[data-reason='cancelled'],
   .turn-end[data-reason='max_tokens'],
   .turn-end[data-reason='max_turn_requests'] {
-    color: var(--warn);
+    color: var(--tr-warning);
   }
   .turn-end[data-reason='refusal'],
   .turn-end[data-reason='error'] {
-    color: var(--err);
-  }
-  .pulse {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--accent);
-    animation: pulse 1.2s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    50% {
-      opacity: 0.25;
-    }
+    color: var(--tr-danger);
   }
 </style>

@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { Button, MenuButton, ProgressBar, Select } from '@ruckc/truss-ui';
+  import type { MenuEntry } from '@ruckc/truss-ui';
   import type { ChatModel } from '../state/reducer';
-  import Icon from './Icon.svelte';
-  import Menu, { type MenuItem } from './Menu.svelte';
 
   let {
     model,
@@ -30,8 +30,10 @@
     onmode: (id: string) => void;
     onconfig: (id: string, value: string) => void;
     /** The overflow menu: rarely used actions. */
-    menu: (MenuItem | 'sep')[];
+    menu: MenuEntry[];
   } = $props();
+
+  // TODO(truss-ui#148): this is a meter (role=meter, valuetext), not task progress.
   const modelOpt = $derived(
     model?.configOptions.find((o) => o.id === 'model' || o.category === 'model')
   );
@@ -44,83 +46,80 @@
 
 <header class="top">
   {#if view !== 'chat'}
-    <button
-      type="button"
-      class="icon ghost"
+    <Button
+      variant="minimal"
+      intent="neutral"
+      icon="arrow-left"
       aria-label="Back to chat"
       title="Back to chat"
-      onclick={onback}><Icon name="back" /></button
-    >
+      onclick={onback}
+    />
     <strong class="title">Transcripts</strong>
   {:else}
-    <button
-      type="button"
-      class="sessions ghost"
+    <Button
+      variant="minimal"
+      intent="neutral"
+      icon="folder"
+      class="sessions"
       aria-label="Projects and sessions"
       title="Open a project or session"
       onclick={onsessions}
     >
-      <Icon name="folder" />
       <strong class="title" {title}>{title}</strong>
       {#if project}<span class="muted proj">{project}</span>{/if}
-    </button>
+    </Button>
   {/if}
   <span class="spacer"></span>
   {#if model && connected && view === 'chat'}
     {#if model.modes.length}
-      <select
-        aria-label="Mode"
-        title="Mode"
-        value={model.currentModeId ?? ''}
+      <Select
+        ariaLabel="Mode"
+        size="sm"
         {disabled}
-        onchange={(e) => onmode(e.currentTarget.value)}
-      >
-        {#each model.modes as m (m.id)}
-          <option value={m.id} title={m.description}>{m.name}</option>
-        {/each}
-      </select>
+        value={model.currentModeId ?? ''}
+        options={model.modes.map((m) => ({
+          value: m.id,
+          label: m.name,
+          description: m.description
+        }))}
+        onchange={(id) => onmode(id)}
+      />
     {/if}
     {#if modelOpt}
-      <select
-        aria-label="Model"
-        title={modelOpt.name}
-        value={modelOpt.currentValue}
+      <Select
+        ariaLabel="Model"
+        size="sm"
         {disabled}
-        onchange={(e) => onconfig(modelOpt.id, e.currentTarget.value)}
-      >
-        {#each modelOpt.options as o (o.value)}
-          <option value={o.value}>{o.name}</option>
-        {/each}
-      </select>
+        value={modelOpt.currentValue}
+        options={modelOpt.options.map((o) => ({ value: o.value, label: o.name }))}
+        onchange={(v) => onconfig(modelOpt.id, v)}
+      />
     {/if}
     {#if model.usage}
       <div
         class="usage"
-        role="meter"
-        aria-label="Context window usage"
-        aria-valuemin={0}
-        aria-valuemax={model.usage.size}
-        aria-valuenow={model.usage.used}
-        aria-valuetext={`${model.usage.used} of ${model.usage.size} tokens`}
         title={`Context: ${model.usage.used.toLocaleString()} / ${model.usage.size.toLocaleString()} tokens`}
       >
-        <div class="bar">
-          <div class="fill" class:hot={pct >= 80} style:width={`${pct}%`}></div>
-        </div>
+        <ProgressBar
+          value={pct}
+          size="sm"
+          intent={pct >= 80 ? 'danger' : 'primary'}
+          label="Context window usage"
+        />
       </div>
     {/if}
   {/if}
-  <Menu label="More" items={menu} />
+  <MenuButton label="More" iconOnly variant="minimal" intent="neutral" align="end" items={menu} />
 </header>
 
 <style>
   .top {
     display: flex;
-    gap: 12px;
+    gap: var(--tr-space-3);
     align-items: center;
-    padding: 6px 12px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    padding: var(--tr-space-1) var(--tr-space-3);
+    border-bottom: 1px solid var(--tr-outline-variant);
+    background: var(--tr-surface-container-low);
   }
   .title {
     overflow: hidden;
@@ -128,20 +127,12 @@
     white-space: nowrap;
     max-width: 30ch;
   }
-  .sessions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+  .top :global(.sessions) {
     min-width: 0;
     max-width: 60%;
   }
-  .sessions :global(svg) {
-    width: 16px;
-    height: 16px;
-    flex: none;
-  }
   .proj {
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -150,23 +141,14 @@
     flex: 1;
   }
   .usage {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    font-size: 12px;
+    width: 120px;
   }
-  .bar {
-    width: 70px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--border);
+  /* The meter's caption is the accessible name; the bar alone is enough visually. */
+  .usage :global(.meta) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
     overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    background: var(--accent);
-  }
-  .fill.hot {
-    background: var(--err);
+    clip-path: inset(50%);
   }
 </style>
