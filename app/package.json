@@ -57,7 +57,8 @@
   },
   "pnpm": {
     "overrides": {
-      "minimatch": "^11.0.5"
+      "minimatch": "^11.0.5",
+      "dompurify": "^3.4.17"
     }
   }
 }
