@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { Button, Callout, EmptyState, Input, Select, Tabs, Tag } from '@ruckc/truss-ui';
   import { formatBytes, formatDuration, formatTokens, relativeTime } from '../format';
   import type { TranscriptsApi, TranscriptTarget } from '../host/transcripts';
   import { TranscriptsController } from '../state/transcripts.svelte';
@@ -87,7 +88,31 @@
     setTimeout(() => (copyState = ''), 2500);
   }
 
-  const sorts = Object.keys(SORT_LABELS) as SortKey[];
+  const sortOptions = (Object.keys(SORT_LABELS) as SortKey[]).map((k) => ({
+    value: k,
+    label: SORT_LABELS[k]
+  }));
+  const modeOptions = $derived([
+    { value: '', label: 'All modes' },
+    ...ctl.modes.map((m) => ({ value: m, label: m }))
+  ]);
+  const modelOptions = $derived([
+    { value: '', label: 'All models' },
+    ...ctl.models.map((m) => ({ value: m, label: m }))
+  ]);
+  const tabs = [
+    { id: 'timeline', label: 'Timeline' },
+    { id: 'metrics', label: 'Metrics' }
+  ];
+  const copyLabel = $derived(
+    copyState === 'busy'
+      ? 'Preparing...'
+      : copyState === 'done'
+        ? 'Copied'
+        : copyState === 'failed'
+          ? 'Copy failed'
+          : 'Copy as markdown'
+  );
 </script>
 
 <div class="tv" class:has-detail={ctl.selectedId !== null}>
@@ -96,56 +121,67 @@
       <h2>Transcripts</h2>
       <span class="muted count" data-testid="count">{ctl.visible.length} of {ctl.items.length}</span
       >
-      <button type="button" class="small" onclick={() => ctl.refresh()} disabled={ctl.loading}
-        >Refresh</button
+      <Button
+        variant="outlined"
+        intent="neutral"
+        size="sm"
+        icon="refresh"
+        onclick={() => ctl.refresh()}
+        disabled={ctl.loading}>Refresh</Button
       >
     </div>
-    <input
+    <Input
       type="search"
-      class="search"
+      size="sm"
+      icon="search"
       placeholder="Search prompts, replies, tools, output"
       aria-label="Search transcripts"
       value={ctl.searchText}
       oninput={(e) => ctl.setSearch(e.currentTarget.value)}
     />
     <div class="controls">
-      <label>
-        <span class="muted">Sort</span>
-        <select aria-label="Sort by" bind:value={ctl.sort}>
-          {#each sorts as k (k)}<option value={k}>{SORT_LABELS[k]}</option>{/each}
-        </select>
-      </label>
-      <button
-        type="button"
-        class="small"
+      <Select
+        size="sm"
+        searchable={false}
+        ariaLabel="Sort by"
+        options={sortOptions}
+        value={ctl.sort}
+        onchange={(v) => (ctl.sort = v)}
+      />
+      <Button
+        variant="outlined"
+        intent="neutral"
+        size="sm"
+        icon={ctl.asc ? 'arrow-up' : 'arrow-down'}
         aria-label={ctl.asc ? 'Sort ascending' : 'Sort descending'}
         title={ctl.asc ? 'Ascending' : 'Descending'}
-        onclick={() => (ctl.asc = !ctl.asc)}>{ctl.asc ? '↑' : '↓'}</button
-      >
-      <label>
-        <span class="muted">Mode</span>
-        <select aria-label="Filter by mode" bind:value={ctl.mode}>
-          <option value="">All</option>
-          {#each ctl.modes as m (m)}<option value={m}>{m}</option>{/each}
-        </select>
-      </label>
-      <label>
-        <span class="muted">Model</span>
-        <select aria-label="Filter by model" bind:value={ctl.model}>
-          <option value="">All</option>
-          {#each ctl.models as m (m)}<option value={m}>{m}</option>{/each}
-        </select>
-      </label>
+        onclick={() => (ctl.asc = !ctl.asc)}
+      />
+      <Select
+        size="sm"
+        searchable={false}
+        ariaLabel="Filter by mode"
+        options={modeOptions}
+        value={ctl.mode}
+        onchange={(v) => (ctl.mode = v)}
+      />
+      <Select
+        size="sm"
+        ariaLabel="Filter by model"
+        options={modelOptions}
+        value={ctl.model}
+        onchange={(v) => (ctl.model = v)}
+      />
     </div>
 
     {#if ctl.error}
-      <p class="error" role="alert">{ctl.error}</p>
+      <Callout intent="danger">{ctl.error}</Callout>
     {/if}
 
     {#if searching}
       <section class="results" aria-label="Search results" aria-busy={ctl.searching}>
         {#if ctl.searchError}
-          <p class="error" role="alert">{ctl.searchError}</p>
+          <Callout intent="danger">{ctl.searchError}</Callout>
         {:else if ctl.searching}
           <p class="muted">Searching...</p>
         {:else if ctl.hits.length === 0}
@@ -164,7 +200,7 @@
                   onclick={() => openSession(h.id, h.recordIndex)}
                 >
                   <span class="hitmeta"
-                    ><span class="chip">{typeLabel(h.type)}</span> #{h.recordIndex} in
+                    ><Tag size="sm" class="chip">{typeLabel(h.type)}</Tag> #{h.recordIndex} in
                     <em>{titleOf(h.id)}</em></span
                   >
                   <span class="snippet">{h.snippet}</span>
@@ -191,7 +227,7 @@
             >
               <span class="prompt">{s.firstPrompt || '(no prompt)'}</span>
               <span class="meta muted">
-                <span class="chip">{s.mode}</span>
+                <Tag size="sm" class="chip">{s.mode}</Tag>
                 <span>{s.model}</span>
                 <span title={s.updatedAt}
                   >{relativeTime(s.updatedAt) || s.updatedAt.slice(0, 10)}</span
@@ -203,8 +239,8 @@
                 <span>{s.turns} turns</span>
                 <span>{s.toolCalls} tools</span>
                 {#if s.skippedLines > 0}
-                  <span class="warn" title="Unreadable lines were skipped"
-                    >{s.skippedLines} bad line{s.skippedLines === 1 ? '' : 's'}</span
+                  <Tag size="sm" intent="warning" title="Unreadable lines were skipped"
+                    >{s.skippedLines} bad line{s.skippedLines === 1 ? '' : 's'}</Tag
                   >
                 {/if}
               </span>
@@ -219,17 +255,28 @@
 
   <section class="detail" aria-label="Transcript detail">
     {#if ctl.selectedId === null}
-      <div class="empty muted">
-        <p>Select a transcript to see its timeline and metrics.</p>
+      <div class="empty">
+        <EmptyState
+          icon="file"
+          title="No transcript selected"
+          description="Select a transcript to see its timeline and metrics."
+        />
       </div>
     {:else if ctl.detailLoading}
       <p class="muted pad">Loading transcript...</p>
     {:else if ctl.detailError && !ctl.detail}
-      <p class="error pad" role="alert">{ctl.detailError}</p>
+      <div class="pad"><Callout intent="danger">{ctl.detailError}</Callout></div>
     {:else if ctl.detail}
       {@const d = ctl.detail}
       <header class="dhead">
-        <button type="button" class="small back" onclick={() => ctl.close()}>Back to list</button>
+        <Button
+          class="back"
+          variant="outlined"
+          intent="neutral"
+          size="sm"
+          icon="arrow-left"
+          onclick={() => ctl.close()}>Back to list</Button
+        >
         <div class="titles">
           <h2 title={d.meta.firstPrompt}>{d.meta.firstPrompt || d.meta.id}</h2>
           <p class="muted ids">
@@ -241,56 +288,47 @@
           </p>
         </div>
         <div class="actions">
-          <button type="button" class="primary" onclick={() => onresume(d.meta.id)}
-            >Resume session</button
+          <Button onclick={() => onresume(d.meta.id)}>Resume session</Button>
+          <Button
+            variant="outlined"
+            intent="neutral"
+            icon="copy"
+            onclick={copyMarkdown}
+            disabled={copyState === 'busy'}>{copyLabel}</Button
           >
-          <button type="button" onclick={copyMarkdown} disabled={copyState === 'busy'}>
-            {copyState === 'busy'
-              ? 'Preparing...'
-              : copyState === 'done'
-                ? 'Copied'
-                : copyState === 'failed'
-                  ? 'Copy failed'
-                  : 'Copy as markdown'}
-          </button>
         </div>
       </header>
       {#if d.skippedLines > 0}
-        <p class="banner" role="status" data-testid="skipped">
-          {d.skippedLines} unreadable line{d.skippedLines === 1 ? ' was' : 's were'} skipped (a truncated
-          or corrupt part of the file). The remaining records are shown.
-        </p>
+        <div class="banner" data-testid="skipped">
+          <Callout intent="warning">
+            {d.skippedLines} unreadable line{d.skippedLines === 1 ? ' was' : 's were'} skipped (a truncated
+            or corrupt part of the file). The remaining records are shown.
+          </Callout>
+        </div>
       {/if}
-      <div class="tabs" role="tablist" aria-label="Transcript views">
-        <button
-          type="button"
-          role="tab"
-          id="tab-timeline"
-          aria-selected={tab === 'timeline'}
-          aria-controls="panel-timeline"
-          onclick={() => (tab = 'timeline')}>Timeline</button
-        >
-        <button
-          type="button"
-          role="tab"
-          id="tab-metrics"
-          aria-selected={tab === 'metrics'}
-          aria-controls="panel-metrics"
-          onclick={() => (tab = 'metrics')}>Metrics</button
-        >
+      <div class="tabs">
+        <Tabs
+          label="Transcript views"
+          {tabs}
+          value={tab}
+          onchange={(v) => (tab = v as 'timeline' | 'metrics')}
+          panel={false}
+          controls={(id) => (id === tab ? 'transcript-panel' : undefined)}
+          tabId={(id) => `transcript-tab-${id}`}
+        />
         <span class="muted loaded" data-testid="loaded"
           >{d.records.length.toLocaleString()} of {d.total.toLocaleString()} records loaded</span
         >
       </div>
       {#if ctl.detailError}
-        <p class="error pad" role="alert">{ctl.detailError}</p>
+        <div class="pad"><Callout intent="danger">{ctl.detailError}</Callout></div>
       {/if}
       <div
         class="scroll"
         bind:this={scroller}
         role="tabpanel"
-        id={tab === 'timeline' ? 'panel-timeline' : 'panel-metrics'}
-        aria-labelledby={tab === 'timeline' ? 'tab-timeline' : 'tab-metrics'}
+        id="transcript-panel"
+        aria-labelledby={`transcript-tab-${tab}`}
         tabindex="-1"
       >
         {#if tab === 'timeline'}
@@ -305,11 +343,16 @@
           </ol>
           {#if !ctl.complete}
             <div class="more" bind:this={sentinel}>
-              <button type="button" disabled={ctl.loadingMore} onclick={() => ctl.loadMore()}>
+              <Button
+                variant="outlined"
+                intent="neutral"
+                disabled={ctl.loadingMore}
+                onclick={() => ctl.loadMore()}
+              >
                 {ctl.loadingMore
                   ? 'Loading...'
                   : `Load more (${ctl.remaining.toLocaleString()} remaining)`}
-              </button>
+              </Button>
             </div>
           {:else}
             <p class="muted end">End of transcript</p>
@@ -335,55 +378,47 @@
     grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   }
   .list {
-    border-right: 1px solid var(--border);
-    background: var(--surface);
+    border-right: 1px solid var(--tr-outline-variant);
+    background: var(--tr-surface-container-low);
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px;
-    gap: 8px;
+    padding: var(--tr-space-2);
+    gap: var(--tr-space-2);
   }
   .lhead {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    align-items: center;
+    gap: var(--tr-space-2);
   }
   h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: var(--tr-text-lg);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .count {
     margin-left: auto;
-    font-size: 12px;
-  }
-  .search {
-    width: 100%;
+    font-size: var(--tr-text-sm);
   }
   .controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 10px;
-    align-items: center;
-    font-size: 12px;
-  }
-  .controls label {
-    display: flex;
-    gap: 4px;
+    gap: var(--tr-space-2);
     align-items: center;
   }
-  .controls select {
-    max-width: 130px;
+  .controls :global(.tr-field) {
+    flex: 1 1 110px;
+    min-width: 0;
   }
   ul {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 6px;
+    gap: var(--tr-space-2);
   }
   .session,
   .hit {
@@ -391,12 +426,26 @@
     gap: 2px;
     width: 100%;
     text-align: left;
-    padding: 6px 8px;
-    background: var(--bg);
+    font: inherit;
+    color: var(--tr-on-surface);
+    padding: var(--tr-space-2);
+    background: var(--tr-surface);
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
+    cursor: pointer;
+  }
+  .session:hover,
+  .hit:hover {
+    background: var(--tr-surface-container);
+  }
+  .session:focus-visible,
+  .hit:focus-visible {
+    outline: 2px solid var(--tr-primary);
+    outline-offset: 1px;
   }
   .session[aria-current='true'] {
-    border-color: var(--accent);
-    background: var(--code-bg);
+    border-color: var(--tr-primary);
+    background: var(--tr-surface-container);
   }
   .prompt {
     font-weight: 600;
@@ -409,32 +458,19 @@
   .meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 2px 10px;
-    font-size: 12px;
-  }
-  .chip {
-    display: inline-block;
-    font-size: 11px;
-    padding: 0 6px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-  }
-  .warn {
-    color: var(--warn);
+    align-items: center;
+    gap: 2px var(--tr-space-3);
+    font-size: var(--tr-text-sm);
   }
   .hitmeta {
-    font-size: 12px;
-    color: var(--muted);
+    font-size: var(--tr-text-sm);
+    color: var(--tr-on-surface-variant);
   }
   .snippet {
     overflow-wrap: anywhere;
   }
   .pad {
-    padding: 8px;
-  }
-  .error {
-    color: var(--err);
-    margin: 0;
+    padding: var(--tr-space-2);
   }
   .detail {
     min-width: 0;
@@ -449,62 +485,46 @@
   }
   .dhead {
     display: flex;
-    gap: 12px;
+    gap: var(--tr-space-3);
     align-items: flex-start;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
+    padding: var(--tr-space-2) var(--tr-space-3);
+    border-bottom: 1px solid var(--tr-outline-variant);
     flex-wrap: wrap;
   }
-  .back {
+  .dhead :global(button.back) {
     display: none;
   }
   .titles {
     flex: 1;
     min-width: 200px;
   }
-  .titles h2 {
-    font-size: 17px;
-  }
   .ids {
     margin: 2px 0 0;
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
   }
   .actions {
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
   }
   .banner {
-    margin: 0;
-    padding: 6px 12px;
-    background: var(--code-bg);
-    border-bottom: 1px solid var(--border);
-    color: var(--warn);
+    padding: var(--tr-space-2) var(--tr-space-3) 0;
   }
   .tabs {
     display: flex;
-    gap: 4px;
+    gap: var(--tr-space-1);
     align-items: center;
-    padding: 6px 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .tabs [role='tab'] {
-    border-radius: 6px 6px 0 0;
-    border-bottom-color: transparent;
-  }
-  .tabs [role='tab'][aria-selected='true'] {
-    background: var(--code-bg);
-    border-color: var(--accent);
-    border-bottom-color: var(--code-bg);
+    padding: 0 var(--tr-space-3);
+    border-bottom: 1px solid var(--tr-outline-variant);
   }
   .loaded {
     margin-left: auto;
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
   }
   .scroll {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px 12px;
+    padding: var(--tr-space-2) var(--tr-space-3);
   }
   .timeline {
     list-style: none;
@@ -515,7 +535,7 @@
   .more,
   .end {
     text-align: center;
-    padding: 12px;
+    padding: var(--tr-space-3);
     margin: 0;
   }
   @media (max-width: 900px) {
@@ -528,8 +548,8 @@
     .tv:not(.has-detail) .detail {
       display: none;
     }
-    .back {
-      display: inline-block;
+    .dhead :global(button.back) {
+      display: inline-flex;
     }
   }
 </style>

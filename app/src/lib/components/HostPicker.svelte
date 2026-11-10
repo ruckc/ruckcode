@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { Button, Input, SegmentedControl, Select } from '@ruckc/truss-ui';
   import { getWsl } from '../host';
   import { versionMatches, type RcStatus, type WslApi, type WslDistro } from '../host/wsl';
   import type { ProjectHost } from '../state/projects';
@@ -188,62 +189,41 @@
 </script>
 
 <div class="hostpicker" data-rc={host === 'wsl' && distro ? rcState : undefined}>
-  <div class="seg" role="radiogroup" aria-label="Agent host">
-    {#each hosts as h (h.id)}
-      <button
-        type="button"
-        role="radio"
-        aria-checked={host === h.id}
-        class:on={host === h.id}
-        {disabled}
-        onclick={() => (host = h.id)}>{h.label}</button
-      >
-    {/each}
-  </div>
-
+  <SegmentedControl
+    label="Agent host"
+    size="sm"
+    fill
+    options={hosts.map((h) => ({ value: h.id, label: h.label }))}
+    bind:value={() => host, (v) => !disabled && (host = v as ProjectHost)}
+  />
   {#if host === 'subprocess'}
-    <label class="field">
-      <span class="muted">Path to the rc binary</span>
-      <input type="text" placeholder="/path/to/rc" bind:value={rcPath} {disabled} />
-    </label>
+    <Input label="Path to the rc binary" placeholder="/path/to/rc" bind:value={rcPath} {disabled} />
   {:else if host === 'wsl'}
     <div class="wsl">
       <div class="row">
-        <label class="grow">
-          <span class="muted">Distribution</span>
-          <select
-            aria-label="WSL distro"
+        <div class="grow">
+          <Select
+            label="Distribution"
+            ariaLabel="WSL distro"
             bind:value={distro}
             disabled={disabled || listing || !distros.length}
-          >
-            {#each distros as d (d.name)}
-              <option value={d.name} disabled={!d.selectable} title={d.reason ?? ''}>
-                {d.name}{d.reason ? ` - ${d.reason}` : ''}
-              </option>
-            {/each}
-          </select>
-        </label>
-        <button
-          type="button"
-          class="icon"
-          class:spin={listing}
-          disabled={listing}
+            options={distros.map((d) => ({
+              value: d.name,
+              label: `${d.name}${d.reason ? ` - ${d.reason}` : ''}`,
+              disabled: !d.selectable
+            }))}
+          />
+        </div>
+        <Button
+          variant="outlined"
+          icon="refresh"
+          loading={listing}
           aria-label="Refresh distros"
           title="Refresh distros"
           onclick={refresh}
-          ><svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg
-          ></button
-        >
+        />
       </div>
       {#if listError}<p class="err" role="alert">{listError}</p>{/if}
-
       {#if distro && (provisioning || checking || checkError || installError || (rc && !(rc.installed && matches)))}
         <div class="rc" role="status" aria-label="rc status" data-state={rcState}>
           {#if provisioning}
@@ -260,9 +240,9 @@
             >
           {/if}
           {#if !checking && !installing && (checkError || installError || (rc && !(rc.installed && matches)))}
-            <button type="button" onclick={reinstall}>
+            <Button type="button" size="sm" variant="outlined" onclick={reinstall}>
               {rc?.installed ? 'Reinstall rc' : 'Install rc'}
-            </button>
+            </Button>
           {/if}
         </div>
         {#if installError}
@@ -274,7 +254,6 @@
       {/if}
     </div>
   {/if}
-
   {#if host === 'wsl' && linux}
     <p class="linux" class:err={!linux.ok} aria-label="Linux path" data-ok={linux.ok}>
       {#if linux.ok}<span class="muted">Linux path:</span>
@@ -286,83 +265,44 @@
 <style>
   .hostpicker {
     display: grid;
-    gap: 6px;
-  }
-  .seg {
-    display: flex;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .seg button {
-    flex: 1;
-    border: 0;
-    border-radius: 0;
-    min-height: 28px;
-    padding: 0 6px;
-    background: var(--surface);
-  }
-  .seg button + button {
-    border-left: 1px solid var(--border);
-  }
-  .seg button.on {
-    background: var(--accent);
-    color: var(--accent-text);
-  }
-  .field,
-  label {
-    display: grid;
-    gap: 2px;
-    font-size: 12px;
+    gap: var(--tr-space-2);
   }
   .row {
     display: flex;
-    gap: 6px;
-    align-items: end;
+    gap: var(--tr-space-2);
+    align-items: flex-end;
   }
   .grow {
     flex: 1;
     min-width: 0;
   }
-  select,
-  input {
-    width: 100%;
-  }
   .wsl {
     display: grid;
-    gap: 6px;
+    gap: var(--tr-space-2);
   }
   .rc {
     display: flex;
-    gap: 6px;
+    gap: var(--tr-space-2);
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
   }
   .warn {
-    color: var(--warn);
+    color: var(--tr-warning);
   }
   .err {
-    color: var(--err);
+    color: var(--tr-danger);
     margin: 0;
-    font-size: 12px;
-  }
-  .spin svg {
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
+    font-size: var(--tr-text-sm);
   }
   .log {
     margin: 0;
-    padding: 6px;
-    font-size: 11px;
-    background: var(--code-bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    padding: var(--tr-space-2);
+    font-size: var(--tr-text-xs);
+    background: var(--tr-surface-container);
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 120px;
@@ -370,7 +310,7 @@
   }
   .linux {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
     word-break: break-all;
   }
 </style>

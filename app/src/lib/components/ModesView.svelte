@@ -1,10 +1,20 @@
 <script lang="ts">
+  import {
+    Badge,
+    Button,
+    Callout,
+    CheckboxGroup,
+    RadioGroup,
+    ReorderList,
+    Select,
+    Tag
+  } from '@ruckc/truss-ui';
   import { untrack } from 'svelte';
   import type { ModesApi, TemplateInfo } from '../host/modes';
   import type { SetupTarget } from '../host/setup';
   import { displayName, issuesAt } from '../modes/doc';
   import { ModesEditor } from '../state/modes.svelte';
-  import DiffText from './DiffText.svelte';
+  import { PatchText } from '@ruckc/truss-code/lite';
   import FlowDiagram from './FlowDiagram.svelte';
   import HooksEditor from './HooksEditor.svelte';
   import ModeForm from './ModeForm.svelte';
@@ -54,16 +64,48 @@
     }
   }
 
-  // ----- reordering by drag and drop -----
-  let dragFrom = $state<number | null>(null);
-  let dragOver = $state<number | null>(null);
-  function drop(to: number) {
-    if (dragFrom !== null) {
-      const id = editor.doc.modes[dragFrom]?.id;
-      if (id) editor.move(id, to);
+  const addOptions = $derived([
+    { value: 'blank', label: 'Blank mode' },
+    { value: 'duplicate', label: 'Duplicate selected', disabled: !editor.selectedMode },
+    {
+      group: 'Lifecycle templates',
+      options: fullTemplates.map((t) => ({
+        value: `full:${t.mode.id}`,
+        label: displayName(t.mode)
+      }))
+    },
+    {
+      group: 'Minimal templates',
+      options: minimalTemplates.map((t) => ({
+        value: `minimal:${t.mode.id}`,
+        label: displayName(t.mode)
+      }))
     }
-    dragFrom = dragOver = null;
-  }
+  ]);
+  const defaultOptions = $derived([
+    ...(editor.doc.modes.some((m) => m.id === editor.doc.defaultMode)
+      ? []
+      : [{ value: editor.doc.defaultMode, label: editor.doc.defaultMode || '(none)' }]),
+    ...editor.doc.modes.map((m) => ({ value: m.id, label: `${displayName(m)} (${m.id})` }))
+  ]);
+  const defaultError = $derived(
+    issuesAt(editor.issues, 'defaultMode')
+      .map((i) => i.message)
+      .join(' ') || undefined
+  );
+  const initOptions = $derived([
+    {
+      value: 'full',
+      label: `Full lifecycle (${fullTemplates.map((t) => t.mode.id).join(' → ')})`
+    },
+    {
+      value: 'minimal',
+      label: `Minimal (${minimalTemplates.map((t) => t.mode.id).join(' → ')})`
+    },
+    { value: 'subset', label: 'Choose which modes' }
+  ]);
+  const sevIntent = (s: string) =>
+    s === 'error' ? 'danger' : s === 'warning' ? 'warning' : 'neutral';
 
   const modeHasError = (i: number) =>
     issuesAt(editor.issues, `modes[${i}]`).some((x) => x.severity === 'error');
@@ -75,7 +117,7 @@
   }
 
   // ----- creating modes.toml -----
-  let initKind = $state<'full' | 'minimal' | 'subset'>('full');
+  let initKind = $state('full');
   let subset = $state<string[]>([]);
   let confirmOverwrite = $state(false);
   function create(force: boolean) {
@@ -92,15 +134,17 @@
   {#if editor.phase === 'loading'}
     <p class="muted pad" role="status">Loading modes...</p>
   {:else if editor.phase === 'error'}
-    <div class="pad">
-      <p class="errtext" role="alert">{editor.loadError}</p>
-      <button type="button" onclick={() => editor.load()}>Retry</button>
+    <div class="pad stack">
+      <Callout intent="danger">{editor.loadError}</Callout>
+      <div class="actions">
+        <Button variant="outlined" onclick={() => editor.load()}>Retry</Button>
+      </div>
     </div>
   {:else if !editor.editable}
     <div class="pad setup">
       {#if editor.status === 'broken'}
         <h2>modes.toml cannot be read</h2>
-        <p class="errtext" role="alert">{editor.view?.error}</p>
+        <Callout intent="danger">{editor.view?.error}</Callout>
         <p class="muted">
           Fix <code>{editor.view?.path}</code> by hand, then reload, or recreate it from a template (this
           overwrites the file).
@@ -113,61 +157,47 @@
           mise tasks (like <code>rc init</code>), or start from a blank file.
         </p>
       {/if}
-      {#if editor.problem}<p class="errtext" role="alert">{editor.problem}</p>{/if}
-      {#if editor.initialized}<p class="ok" role="status">{editor.initialized}</p>{/if}
-      <fieldset>
-        <legend>Template</legend>
-        <label class="check"
-          ><input type="radio" name="init-kind" value="full" bind:group={initKind} /> Full lifecycle
-          ({fullTemplates.map((t) => t.mode.id).join(' → ')})</label
-        >
-        <label class="check"
-          ><input type="radio" name="init-kind" value="minimal" bind:group={initKind} /> Minimal ({minimalTemplates
-            .map((t) => t.mode.id)
-            .join(' → ')})</label
-        >
-        <label class="check"
-          ><input type="radio" name="init-kind" value="subset" bind:group={initKind} /> Choose which modes</label
-        >
-        {#if initKind === 'subset'}
-          <ul class="plain subset" aria-label="Modes to create">
-            {#each fullTemplates as t (t.mode.id)}
-              <li>
-                <label class="check"
-                  ><input type="checkbox" value={t.mode.id} bind:group={subset} />
-                  <code>{t.mode.id}</code>
-                  <span class="muted">{t.mode.description}</span></label
-                >
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </fieldset>
+      {#if editor.problem}<Callout intent="danger">{editor.problem}</Callout>{/if}
+      {#if editor.initialized}<Callout intent="success" role="status">{editor.initialized}</Callout
+        >{/if}
+      <RadioGroup label="Template" options={initOptions} bind:value={initKind} />
+      {#if initKind === 'subset'}
+        <CheckboxGroup
+          label="Modes to create"
+          options={fullTemplates.map((t) => ({
+            value: t.mode.id,
+            label: t.mode.id,
+            description: t.mode.description
+          }))}
+          bind:value={subset}
+        />
+      {/if}
       <div class="actions">
         {#if editor.status === 'broken'}
           {#if confirmOverwrite}
-            <button
-              type="button"
-              class="danger"
+            <Button
+              intent="danger"
               disabled={editor.busy || (initKind === 'subset' && !subset.length)}
-              onclick={() => create(true)}>Overwrite modes.toml</button
+              onclick={() => create(true)}>Overwrite modes.toml</Button
             >
-            <button type="button" onclick={() => (confirmOverwrite = false)}>Cancel</button>
+            <Button variant="outlined" intent="neutral" onclick={() => (confirmOverwrite = false)}
+              >Cancel</Button
+            >
           {:else}
-            <button type="button" class="danger" onclick={() => (confirmOverwrite = true)}
-              >Recreate from template...</button
+            <Button variant="outlined" intent="danger" onclick={() => (confirmOverwrite = true)}
+              >Recreate from template...</Button
             >
           {/if}
-          <button type="button" onclick={() => editor.load()}>Reload</button>
+          <Button variant="outlined" intent="neutral" onclick={() => editor.load()}>Reload</Button>
         {:else}
-          <button
-            type="button"
-            class="primary"
+          <Button
             disabled={editor.busy || (initKind === 'subset' && !subset.length)}
             onclick={() => create(false)}
-            >{editor.busy ? 'Creating...' : 'Create modes.toml'}</button
+            >{editor.busy ? 'Creating...' : 'Create modes.toml'}</Button
           >
-          <button type="button" onclick={() => editor.startBlank()}>Start from a blank file</button>
+          <Button variant="outlined" intent="neutral" onclick={() => editor.startBlank()}
+            >Start from a blank file</Button
+          >
         {/if}
       </div>
     </div>
@@ -178,149 +208,123 @@
         <span class="muted path" title={editor.view?.path}>{editor.view?.path}</span>
       </div>
       <div class="status" aria-live="polite">
-        {#if editor.dirty}<span class="chip warn">Unsaved changes</span>{/if}
-        {#if editor.errors}<span class="chip err" data-testid="error-count"
-            >{editor.errors} error{editor.errors === 1 ? '' : 's'}</span
+        {#if editor.dirty}<Badge intent="warning">Unsaved changes</Badge>{/if}
+        {#if editor.errors}<Badge intent="danger" data-testid="error-count"
+            >{editor.errors} error{editor.errors === 1 ? '' : 's'}</Badge
           >{/if}
-        {#if editor.warnings}<span class="chip warn" data-testid="warning-count"
-            >{editor.warnings} warning{editor.warnings === 1 ? '' : 's'}</span
+        {#if editor.warnings}<Badge intent="warning" data-testid="warning-count"
+            >{editor.warnings} warning{editor.warnings === 1 ? '' : 's'}</Badge
           >{/if}
-        {#if !editor.errors && !editor.warnings && !editor.dirty}<span class="chip ok"
-            >No problems</span
+        {#if !editor.errors && !editor.warnings && !editor.dirty}<Badge intent="success"
+            >No problems</Badge
           >{/if}
       </div>
       <div class="actions">
-        <button
-          type="button"
+        <Button
+          variant="outlined"
+          intent="neutral"
           disabled={!editor.dirty || editor.busy}
-          onclick={() => editor.discard()}>Discard changes</button
+          onclick={() => editor.discard()}>Discard changes</Button
         >
-        <button
-          type="button"
-          class="primary"
+        <Button
           disabled={!editor.canReview}
           title={editor.errors ? 'Fix the errors first' : ''}
-          onclick={() => editor.review()}>Review &amp; save</button
+          onclick={() => editor.review()}>Review &amp; save</Button
         >
       </div>
     </header>
 
-    {#if editor.serverNote}<p class="note" role="status">{editor.serverNote}</p>{/if}
+    {#if editor.serverNote}<div class="banner" role="status">
+        <Callout intent="warning">{editor.serverNote}</Callout>
+      </div>{/if}
     {#if editor.step === 'saved' && !editor.dirty}
-      <div class="saved" role="status">
-        <span>
+      <div class="banner" role="status">
+        <Callout intent="success">
           {editor.savedChanged ? 'Saved' : 'Nothing changed in'} <code>{editor.savedPath}</code>.
           Mode changes apply to new sessions; running sessions keep the modes they started with.
-        </span>
-        {#if canReconnect}
-          <button type="button" onclick={() => onreconnect?.()}>Reconnect the agent now</button>
-        {/if}
+          {#snippet actions()}
+            {#if canReconnect}
+              <Button size="sm" variant="outlined" onclick={() => onreconnect?.()}
+                >Reconnect the agent now</Button
+              >
+            {/if}
+          {/snippet}
+        </Callout>
       </div>
     {/if}
 
     {#if editor.step === 'review'}
       <div class="review pad">
         <h2>Review changes</h2>
-        {#if editor.problem}<p class="errtext" role="alert">{editor.problem}</p>{/if}
+        {#if editor.problem}<Callout intent="danger">{editor.problem}</Callout>{/if}
         {#if editor.diff}
           <p class="muted">
             Only the lines below change; comments and formatting elsewhere in <code>modes.toml</code
             > stay as they are.
           </p>
-          <DiffText text={editor.diff} label="Changes to modes.toml" maxHeight="62vh" />
+          <PatchText text={editor.diff} label="Changes to modes.toml" maxHeight="62vh" />
         {:else}
           <p class="muted">No changes to write.</p>
         {/if}
         {#if editor.rewritten.length}
-          <p class="note" role="status">
+          <Callout intent="warning" role="status">
             Written out fresh (their layout cannot be edited in place, so comments in them are
             lost):
             {editor.rewritten.join(', ')}.
-          </p>
+          </Callout>
         {/if}
         <div class="actions">
-          <button type="button" disabled={editor.busy} onclick={() => editor.backToEdit()}
-            >Back to editing</button
+          <Button
+            variant="outlined"
+            intent="neutral"
+            disabled={editor.busy}
+            onclick={() => editor.backToEdit()}>Back to editing</Button
           >
-          <button type="button" class="primary" disabled={editor.busy} onclick={() => editor.save()}
-            >{editor.busy ? 'Saving...' : 'Save modes.toml'}</button
+          <Button disabled={editor.busy} onclick={() => editor.save()}
+            >{editor.busy ? 'Saving...' : 'Save modes.toml'}</Button
           >
         </div>
       </div>
     {:else}
       <div class="cols">
         <nav class="list" aria-label="Modes">
-          <button
-            type="button"
-            class="overview"
+          <Button
+            variant={editor.selected === null ? 'tonal' : 'outlined'}
+            intent="neutral"
             aria-current={editor.selected === null ? 'true' : undefined}
-            onclick={() => editor.select(null)}>Overview &amp; flow</button
+            onclick={() => editor.select(null)}>Overview &amp; flow</Button
           >
-          <ul aria-label="Modes list">
-            {#each editor.doc.modes as m, i (m.originalId ?? `new-${i}`)}
-              <li
-                class:sel={m.id === editor.selected}
-                class:over={dragOver === i && dragFrom !== i}
-                draggable="true"
-                ondragstart={() => (dragFrom = i)}
-                ondragover={(e) => {
-                  e.preventDefault();
-                  dragOver = i;
-                }}
-                ondrop={(e) => {
-                  e.preventDefault();
-                  drop(i);
-                }}
-                ondragend={() => (dragFrom = dragOver = null)}
-              >
-                <button
-                  type="button"
-                  class="pick"
-                  aria-current={m.id === editor.selected ? 'true' : undefined}
-                  onclick={() => editor.select(m.id)}
-                >
-                  <span class="nm">{displayName(m)}</span>
-                  <code>{m.id}</code>
-                  {#if m.id === editor.doc.defaultMode}<span class="tag">default</span>{/if}
-                  {#if m.originalId === undefined}<span class="tag new">new</span>{/if}
-                  {#if modeHasError(i)}<span class="dot" title="Has errors" aria-label="has errors"
-                    ></span>{/if}
-                </button>
-                <span class="mv">
-                  <button
-                    type="button"
-                    class="small"
-                    disabled={i === 0}
-                    aria-label={`Move ${m.id} up`}
-                    onclick={() => editor.move(m.id, i - 1)}>&uarr;</button
-                  >
-                  <button
-                    type="button"
-                    class="small"
-                    disabled={i === editor.doc.modes.length - 1}
-                    aria-label={`Move ${m.id} down`}
-                    onclick={() => editor.move(m.id, i + 1)}>&darr;</button
-                  >
-                </span>
-              </li>
-            {/each}
-          </ul>
+          <ReorderList
+            label="Modes list"
+            items={editor.doc.modes}
+            getKey={(m) => m.id}
+            getLabel={(m) => m.id}
+            selected={editor.selected ?? undefined}
+            buttons
+            handles
+            onselect={(id) => editor.select(id)}
+            onreorder={(from, to) => editor.move(editor.doc.modes[from].id, to)}
+          >
+            {#snippet item(m, i)}
+              <span class="nm">{displayName(m)}</span>
+              <code>{m.id}</code>
+              {#if m.id === editor.doc.defaultMode}<Tag size="sm">default</Tag>{/if}
+              {#if m.originalId === undefined}<Tag size="sm" intent="success">new</Tag>{/if}
+              {#if modeHasError(i)}<span class="dot" title="Has errors" aria-label="has errors"
+                ></span>{/if}
+            {/snippet}
+          </ReorderList>
           <div class="add">
-            <select aria-label="Add mode from template" bind:value={addChoice}>
-              <option value="blank">Blank mode</option>
-              <option value="duplicate" disabled={!editor.selectedMode}>Duplicate selected</option>
-              <optgroup label="Lifecycle templates">
-                {#each fullTemplates as t (t.mode.id)}
-                  <option value={`full:${t.mode.id}`}>{displayName(t.mode)}</option>
-                {/each}
-              </optgroup>
-              <optgroup label="Minimal templates">
-                {#each minimalTemplates as t (t.mode.id)}
-                  <option value={`minimal:${t.mode.id}`}>{displayName(t.mode)}</option>
-                {/each}
-              </optgroup>
-            </select>
-            <button type="button" onclick={addMode}>Add mode</button>
+            <div class="grow">
+              <Select
+                size="sm"
+                searchable={false}
+                ariaLabel="Add mode from template"
+                options={addOptions}
+                bind:value={addChoice}
+              />
+            </div>
+            <Button size="sm" variant="outlined" icon="plus" onclick={addMode}>Add mode</Button>
           </div>
         </nav>
 
@@ -328,43 +332,35 @@
           {#if editor.selectedMode}
             <div class="mhead">
               <h2>{displayName(editor.selectedMode)} <code>{editor.selectedMode.id}</code></h2>
-              <button
-                type="button"
-                class="small"
+              <Button
+                size="sm"
+                variant="outlined"
+                intent="neutral"
                 onclick={() => editor.selected && editor.duplicate(editor.selected)}
-                >Duplicate</button
+                >Duplicate</Button
               >
-              <button
-                type="button"
-                class="small"
+              <Button
+                size="sm"
+                variant="outlined"
+                intent="neutral"
                 disabled={editor.selectedMode.id === editor.doc.defaultMode}
                 onclick={() => editor.selected && editor.setDefault(editor.selected)}
-                >Make default</button
+                >Make default</Button
               >
             </div>
             <ModeForm {editor} />
           {:else}
             <h2>Overview</h2>
-            <label class="def"
-              >Default mode
-              <select
-                bind:value={editor.doc.defaultMode}
-                aria-label="Default mode"
-                aria-invalid={editor.issues.some((i) => i.path === 'defaultMode')}
-              >
-                {#if !editor.doc.modes.some((m) => m.id === editor.doc.defaultMode)}
-                  <option value={editor.doc.defaultMode}
-                    >{editor.doc.defaultMode || '(none)'}</option
-                  >
-                {/if}
-                {#each editor.doc.modes as m (m.id)}<option value={m.id}
-                    >{displayName(m)} ({m.id})</option
-                  >{/each}
-              </select>
-            </label>
-            {#each issuesAt(editor.issues, 'defaultMode') as i (i.message)}
-              <p class="errtext small">{i.message}</p>
-            {/each}
+            <div class="def">
+              <Select
+                label="Default mode"
+                searchable={false}
+                options={defaultOptions}
+                value={editor.doc.defaultMode}
+                error={defaultError}
+                onchange={(v) => (editor.doc.defaultMode = v)}
+              />
+            </div>
             <h3>Flow</h3>
             <p class="muted small">
               Arrows show where <code>SwitchMode</code> can go. Thick arrows auto-advance without asking
@@ -381,10 +377,10 @@
               <ul class="problems" aria-label="Problems">
                 {#each editor.issues as i, n (n)}
                   {@const id = issueMode(i.path)}
-                  <li class={i.severity}>
-                    <span class="sev">{i.severity}</span>
-                    {#if id}<button type="button" class="link" onclick={() => editor.select(id)}
-                        >{id}</button
+                  <li>
+                    <Badge intent={sevIntent(i.severity)} dot={false}>{i.severity}</Badge>
+                    {#if id}<Button size="sm" variant="minimal" onclick={() => editor.select(id)}
+                        >{id}</Button
                       >{/if}
                     {i.message}
                   </li>
@@ -419,82 +415,58 @@
     flex-direction: column;
   }
   .pad {
-    padding: 14px 18px;
+    padding: var(--tr-space-4) var(--tr-space-5);
     overflow: auto;
+  }
+  .stack {
+    display: grid;
+    gap: var(--tr-space-2);
+    align-content: start;
   }
   .setup {
     max-width: 640px;
     display: grid;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-content: start;
   }
   .setup h2,
   .review h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: var(--tr-text-lg);
   }
   .bar {
     display: flex;
-    gap: 12px;
+    gap: var(--tr-space-3);
     align-items: center;
     flex-wrap: wrap;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border);
+    padding: var(--tr-space-2) var(--tr-space-4);
+    border-bottom: 1px solid var(--tr-outline-variant);
   }
   .title {
     display: flex;
-    gap: 10px;
+    gap: var(--tr-space-3);
     align-items: baseline;
     min-width: 0;
     flex: 1;
   }
   .path {
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .status {
     display: flex;
-    gap: 6px;
+    gap: var(--tr-space-2);
   }
   .actions {
-    margin: 0;
-  }
-  .chip {
-    font-size: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 0 8px;
-  }
-  .chip.err {
-    color: var(--err);
-    border-color: var(--err);
-  }
-  .chip.warn {
-    color: var(--warn);
-    border-color: var(--warn);
-  }
-  .chip.ok {
-    color: var(--ok);
-    border-color: var(--ok);
-  }
-  .note {
-    margin: 0;
-    padding: 6px 14px;
-    color: var(--warn);
-    font-size: 13px;
-  }
-  .saved {
     display: flex;
-    gap: 10px;
-    align-items: center;
+    gap: var(--tr-space-2);
     flex-wrap: wrap;
     margin: 0;
-    padding: 6px 14px;
-    background: var(--code-bg);
-    color: var(--ok);
-    font-size: 13px;
+  }
+  .banner {
+    padding: var(--tr-space-2) var(--tr-space-4) 0;
   }
   .cols {
     flex: 1;
@@ -503,180 +475,79 @@
     grid-template-columns: 270px minmax(0, 1fr);
   }
   .list {
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--tr-outline-variant);
     overflow-y: auto;
-    padding: 8px;
+    padding: var(--tr-space-2);
     display: grid;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-content: start;
-  }
-  .list ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 3px;
-  }
-  .list li {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
-  }
-  .list li.sel {
-    border-color: var(--accent);
-  }
-  .list li.over {
-    border-top: 3px solid var(--accent);
-  }
-  .pick {
-    flex: 1;
-    min-width: 0;
-    text-align: left;
-    border: none;
-    background: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 6px;
-    align-items: baseline;
-    cursor: grab;
   }
   .nm {
     font-weight: 600;
-  }
-  .overview {
-    text-align: left;
-  }
-  .overview[aria-current='true'] {
-    border-color: var(--accent);
-  }
-  .mv {
-    display: flex;
-    padding-right: 2px;
-  }
-  .small {
-    font-size: 12px;
-    padding: 0 6px;
-  }
-  .tag {
-    font-size: 11px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 0 6px;
-    color: var(--muted);
-  }
-  .tag.new {
-    color: var(--ok);
-    border-color: var(--ok);
   }
   .dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--err);
+    background: var(--tr-danger);
     align-self: center;
   }
   .add {
     display: flex;
-    gap: 4px;
+    gap: var(--tr-space-1);
     flex-wrap: wrap;
+    align-items: center;
   }
-  .add select {
+  .grow {
     flex: 1;
     min-width: 0;
   }
   .detail {
     overflow-y: auto;
-    padding: 12px 18px 40px;
+    padding: var(--tr-space-3) var(--tr-space-5) 40px;
     min-width: 0;
   }
   .detail h2 {
-    margin: 0 0 6px;
-    font-size: 16px;
+    margin: 0 0 var(--tr-space-2);
+    font-size: var(--tr-text-lg);
   }
   .detail h3 {
-    margin: 14px 0 4px;
-    font-size: 14px;
+    margin: var(--tr-space-4) 0 var(--tr-space-1);
+    font-size: var(--tr-text-md);
   }
   .mhead {
     display: flex;
-    gap: 8px;
-    align-items: baseline;
+    gap: var(--tr-space-2);
+    align-items: center;
     flex-wrap: wrap;
-    margin-bottom: 8px;
+    margin-bottom: var(--tr-space-2);
   }
   .mhead h2 {
     margin: 0;
     flex: 1;
   }
   .def {
-    display: grid;
-    gap: 2px;
     max-width: 320px;
-    font-size: 12px;
-    color: var(--muted);
   }
-  .def select {
-    color: var(--text);
-    font-size: 14px;
+  .small {
+    font-size: var(--tr-text-sm);
+    margin: 0;
   }
   .problems {
     list-style: none;
     margin: 0;
     padding: 0;
-    font-size: 13px;
+    font-size: var(--tr-text-sm);
   }
-  .problems li.error .sev {
-    color: var(--err);
-  }
-  .problems li.warning .sev {
-    color: var(--warn);
-  }
-  .sev {
-    font-size: 11px;
-    text-transform: uppercase;
-    margin-right: 4px;
-  }
-  .link {
-    border: none;
-    background: none;
-    padding: 0;
-    color: var(--accent-link);
-    text-decoration: underline;
-  }
-  .errtext {
-    color: var(--err);
-    margin: 0;
-  }
-  .small.errtext {
-    font-size: 12px;
-  }
-  .ok {
-    color: var(--ok);
-    margin: 0;
-  }
-  fieldset {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    margin: 0;
-    display: grid;
-    gap: 4px;
-  }
-  label.check {
+  .problems li {
     display: flex;
-    gap: 6px;
-    align-items: baseline;
-  }
-  .plain {
-    list-style: none;
-    margin: 0;
-    padding: 0 0 0 20px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--tr-space-1) var(--tr-space-2);
   }
   .review {
     display: grid;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-content: start;
   }
   @media (max-width: 760px) {
@@ -685,7 +556,7 @@
     }
     .list {
       border-right: none;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--tr-outline-variant);
       max-height: 40vh;
     }
   }

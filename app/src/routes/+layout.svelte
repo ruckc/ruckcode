@@ -1,4 +1,5 @@
 <script lang="ts">
+  import '@ruckc/truss-ui/styles.css';
   import '../app.css';
 
   let { children } = $props();

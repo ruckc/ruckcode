@@ -1,34 +1,24 @@
 <script lang="ts">
-  import { focusTrap } from '../a11y';
+  import { Button } from '@ruckc/truss-ui';
+  import Modal from './Modal.svelte';
 
   let { onkeep, ondiscard }: { onkeep: () => void; ondiscard: () => void } = $props();
 </script>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === 'Escape' && !e.defaultPrevented) {
-      e.preventDefault();
-      onkeep();
-    }
-  }}
-/>
+<Modal
+  alert
+  size="sm"
+  backdropClose={false}
+  title="Unsaved mode changes"
+  onclose={onkeep}
+  aria-describedby="unsaved-text"
+>
+  <p id="unsaved-text">
+    You have edited the modes but not saved them. Leaving now discards those changes.
+  </p>
 
-<div class="backdrop" role="presentation">
-  <div
-    class="dialog"
-    role="alertdialog"
-    aria-modal="true"
-    aria-labelledby="unsaved-title"
-    aria-describedby="unsaved-text"
-    use:focusTrap
-  >
-    <h2 id="unsaved-title">Unsaved mode changes</h2>
-    <p id="unsaved-text">
-      You have edited the modes but not saved them. Leaving now discards those changes.
-    </p>
-    <div class="actions">
-      <button type="button" class="primary" data-autofocus onclick={onkeep}>Keep editing</button>
-      <button type="button" class="danger" onclick={ondiscard}>Discard changes</button>
-    </div>
-  </div>
-</div>
+  {#snippet footer()}
+    <Button autofocus onclick={onkeep}>Keep editing</Button>
+    <Button intent="danger" variant="outlined" onclick={ondiscard}>Discard changes</Button>
+  {/snippet}
+</Modal>

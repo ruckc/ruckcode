@@ -82,7 +82,7 @@ test('Settings: the automatic-download toggle persists, and downloads then wait 
   await open(page, 'uptodate');
   await menu(page, 'Settings');
   await page.getByRole('tab', { name: 'Updates' }).click();
-  const box = page.getByRole('checkbox', { name: 'Automatically download updates' });
+  const box = page.getByRole('switch', { name: 'Automatically download updates' });
   await expect(box).toBeChecked();
   await expect(page.getByTestId('update-status')).toContainText('up to date');
   await box.uncheck();

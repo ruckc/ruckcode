@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 4173;
+// 4173 is vite preview's default; set E2E_PORT when something else already uses it.
+const PORT = Number(process.env.E2E_PORT ?? 4173);
 
 // Runs against the production build served by `vite preview`, with the scripted mock agent
 // (`?mock=1`). Browsers come from PLAYWRIGHT_BROWSERS_PATH / `playwright install chromium`.

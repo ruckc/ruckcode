@@ -17,6 +17,12 @@ function view(extra: Record<string, unknown> = {}) {
   return { api, onresume };
 }
 
+/** Choose an option in a truss Select (a combobox button plus a listbox). */
+async function pick(name: string, option: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name }));
+  await fireEvent.click(await screen.findByRole('option', { name: option, hidden: true }));
+}
+
 async function openAuth() {
   await screen.findAllByTestId('session');
   await fireEvent.click(screen.getByRole('button', { name: /Fix the login bug/ }));
@@ -37,9 +43,9 @@ describe('TranscriptsView', () => {
     await screen.findAllByTestId('session');
     const first = () => screen.getAllByTestId('session')[0].textContent ?? '';
     expect(first()).toContain('Rename the helper');
-    await fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'tokens' } });
+    await pick('Sort by', 'Tokens');
     expect(first()).toContain('Refactor step 1');
-    await fireEvent.change(screen.getByLabelText('Filter by mode'), { target: { value: 'plan' } });
+    await pick('Filter by mode', 'plan');
     expect(screen.getAllByTestId('session')).toHaveLength(1);
     expect(screen.getByTestId('count')).toHaveTextContent('1 of 5');
   });
@@ -69,7 +75,9 @@ describe('TranscriptsView', () => {
     expect(within(tl).getByText(/Fix the login bug in src\/auth.rs/)).toBeInTheDocument();
     // The edit card starts open: diff, permission, output.
     const edit = within(tl).getByRole('region', { name: 'Tool Edit src/auth.rs' });
-    expect(within(edit).getByRole('group', { name: 'Diff of src/auth.rs' })).toBeInTheDocument();
+    const diff = within(edit).getByRole('group', { name: 'Diff: src/auth.rs' });
+    expect(diff).toHaveTextContent('verify_signature(token)');
+    expect(diff).toHaveTextContent('+4');
     expect(within(edit).getByTestId('permission')).toHaveTextContent('approved by you');
     expect(within(edit).getByLabelText('Tool output')).toHaveTextContent('Edited src/auth.rs');
     // The denied Bash call is an error card (open), the quiet Read card starts closed.
@@ -87,7 +95,7 @@ describe('TranscriptsView', () => {
       within(tl).getByText(/failed \(exit 101\)/, { selector: '.status' })
     ).toBeInTheDocument();
     expect(within(tl).getAllByText(/unused variable/).length).toBeGreaterThan(0);
-    expect(within(tl).getByText('Mode', { selector: '.chip' })).toBeInTheDocument();
+    expect(within(tl).getByText('Mode', { selector: '.chip .t' })).toBeInTheDocument();
     expect(within(tl).getByText('mock-small', { selector: 'code' })).toBeInTheDocument();
     expect(within(tl).getByRole('region', { name: 'Compaction' })).toBeInTheDocument();
     expect(within(tl).getAllByLabelText('Turn summary')).toHaveLength(2);

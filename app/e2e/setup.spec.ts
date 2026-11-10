@@ -1,4 +1,4 @@
-import { connected, menu } from './helpers';
+import { choose, connected, menu } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const fresh = (page: Page, extra = '') =>
@@ -72,10 +72,11 @@ test('first run: paste a key, pick the URL, check compatibility, then save a pro
   // 6. modes: no modes.toml yet -> create it, then assign a model to one mode
   await expect(dialog(page)).toContainText('has no .ruckcode/modes.toml');
   await dialog(page).getByRole('button', { name: 'Create modes.toml' }).click();
-  await dialog(page)
-    .getByLabel('Model for mode plan')
-    .selectOption({ label: 'anthropic/claude-sonnet-5-5' });
-  await dialog(page).getByRole('button', { name: 'Review' }).click();
+  await choose(
+    dialog(page).getByRole('combobox', { name: 'Model for mode plan' }),
+    /anthropic\/claude-sonnet-5-5/
+  );
+  await dialog(page).getByRole('button', { name: 'Review', exact: true }).click();
 
   const diff = dialog(page).getByLabel('Changes to be written');
   await expect(diff).toContainText('[profiles.openrouter]');
@@ -83,7 +84,7 @@ test('first run: paste a key, pick the URL, check compatibility, then save a pro
   await expect(diff).toContainText('default_profile = "openrouter"');
   await expect(diff).toContainText('[modes.plan]');
   await expect(diff).not.toContainText('very-secret');
-  await dialog(page).getByRole('button', { name: 'Save' }).click();
+  await dialog(page).getByRole('button', { name: 'Save', exact: true }).click();
 
   await expect(dialog(page)).toContainText('Saved');
   expect(await page.content()).not.toContain('very-secret');
@@ -112,11 +113,11 @@ test('a local server needs no key: type the Ollama URL', async ({ page }) => {
   await next(page).click();
   await expect(dialog(page).getByLabel('Profile name')).toHaveValue('ollama');
   await next(page).click();
-  await dialog(page).getByRole('button', { name: 'Review' }).click();
+  await dialog(page).getByRole('button', { name: 'Review', exact: true }).click();
   const diff = dialog(page).getByLabel('Changes to be written');
   await expect(diff).toContainText('base_url = "http://localhost:11434/v1"');
   await expect(diff).not.toContainText('api_key');
-  await dialog(page).getByRole('button', { name: 'Save' }).click();
+  await dialog(page).getByRole('button', { name: 'Save', exact: true }).click();
   await expect(dialog(page)).toContainText('Saved');
 });
 
@@ -163,9 +164,9 @@ test('check errors: invalid key (401), wrong path (404), override, manual model 
   await dialog(page).getByLabel('Profile name').fill('mine');
   await next(page).click();
   // modes already exist in the normal mock project; keep defaults
-  await dialog(page).getByRole('button', { name: 'Review' }).click();
+  await dialog(page).getByRole('button', { name: 'Review', exact: true }).click();
   await expect(dialog(page).getByLabel('Changes to be written')).toContainText('my-local-model');
-  await dialog(page).getByRole('button', { name: 'Save' }).click();
+  await dialog(page).getByRole('button', { name: 'Save', exact: true }).click();
   await expect(dialog(page)).toContainText('Saved');
 });
 

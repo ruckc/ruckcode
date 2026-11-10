@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { menu, openApp, picker, send } from './helpers';
+import { choose, menu, openApp, picker, send } from './helpers';
 
 test('send a prompt and see the streamed reply, plan and usage', async ({ page }) => {
   await openApp(page);
@@ -22,11 +22,11 @@ test('markdown is rendered, sanitized and code blocks can be copied', async ({ p
   await openApp(page);
   await send(page, 'mock:md');
   const msg = page.getByTestId('assistant-msg');
-  await expect(msg.locator('h1')).toHaveText('Heading');
+  await expect(msg.getByRole('heading', { name: 'Heading' })).toBeVisible();
   await expect(msg.locator('strong')).toHaveText('bold');
   await expect(msg.locator('script')).toHaveCount(0);
   await msg.getByRole('button', { name: 'Copy code' }).click();
-  await expect(msg.getByRole('button', { name: 'Copy code' })).toHaveText('Copied');
+  await expect(msg.getByRole('status').filter({ hasText: 'Copied' })).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
     'const x: number = 1;'
   );
@@ -37,12 +37,13 @@ test('approving a write shows the diff, runs the tool and completes the card', a
   await send(page, 'mock:write src/a.txt new body');
   const dialog = page.getByRole('alertdialog');
   await expect(dialog).toContainText('Write src/a.txt');
-  await expect(dialog.getByRole('group', { name: 'Diff of src/a.txt' })).toBeVisible();
+  await expect(dialog.getByRole('group', { name: 'Diff: src/a.txt' })).toBeVisible();
   await page.keyboard.press('y');
   await expect(dialog).toBeHidden();
   const card = page.getByTestId('tool-card');
   await expect(card).toHaveAttribute('data-status', 'completed');
-  await expect(card).toContainText('+1 -1');
+  await expect(card.getByTestId('summary')).toContainText('+1');
+  await expect(card.getByTestId('summary')).toContainText('\u22121');
   await expect(page.getByTestId('assistant-msg')).toContainText('Wrote src/a.txt.');
 });
 
@@ -58,13 +59,13 @@ test('answer a multi-question ask with multi-select and Other', async ({ page })
   await openApp(page);
   await send(page, 'mock:askmulti');
   const dialog = page.getByRole('dialog', { name: /questions/ });
-  await expect(dialog.getByText('Recommended')).toBeVisible();
+  await expect(dialog.getByText(/Recommended/)).toBeVisible();
   await dialog.getByLabel(/sqlite/).check();
   await dialog.getByRole('tab', { name: /Features/ }).click();
   await dialog.getByLabel(/auth/).check();
   await dialog.getByLabel(/search/).check();
-  await dialog.getByLabel('Other answer').fill('tracing');
-  await dialog.getByRole('tab', { name: /Q3/ }).click();
+  await dialog.getByLabel('Other', { exact: true }).fill('tracing');
+  await dialog.getByRole('tab').nth(2).click();
   await dialog.getByLabel(/No/).check();
   await dialog.getByRole('button', { name: /Submit/ }).click();
   await expect(page.getByTestId('assistant-msg')).toContainText(
@@ -82,16 +83,16 @@ test('cancelling a question with Escape reports it to the agent', async ({ page 
 
 test('switch mode manually and by approving an agent proposal', async ({ page }) => {
   await openApp(page);
-  const mode = page.getByLabel('Mode', { exact: true });
-  await expect(mode).toHaveValue('implement');
-  await mode.selectOption('plan');
-  await expect(mode).toHaveValue('plan');
+  const mode = page.getByRole('combobox', { name: 'Mode', exact: true });
+  await expect(mode).toHaveText('implement');
+  await choose(mode, 'plan');
+  await expect(mode).toHaveText('plan');
   await send(page, 'mock:mode explore');
   const dialog = page.getByRole('alertdialog');
   await expect(dialog).toContainText('Mode switch proposed');
   await expect(dialog).toContainText('switch to mode explore');
   await dialog.getByRole('button', { name: /Switch to explore/ }).click();
-  await expect(mode).toHaveValue('explore');
+  await expect(mode).toHaveText('explore');
   await expect(page.getByTestId('assistant-msg')).toContainText('Switched to explore.');
 });
 
@@ -99,16 +100,16 @@ test('declining a proposed mode switch keeps the mode', async ({ page }) => {
   await openApp(page);
   await send(page, 'mock:mode explore');
   await page.getByRole('button', { name: /Stay in current mode/ }).click();
-  await expect(page.getByLabel('Mode', { exact: true })).toHaveValue('implement');
+  await expect(page.getByRole('combobox', { name: 'Mode', exact: true })).toHaveText('implement');
   await expect(page.getByTestId('assistant-msg')).toContainText('Staying in implement.');
 });
 
 test('change the model', async ({ page }) => {
   await openApp(page);
-  const model = page.getByLabel('Model', { exact: true });
-  await expect(model).toHaveValue('mock-large');
-  await model.selectOption('mock-small');
-  await expect(model).toHaveValue('mock-small');
+  const model = page.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(model).toHaveText('mock-large');
+  await choose(model, 'mock-small');
+  await expect(model).toHaveText('mock-small');
   await expect(page.getByRole('status').filter({ hasText: 'Model changed' })).toBeVisible();
 });
 
@@ -150,17 +151,18 @@ test('tool output is truncated until expanded, and diffs toggle side by side', a
   await send(page, 'mock:bash');
   const card = page.getByTestId('tool-card');
   await card.getByRole('button', { name: /Run cargo test/ }).click();
-  await expect(card.getByLabel('Tool output')).not.toContainText('case_40');
+  await expect(card.getByRole('region', { name: 'Output' })).not.toContainText('case_40');
   await card.getByRole('button', { name: /Show all/ }).click();
-  await expect(card.getByLabel('Tool output')).toContainText('case_59');
+  await expect(card.getByRole('region', { name: 'Output' })).toContainText('case_59');
   await card.getByRole('button', { name: 'Show input' }).click();
-  await expect(card.getByLabel('Tool input')).toContainText('cargo test');
+  await expect(card.getByRole('region', { name: 'Input' })).toContainText('cargo test');
 
   await send(page, 'mock:edit');
   const edit = page.getByTestId('tool-card').nth(1);
-  await expect(edit.locator('tr.add').first()).toBeVisible();
-  await edit.getByLabel('side by side').check();
-  await expect(edit.locator('table.split')).toBeVisible();
+  await expect(edit.getByRole('group', { name: /^Diff/ })).toBeVisible();
+  await expect(edit.getByTestId('summary')).toContainText('+');
+  await edit.getByRole('radio', { name: 'Split' }).click();
+  await expect(edit.locator('table[data-layout="split"]')).toBeVisible();
 });
 
 test('agent crash shows a reconnect button that resumes the session', async ({ page }) => {

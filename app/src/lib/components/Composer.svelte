@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { ChatComposer } from '@ruckc/truss-chat';
+  import { Button, Kbd } from '@ruckc/truss-ui';
   import type { CommandInfo } from '../state/reducer';
 
   let {
@@ -25,7 +27,7 @@
   } = $props();
 
   let text = $state('');
-  let input: HTMLTextAreaElement | undefined = $state();
+  let composer: ReturnType<typeof ChatComposer> | undefined = $state();
   /** Position in `history` while recalling (history.length = not recalling). */
   let cursor = $state(-1);
   let draft = '';
@@ -45,21 +47,13 @@
   function complete(c: CommandInfo) {
     text = `/${c.name}${c.hint ? ' ' : ''}`;
     queueMicrotask(() => {
-      input?.focus();
-      input?.setSelectionRange(text.length, text.length);
+      composer?.focus();
+      composer?.select(text.length, text.length);
     });
   }
 
   export function focus() {
-    input?.focus();
-  }
-
-  function submit() {
-    const t = text.trim();
-    if (!t || disabled) return;
-    onsend(text);
-    text = '';
-    cursor = -1;
+    composer?.focus();
   }
 
   function recall(delta: -1 | 1) {
@@ -78,11 +72,17 @@
       cursor = n;
       text = history[n];
     }
-    queueMicrotask(() => input?.setSelectionRange(text.length, text.length));
+    queueMicrotask(() => composer?.select(text.length, text.length));
     return true;
   }
 
+  /**
+   * truss-chat's composer owns Enter (send) and Shift+Enter; this hook runs first and adds what
+   * ruckcode needs on top: slash-command completion, Esc to stop and Up/Down prompt history.
+   * `preventDefault()` keeps the composer from also acting on the key.
+   */
   function onkeydown(e: KeyboardEvent) {
+    if (e.isComposing) return;
     if (matches.length) {
       const c = matches[pick];
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -102,15 +102,12 @@
         return;
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      submit();
-    } else if (e.key === 'Escape' && running) {
+    if (e.key === 'Escape' && running) {
       e.preventDefault();
       oncancel();
     } else if (e.key === 'ArrowUp' && !e.shiftKey && (cursor !== -1 || !text.includes('\n'))) {
       // Only recall when the box is empty/recalled, or the caret is on the first line.
-      const el = e.currentTarget as HTMLTextAreaElement;
+      const el = e.target as HTMLTextAreaElement;
       if (cursor !== -1 || el.selectionStart === 0) {
         if (recall(-1)) e.preventDefault();
       }
@@ -118,27 +115,28 @@
       if (recall(1)) e.preventDefault();
     }
   }
+
+  function send(t: string) {
+    cursor = -1;
+    onsend(t);
+  }
 </script>
 
-<form
-  class="composer"
-  onsubmit={(e) => {
-    e.preventDefault();
-    submit();
-  }}
->
+<div class="composer">
   {#if queue.length}
     <ol class="queue" aria-label="Queued prompts">
       {#each queue as q, i (i)}
         <li>
           <span class="muted">queued</span>
           <span class="qtext">{q}</span>
-          <button
-            type="button"
-            class="x"
+          <Button
+            variant="minimal"
+            intent="neutral"
+            size="sm"
+            icon="cross"
             aria-label={`Remove queued prompt ${i + 1}`}
-            onclick={() => onunqueue(i)}>&times;</button
-          >
+            onclick={() => onunqueue(i)}
+          />
         </li>
       {/each}
     </ol>
@@ -146,7 +144,7 @@
   {#if matches.length}
     <ul class="cmds" role="listbox" aria-label="Commands">
       {#each matches as c, i (c.name)}
-        <li role="option" aria-selected={i === pick}>
+        <li role="option" aria-selected={i === pick} data-picked={i === pick}>
           <button
             type="button"
             tabindex="-1"
@@ -161,95 +159,84 @@
       {/each}
     </ul>
   {/if}
-  <div class="row">
-    <textarea
-      bind:this={input}
-      rows="2"
-      {placeholder}
-      aria-label="Prompt"
-      bind:value={text}
-      {disabled}
-      {onkeydown}
-      oninput={() => {
-        if (cursor !== -1) cursor = -1;
-      }}></textarea>
-    <div class="btns">
+  <ChatComposer
+    bind:this={composer}
+    bind:value={text}
+    trim={false}
+    {disabled}
+    {placeholder}
+    label="Prompt"
+    sendLabel={running ? 'Queue' : 'Send'}
+    maxRows={8}
+    onsend={send}
+    {onkeydown}
+    oninput={() => {
+      if (cursor !== -1) cursor = -1;
+    }}
+  >
+    {#snippet actions()}
       {#if running}
-        <button
-          type="button"
-          class="danger"
-          onclick={oncancel}
+        <Button
+          intent="danger"
+          variant="outlined"
           aria-label="Cancel the running turn"
+          onclick={oncancel}
         >
-          Stop <kbd>Esc</kbd>
-        </button>
+          Stop <Kbd keys="Esc" />
+        </Button>
       {/if}
-      <button class="primary" type="submit" disabled={disabled || !text.trim()}>
-        {running ? 'Queue' : 'Send'}
-      </button>
-    </div>
-  </div>
+    {/snippet}
+  </ChatComposer>
   <p class="hint muted">
     Enter to send, Shift+Enter for a new line, Up/Down for history, / for commands.
   </p>
-</form>
+</div>
 
 <style>
+  .composer {
+    padding: var(--tr-space-2) var(--tr-space-3) var(--tr-space-1);
+    border-top: 1px solid var(--tr-outline-variant);
+    background: var(--tr-surface-container-low);
+  }
   .cmds {
     list-style: none;
-    margin: 0 0 6px;
-    padding: 4px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
+    margin: 0 0 var(--tr-space-2);
+    padding: var(--tr-space-1);
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
+    background: var(--tr-surface);
   }
   .cmds button {
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-items: baseline;
     width: 100%;
     border: 0;
     background: none;
+    color: inherit;
+    font: inherit;
     text-align: left;
-    min-height: 0;
-    padding: 4px 8px;
+    padding: var(--tr-space-1) var(--tr-space-2);
+    border-radius: var(--tr-radius-sm);
+    cursor: pointer;
   }
-  .cmds li[aria-selected='true'] button {
-    background: var(--code-bg);
+  .cmds li[data-picked='true'] button {
+    background: var(--tr-surface-container-high);
   }
   .desc {
     margin-left: auto;
   }
-  .composer {
-    padding: 8px 12px 6px;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .row {
-    display: flex;
-    gap: 8px;
-    align-items: stretch;
-  }
-  textarea {
-    flex: 1;
-    resize: none;
-  }
-  .btns {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
   .queue {
-    margin: 0 0 6px;
+    margin: 0 0 var(--tr-space-2);
     padding: 0;
     list-style: none;
     display: grid;
     gap: 2px;
-    font-size: 12.5px;
+    font-size: var(--tr-text-sm);
   }
   .queue li {
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-items: center;
   }
   .qtext {
@@ -258,21 +245,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .x {
-    border: 0;
-    background: none;
-    padding: 0 6px;
-    font-size: 16px;
-    line-height: 1;
-  }
   .hint {
-    margin: 4px 0 0;
-    font-size: 11px;
-  }
-  kbd {
-    font: inherit;
-    font-size: 11px;
-    opacity: 0.8;
-    margin-left: 4px;
+    margin: var(--tr-space-1) 0 0;
+    font-size: var(--tr-text-xs);
   }
 </style>

@@ -14,17 +14,17 @@
 <style>
   .issues {
     list-style: none;
-    margin: 2px 0 0;
+    margin: var(--tr-space-1) 0 0;
     padding: 0;
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
   }
   .error {
-    color: var(--err);
+    color: var(--tr-danger);
   }
   .warning {
-    color: var(--warn);
+    color: var(--tr-warning);
   }
   .info {
-    color: var(--muted);
+    color: var(--tr-on-surface-variant);
   }
 </style>

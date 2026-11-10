@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Badge, Button, Input, Select } from '@ruckc/truss-ui';
   import {
     DEFAULT_MAX_FIX_TURNS,
     HOOK_EVENT_NAMES,
@@ -25,6 +26,11 @@
     /** Display only (the project's global hooks). */
     readonly?: boolean;
   } = $props();
+
+  const failureOptions = (['ignore', 'block', 'fix_turn'] as OnFailure[]).map((o) => ({
+    value: o,
+    label: o
+  }));
 
   const allEvents = $derived(
     catalog?.hookEvents ??
@@ -59,6 +65,14 @@
 
   const at = (ev: HookEventName, i: number, field: string) =>
     issuesAt(issues, `${base}.${ev}[${i}].${field}`);
+  /** Errors go on the field (red, aria-invalid); warnings and notes are listed under it. */
+  const errorAt = (ev: HookEventName, i: number, field: string) =>
+    at(ev, i, field)
+      .filter((m) => m.severity === 'error')
+      .map((m) => m.message)
+      .join(' ') || undefined;
+  const notesAt = (ev: HookEventName, i: number, field: string) =>
+    at(ev, i, field).filter((m) => m.severity !== 'error');
 </script>
 
 {#if !readonly}
@@ -74,10 +88,11 @@
 
 {#each events as info (info.name)}
   {@const list = hooks[info.name] ?? []}
+  <!-- Native <details>/<summary>: truss-ui's Accordion would also fit, but the groups are small and keep their semantics. -->
   <details open={list.length > 0} class="event">
     <summary>
       <code>{info.name}</code>
-      <span class="count">{list.length}</span>
+      <Badge dot={false}>{list.length}</Badge>
       <span class="muted small">{info.description}</span>
     </summary>
     {#if list.length}
@@ -85,124 +100,130 @@
         {#each list as h, i (i)}
           <li class="hook">
             <div class="grid">
-              <label class="wide"
-                >Command
-                <input
-                  type="text"
-                  class="mono"
-                  bind:value={h.run}
+              <div class="wide">
+                <Input
+                  size="sm"
+                  label="Command"
+                  value={h.run}
+                  oninput={(e) => (h.run = e.currentTarget.value)}
                   {readonly}
                   spellcheck="false"
                   aria-label={`Command for ${info.name} hook ${i + 1}`}
+                  error={errorAt(info.name, i, 'run')}
                   placeholder={info.glob ? 'mise run fmt {files}' : 'mise run check'}
+                  style="font-family: var(--tr-font-mono)"
                 />
-              </label>
-              {#each at(info.name, i, 'run') as m (m.message)}<span class="msg {m.severity}"
+              </div>
+              {#each notesAt(info.name, i, 'run') as m (m.message)}<span class="msg {m.severity}"
                   >{m.message}</span
                 >{/each}
               {#if info.glob || h.glob}
-                <label
-                  >File glob
-                  <input
-                    type="text"
-                    class="mono"
-                    value={h.glob ?? ''}
-                    oninput={(e) => (h.glob = e.currentTarget.value || null)}
-                    {readonly}
-                    spellcheck="false"
-                    aria-label={`Glob for ${info.name} hook ${i + 1}`}
-                    placeholder="*.rs"
-                  />
-                </label>
-                {#each at(info.name, i, 'glob') as m (m.message)}<span class="msg {m.severity}"
+                <Input
+                  size="sm"
+                  label="File glob"
+                  value={h.glob ?? ''}
+                  oninput={(e) => (h.glob = e.currentTarget.value || null)}
+                  {readonly}
+                  spellcheck="false"
+                  aria-label={`Glob for ${info.name} hook ${i + 1}`}
+                  error={errorAt(info.name, i, 'glob')}
+                  placeholder="*.rs"
+                  style="font-family: var(--tr-font-mono)"
+                />
+                {#each notesAt(info.name, i, 'glob') as m (m.message)}<span class="msg {m.severity}"
                     >{m.message}</span
                   >{/each}
               {/if}
               {#if info.matcher || h.matcher}
-                <label
-                  >Tool matcher (regex)
-                  <input
-                    type="text"
-                    class="mono"
-                    value={h.matcher ?? ''}
-                    oninput={(e) => (h.matcher = e.currentTarget.value || null)}
-                    {readonly}
-                    spellcheck="false"
-                    aria-label={`Matcher for ${info.name} hook ${i + 1}`}
-                    aria-invalid={at(info.name, i, 'matcher').some((m) => m.severity === 'error')}
-                    placeholder="Bash|Edit"
-                  />
-                </label>
-                {#each at(info.name, i, 'matcher') as m (m.message)}<span class="msg {m.severity}"
-                    >{m.message}</span
-                  >{/each}
-              {/if}
-              <label
-                >On failure
-                <select
-                  value={h.onFailure}
-                  disabled={readonly}
-                  aria-label={`On failure for ${info.name} hook ${i + 1}`}
-                  onchange={(e) => (h.onFailure = e.currentTarget.value as OnFailure)}
-                >
-                  <option value="ignore">ignore</option>
-                  <option value="block">block</option>
-                  <option value="fix_turn">fix_turn</option>
-                </select>
-              </label>
-              {#if h.onFailure === 'fix_turn'}
-                <label
-                  >Fix turns
-                  <input
-                    type="number"
-                    min="0"
-                    max="20"
-                    value={h.maxFixTurns}
-                    {readonly}
-                    aria-label={`Max fix turns for ${info.name} hook ${i + 1}`}
-                    oninput={(e) => (h.maxFixTurns = e.currentTarget.valueAsNumber || 0)}
-                  />
-                </label>
-                {#each at(info.name, i, 'maxFixTurns') as m (m.message)}<span
+                <Input
+                  size="sm"
+                  label="Tool matcher (regex)"
+                  value={h.matcher ?? ''}
+                  oninput={(e) => (h.matcher = e.currentTarget.value || null)}
+                  {readonly}
+                  spellcheck="false"
+                  aria-label={`Matcher for ${info.name} hook ${i + 1}`}
+                  error={errorAt(info.name, i, 'matcher')}
+                  placeholder="Bash|Edit"
+                  style="font-family: var(--tr-font-mono)"
+                />
+                {#each notesAt(info.name, i, 'matcher') as m (m.message)}<span
                     class="msg {m.severity}">{m.message}</span
                   >{/each}
               {/if}
-              <label
-                >Timeout (s)
-                <input
-                  type="number"
-                  min="1"
-                  value={h.timeoutSecs}
-                  {readonly}
-                  aria-label={`Timeout for ${info.name} hook ${i + 1}`}
-                  oninput={(e) => (h.timeoutSecs = e.currentTarget.valueAsNumber || 0)}
+              <div>
+                <!-- The visible text is separate from the accessible name ("On failure for <event> hook N"),
+                     which truss Select can only set via ariaLabel when it has no visible `label`. -->
+                <span class="tr-label" aria-hidden="true">On failure</span>
+                <Select
+                  size="sm"
+                  searchable={false}
+                  disabled={readonly}
+                  ariaLabel={`On failure for ${info.name} hook ${i + 1}`}
+                  options={failureOptions}
+                  value={h.onFailure}
+                  onchange={(v) => (h.onFailure = v)}
                 />
-              </label>
-              {#each at(info.name, i, 'timeoutSecs') as m (m.message)}<span class="msg {m.severity}"
-                  >{m.message}</span
+              </div>
+              {#if h.onFailure === 'fix_turn'}
+                <Input
+                  size="sm"
+                  label="Fix turns"
+                  type="number"
+                  min="0"
+                  max="20"
+                  value={h.maxFixTurns}
+                  {readonly}
+                  aria-label={`Max fix turns for ${info.name} hook ${i + 1}`}
+                  error={errorAt(info.name, i, 'maxFixTurns')}
+                  oninput={(e) => (h.maxFixTurns = e.currentTarget.valueAsNumber || 0)}
+                />
+                {#each notesAt(info.name, i, 'maxFixTurns') as m (m.message)}<span
+                    class="msg {m.severity}">{m.message}</span
+                  >{/each}
+              {/if}
+              <Input
+                size="sm"
+                label="Timeout (s)"
+                type="number"
+                min="1"
+                value={h.timeoutSecs}
+                {readonly}
+                aria-label={`Timeout for ${info.name} hook ${i + 1}`}
+                error={errorAt(info.name, i, 'timeoutSecs')}
+                oninput={(e) => (h.timeoutSecs = e.currentTarget.valueAsNumber || 0)}
+              />
+              {#each notesAt(info.name, i, 'timeoutSecs') as m (m.message)}<span
+                  class="msg {m.severity}">{m.message}</span
                 >{/each}
             </div>
             {#if !readonly}
               <div class="ctl">
-                <button
-                  type="button"
-                  class="small"
+                <Button
+                  size="sm"
+                  variant="minimal"
+                  intent="neutral"
+                  icon="arrow-up"
                   disabled={i === 0}
                   aria-label={`Move ${info.name} hook ${i + 1} up`}
-                  onclick={() => move(info.name, i, -1)}>&uarr;</button
-                >
-                <button
-                  type="button"
-                  class="small"
+                  onclick={() => move(info.name, i, -1)}
+                />
+                <Button
+                  size="sm"
+                  variant="minimal"
+                  intent="neutral"
+                  icon="arrow-down"
                   disabled={i === list.length - 1}
                   aria-label={`Move ${info.name} hook ${i + 1} down`}
-                  onclick={() => move(info.name, i, 1)}>&darr;</button
-                >
-                <button
-                  type="button"
-                  class="small danger"
+                  onclick={() => move(info.name, i, 1)}
+                />
+                <Button
+                  size="sm"
+                  variant="outlined"
+                  intent="danger"
+                  icon="trash"
                   aria-label={`Remove ${info.name} hook ${i + 1}`}
-                  onclick={() => remove(info.name, i)}>Remove</button
+                  onclick={() => remove(info.name, i)}>Remove</Button
                 >
               </div>
             {/if}
@@ -211,52 +232,47 @@
       </ol>
     {/if}
     {#if !readonly}
-      <button type="button" class="small" onclick={() => add(info.name)}
-        >Add {info.name} hook</button
+      <Button size="sm" variant="outlined" icon="plus" onclick={() => add(info.name)}
+        >Add {info.name} hook</Button
       >
     {/if}
   </details>
 {/each}
-<span class="sr-only">Default fix turns: {DEFAULT_MAX_FIX_TURNS}</span>
+<span class="tr-visually-hidden">Default fix turns: {DEFAULT_MAX_FIX_TURNS}</span>
 
 <style>
   .help {
-    margin: 0 0 6px;
-    font-size: 12.5px;
+    margin: 0 0 var(--tr-space-2);
+    font-size: var(--tr-text-sm);
   }
   .event {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 8px;
-    margin-bottom: 6px;
+    border: 1px solid var(--tr-outline-variant);
+    border-radius: var(--tr-radius-md);
+    padding: var(--tr-space-1) var(--tr-space-2);
+    margin-bottom: var(--tr-space-2);
   }
   summary {
     cursor: pointer;
     display: flex;
-    gap: 8px;
-    align-items: baseline;
-  }
-  .count {
-    font-size: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 0 6px;
+    gap: var(--tr-space-2);
+    align-items: center;
+    min-height: var(--tr-control-h-sm);
   }
   .small {
-    font-size: 12px;
+    font-size: var(--tr-text-sm);
   }
   .hooks {
     list-style: none;
-    margin: 6px 0;
+    margin: var(--tr-space-2) 0;
     padding: 0;
     display: grid;
-    gap: 8px;
+    gap: var(--tr-space-2);
   }
   .hook {
-    border-left: 3px solid var(--border);
-    padding-left: 8px;
+    border-left: 3px solid var(--tr-outline-variant);
+    padding-left: var(--tr-space-2);
     display: flex;
-    gap: 8px;
+    gap: var(--tr-space-2);
     align-items: flex-start;
   }
   .grid {
@@ -264,42 +280,24 @@
     min-width: 0;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 4px 10px;
+    gap: var(--tr-space-1) var(--tr-space-3);
   }
-  .grid label {
-    display: grid;
-    gap: 2px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .grid label.wide,
+  .wide,
   .msg {
     grid-column: 1 / -1;
   }
-  .grid input,
-  .grid select {
-    width: 100%;
-    color: var(--text);
-  }
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12.5px;
-  }
   .msg {
-    font-size: 12px;
-  }
-  .msg.error {
-    color: var(--err);
+    font-size: var(--tr-text-sm);
   }
   .msg.warning {
-    color: var(--warn);
+    color: var(--tr-warning);
+  }
+  .msg.info {
+    color: var(--tr-on-surface-variant);
   }
   .ctl {
     display: flex;
-    gap: 4px;
+    gap: var(--tr-space-1);
     flex-wrap: wrap;
-  }
-  input[aria-invalid='true'] {
-    border-color: var(--err);
   }
 </style>

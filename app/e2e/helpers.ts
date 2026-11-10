@@ -1,4 +1,21 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+
+/** An option's accessible name continues with its description, so a plain string matches the start. */
+const startsWith = (text: string) =>
+  new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`);
+
+/**
+ * Choose an option in a truss-ui Select or Combobox. They are a button (role=combobox) plus a
+ * listbox in the browser's top layer (`.tr-popover`), not a native <select>.
+ */
+export async function choose(trigger: Locator, option: string | RegExp): Promise<void> {
+  await trigger.click();
+  await trigger
+    .page()
+    .locator('.tr-popover')
+    .getByRole('option', { name: typeof option === 'string' ? startsWith(option) : option })
+    .click();
+}
 
 /** Open the mock app (fast scripted agent) and connect to the demo project. */
 export async function openApp(page: Page, delay = 2): Promise<void> {
@@ -32,7 +49,10 @@ export async function openModes(page: Page): Promise<void> {
 }
 
 export async function closeSettings(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Close settings' }).click();
+  await page
+    .getByRole('dialog', { name: 'Settings' })
+    .getByRole('button', { name: 'Close dialog' })
+    .click();
 }
 
 export async function send(page: Page, text: string): Promise<void> {

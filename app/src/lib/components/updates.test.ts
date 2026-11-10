@@ -72,7 +72,7 @@ describe('UpdateBanner', () => {
     render(UpdateBanner, { props: { updates: u } });
     await u.check();
     expect(await screen.findByText(/Linux package/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'https://code.ruck.io/' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /https:\/\/code\.ruck\.io\// })).toHaveAttribute(
       'href',
       'https://code.ruck.io/'
     );
@@ -120,7 +120,7 @@ describe('Updates settings tab', () => {
         onaddprovider: () => {}
       }
     });
-    const box = await screen.findByRole('checkbox', { name: 'Automatically download updates' });
+    const box = await screen.findByRole('switch', { name: 'Automatically download updates' });
     expect(box).toBeChecked();
     await fireEvent.click(box);
     expect(u.auto).toBe(false);

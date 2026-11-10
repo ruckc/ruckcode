@@ -108,7 +108,7 @@
         (no confirmation)</span
       >
     </div>
-    <ul class="sr-only" aria-label="Transitions">
+    <ul class="tr-visually-hidden" aria-label="Transitions">
       {#each flow.edges as e (`${e.from}>${e.to}`)}
         <li>{label(e.from)} to {label(e.to)}{e.auto ? ' (auto-advance)' : ''}</li>
       {/each}
@@ -128,54 +128,54 @@
     max-width: none;
   }
   .edge {
-    stroke: var(--muted);
+    stroke: var(--tr-on-surface-variant);
     stroke-width: 1.4;
   }
   .edge.auto {
-    stroke: var(--accent);
+    stroke: var(--tr-primary);
     stroke-width: 2.6;
   }
   .head.next {
-    fill: var(--muted);
+    fill: var(--tr-on-surface-variant);
   }
   .head.auto {
-    fill: var(--accent);
+    fill: var(--tr-primary);
   }
   .node {
     cursor: pointer;
   }
   .node rect {
-    fill: var(--surface);
-    stroke: var(--border);
+    fill: var(--tr-surface-container-low);
+    stroke: var(--tr-outline-variant);
     stroke-width: 1.2;
   }
   .node:hover rect,
   .node:focus-visible rect {
-    stroke: var(--accent);
+    stroke: var(--tr-primary);
   }
   .node.sel rect {
-    stroke: var(--accent);
+    stroke: var(--tr-primary);
     stroke-width: 2.4;
   }
   .node:focus-visible {
     outline: none;
   }
   .name {
-    fill: var(--text);
+    fill: var(--tr-on-surface);
     font-size: 13px;
     font-weight: 600;
   }
   .sub {
-    fill: var(--muted);
+    fill: var(--tr-on-surface-variant);
     font-size: 10.5px;
   }
   .legend {
     display: flex;
     gap: 16px;
     flex-wrap: wrap;
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 4px;
+    font-size: var(--tr-text-sm);
+    color: var(--tr-on-surface-variant);
+    margin-top: var(--tr-space-1);
   }
   .legend svg {
     display: inline-block;

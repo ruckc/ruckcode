@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { focusTrap } from '../a11y';
+  import { Button, Tabs } from '@ruckc/truss-ui';
   import type { SetupApi, SetupState, SetupTarget } from '../host/setup';
   import type { SettingsTab } from '../state/wizard.svelte';
   import KeysTab from './KeysTab.svelte';
@@ -8,6 +8,7 @@
   import UpdatesTab from './UpdatesTab.svelte';
   import ProvidersTab from './ProvidersTab.svelte';
   import ModesView from './ModesView.svelte';
+  import Modal from './Modal.svelte';
   import UnsavedDialog from './UnsavedDialog.svelte';
   import type { ModesApi } from '../host/modes';
 
@@ -86,141 +87,70 @@
   function select(t: SettingsTab) {
     if (t !== tab) guard(() => (tab = t));
   }
-
-  function onkeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !e.defaultPrevented) {
-      e.preventDefault();
-      close();
-    }
-  }
-
-  function tabKey(e: KeyboardEvent) {
-    const i = TABS.findIndex((t) => t.id === tab);
-    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-    if (!d) return;
-    e.preventDefault();
-    select(TABS[(i + d + TABS.length) % TABS.length].id);
-    queueMicrotask(() => document.getElementById(`tab-${tab}`)?.focus());
-  }
 </script>
 
 <svelte:window
-  {onkeydown}
   onbeforeunload={(e) => {
     if (modesDirty) e.preventDefault();
   }}
 />
 
-<div class="backdrop" role="presentation">
-  <div
-    class="dialog settings"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="settings-title"
-    use:focusTrap
-  >
-    <header>
-      <h2 id="settings-title">Settings</h2>
-      <span class="muted proj">
-        {target.project}{target.distro ? ` (WSL: ${target.distro})` : ''}
-      </span>
-      <button type="button" class="ghost" aria-label="Close settings" onclick={close}
-        >&times;</button
-      >
-    </header>
+<Modal title="Settings" size="xl" onclose={close}>
+  <p class="muted proj">
+    {target.project}{target.distro ? ` (WSL: ${target.distro})` : ''}
+  </p>
+  <Tabs
+    label="Settings"
+    tabs={TABS}
+    bind:value={() => tab, (t) => select(t as SettingsTab)}
+    {panel}
+  />
+</Modal>
 
-    <div class="tabs" role="tablist" aria-label="Settings" tabindex="-1" onkeydown={tabKey}>
-      {#each TABS as t (t.id)}
-        <button
-          type="button"
-          role="tab"
-          id={`tab-${t.id}`}
-          aria-selected={tab === t.id}
-          aria-controls={`panel-${t.id}`}
-          tabindex={tab === t.id ? 0 : -1}
-          onclick={() => select(t.id)}>{t.label}</button
-        >
-      {/each}
-    </div>
-
-    <div class="panel" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-      {#if tab === 'updates' && updates}
-        <UpdatesTab {updates} />
-      {:else if loadError}
-        <p class="err" role="alert">{loadError}</p>
-        <button type="button" onclick={() => load()}>Retry</button>
-      {:else if !info}
-        <p class="muted" role="status">Loading...</p>
-      {:else if tab === 'providers'}
-        <ProvidersTab {info} onadd={onaddprovider} />
-      {:else if tab === 'modes' && modesApi}
-        <ModesView
-          api={modesApi}
-          {target}
-          ondirty={(d) => (modesDirty = d)}
-          {canReconnect}
-          {onreconnect}
-        />
-      {:else if tab === 'keys'}
-        <KeysTab {api} {target} {info} onchange={changed} />
-      {:else}
-        <ProjectTab {api} {target} {info} onchange={changed} />
-      {/if}
-    </div>
+{#snippet panel()}
+  <div class="panel">
+    {#if tab === 'updates' && updates}
+      <UpdatesTab {updates} />
+    {:else if loadError}
+      <p class="err" role="alert">{loadError}</p>
+      <Button variant="outlined" onclick={() => load()}>Retry</Button>
+    {:else if !info}
+      <p class="muted" role="status">Loading...</p>
+    {:else if tab === 'providers'}
+      <ProvidersTab {info} onadd={onaddprovider} />
+    {:else if tab === 'modes' && modesApi}
+      <ModesView
+        api={modesApi}
+        {target}
+        ondirty={(d) => (modesDirty = d)}
+        {canReconnect}
+        {onreconnect}
+      />
+    {:else if tab === 'keys'}
+      <KeysTab {api} {target} {info} onchange={changed} />
+    {:else}
+      <ProjectTab {api} {target} {info} onchange={changed} />
+    {/if}
   </div>
-</div>
+{/snippet}
 
 {#if pending}
   <UnsavedDialog onkeep={() => (pending = null)} ondiscard={discard} />
 {/if}
 
 <style>
-  .settings {
-    width: min(1000px, 96vw);
-    height: min(760px, 92vh);
-    max-height: 92vh;
-    display: flex;
-    flex-direction: column;
-  }
-  header {
-    display: flex;
-    gap: 10px;
-    align-items: baseline;
-  }
-  header h2 {
-    margin: 0;
-  }
   .proj {
-    flex: 1;
-    min-width: 0;
+    margin: 0 0 var(--tr-space-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-  }
-  .tabs {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--border);
-    margin: 8px 0;
-    flex-wrap: wrap;
-  }
-  .tabs button {
-    border: 1px solid transparent;
-    border-bottom: 2px solid transparent;
-    border-radius: 6px 6px 0 0;
-    background: none;
-  }
-  .tabs button[aria-selected='true'] {
-    border-bottom-color: var(--accent);
-    font-weight: 600;
+    font-size: var(--tr-text-sm);
   }
   .panel {
-    overflow: auto;
     min-height: 200px;
-    padding: 2px;
+    padding: var(--tr-space-3) 2px 2px;
   }
   .err {
-    color: var(--err);
+    color: var(--tr-danger);
   }
 </style>

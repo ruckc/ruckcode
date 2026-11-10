@@ -5,4 +5,6 @@ if (typeof document !== 'undefined') {
   await import('@testing-library/jest-dom/vitest');
   const { cleanup } = await import('@testing-library/svelte');
   afterEach(() => cleanup());
+  // truss-ui's stubs for what jsdom lacks (<dialog>, popovers, ResizeObserver, matchMedia).
+  await import('@ruckc/truss-ui/testing');
 }
