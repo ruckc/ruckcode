@@ -11,23 +11,3 @@ body {
 .muted {
   color: var(--tr-on-surface-variant);
 }
-
-/* Plain data tables (providers, keys, permissions): truss-ui has no static table primitive yet (TODO(truss-ui#141)). */
-table.data {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--tr-text-sm);
-}
-
-table.data th,
-table.data td {
-  text-align: left;
-  padding: var(--tr-space-1) var(--tr-space-2);
-  border-bottom: 1px solid var(--tr-outline-variant);
-  vertical-align: middle;
-}
-
-table.data th {
-  color: var(--tr-on-surface-variant);
-  font-weight: 600;
-}

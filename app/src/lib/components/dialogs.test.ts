@@ -125,7 +125,7 @@ describe('AskDialog', () => {
     await fireEvent.click(screen.getByRole('tab', { name: /Features/ }));
     await fireEvent.click(screen.getByLabelText(/auth/));
     await fireEvent.click(screen.getByLabelText(/metrics/));
-    await fireEvent.input(screen.getByLabelText('Other answer'), { target: { value: ' search ' } });
+    await fireEvent.input(screen.getByLabelText('Other'), { target: { value: ' search ' } });
     expect(submit).toBeEnabled();
     await fireEvent.click(submit);
     expect(resolve).toHaveBeenCalledWith({
@@ -141,7 +141,7 @@ describe('AskDialog', () => {
     const { pending, resolve } = question();
     render(AskDialog, { pending });
     await fireEvent.click(screen.getByLabelText(/sqlite/));
-    await fireEvent.input(screen.getByLabelText('Other answer'), { target: { value: 'duckdb' } });
+    await fireEvent.input(screen.getByLabelText('Other'), { target: { value: 'duckdb' } });
     await fireEvent.click(screen.getByRole('tab', { name: /Features/ }));
     await fireEvent.click(screen.getByLabelText(/auth/));
     await fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
@@ -155,7 +155,7 @@ describe('AskDialog', () => {
   it('number keys pick options, Alt+Arrow moves between questions, Escape cancels', async () => {
     const { pending, resolve } = question();
     render(AskDialog, { pending });
-    const dlg = screen.getByRole('dialog');
+    const dlg = screen.getByRole('group', { name: 'Questions' });
     await fireEvent.keyDown(dlg, { key: '2' });
     expect(screen.getByLabelText(/postgres/)).toBeChecked();
     await fireEvent.keyDown(dlg, { key: 'ArrowRight', altKey: true });

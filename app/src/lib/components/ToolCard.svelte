@@ -1,9 +1,8 @@
 <script lang="ts">
   import { ToolCall } from '@ruckc/truss-chat';
-  import { Button } from '@ruckc/truss-ui';
-  import { truncateLines } from '../format';
   import type { ToolItem } from '../state/reducer';
   import DiffPanel from './DiffPanel.svelte';
+  import KindIcon from './KindIcon.svelte';
 
   let { tool }: { tool: ToolItem } = $props();
   const LIMIT = 12;
@@ -11,8 +10,6 @@
   // Failures, running calls and anything with a diff start open; quiet successes start closed.
   let userOpen = $state<boolean | null>(null);
   const open = $derived(userOpen ?? (tool.diffs.length > 0 || tool.status !== 'completed'));
-  let showAll = $state(false);
-  const out = $derived(truncateLines(tool.output, LIMIT));
   const hasBody = $derived(
     tool.output !== '' ||
       tool.diffs.length > 0 ||
@@ -20,6 +17,8 @@
       tool.rawInput != null
   );
 </script>
+
+{#snippet leading()}<KindIcon kind={tool.toolKind} />{/snippet}
 
 {#snippet details()}
   <p class="kind muted">Kind: {tool.toolKind.replace('_', ' ')}</p>
@@ -33,19 +32,16 @@
   {#each tool.diffs as d, i (i)}
     <DiffPanel diff={d} />
   {/each}
-  {#if out.hidden > 0}
-    <Button variant="minimal" size="sm" onclick={() => (showAll = !showAll)}>
-      {showAll ? 'Show less' : `Show all (${out.hidden} more lines)`}
-    </Button>
-  {/if}
 {/snippet}
 
-<!-- TODO(truss-ui#137): per-kind icon/meta slot, output line limit with "show all", and an Input toggle on ToolCall. -->
 <ToolCall
   name={tool.title}
   status={tool.status}
   input={tool.rawInput ?? undefined}
-  output={tool.output ? (showAll ? tool.output : out.shown) : undefined}
+  inputOpen={false}
+  output={tool.output || undefined}
+  maxOutputLines={LIMIT}
+  {leading}
   details={hasBody ? details : undefined}
   bind:open={() => open, (v) => (userOpen = v)}
   data-testid="tool-card"

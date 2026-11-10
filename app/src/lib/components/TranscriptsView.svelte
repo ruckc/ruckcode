@@ -314,6 +314,7 @@
           onchange={(v) => (tab = v as 'timeline' | 'metrics')}
           panel={false}
           controls={(id) => (id === tab ? 'transcript-panel' : undefined)}
+          tabId={(id) => `transcript-tab-${id}`}
         />
         <span class="muted loaded" data-testid="loaded"
           >{d.records.length.toLocaleString()} of {d.total.toLocaleString()} records loaded</span
@@ -327,7 +328,7 @@
         bind:this={scroller}
         role="tabpanel"
         id="transcript-panel"
-        aria-label={tab === 'timeline' ? 'Timeline view' : 'Metrics view'}
+        aria-labelledby={`transcript-tab-${tab}`}
         tabindex="-1"
       >
         {#if tab === 'timeline'}

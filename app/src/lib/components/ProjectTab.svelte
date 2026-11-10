@@ -43,7 +43,7 @@
     {#if target.distro}<span class="muted">(WSL: {target.distro})</span>{/if}
   </p>
   {#if error}<Callout intent="danger">{error}</Callout>{/if}
-  {#if notice}<div role="status"><Callout intent="success">{notice}</Callout></div>{/if}
+  {#if notice}<Callout intent="success" role="status">{notice}</Callout>{/if}
   {#if modes.status === 'missing'}
     <div class="box">
       <strong>No modes.toml</strong>

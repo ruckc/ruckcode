@@ -33,7 +33,6 @@
     menu: MenuEntry[];
   } = $props();
 
-  // TODO(truss-ui#148): this is a meter (role=meter, valuetext), not task progress.
   const modelOpt = $derived(
     model?.configOptions.find((o) => o.id === 'model' || o.category === 'model')
   );
@@ -105,6 +104,8 @@
           size="sm"
           intent={pct >= 80 ? 'danger' : 'primary'}
           label="Context window usage"
+          role="meter"
+          valueText={`${model.usage.used} of ${model.usage.size} tokens`}
         />
       </div>
     {/if}

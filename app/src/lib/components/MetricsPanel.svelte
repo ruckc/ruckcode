@@ -47,22 +47,20 @@
 
 <div class="metrics" data-testid="metrics">
   {#if partial}
-    <div role="status">
-      <Callout intent="primary">
-        Based on {records.length.toLocaleString()} of {total.toLocaleString()} records.
-        {#snippet actions()}
-          <Button
-            variant="outlined"
-            intent="neutral"
-            size="sm"
-            disabled={loading}
-            onclick={onloadall}
-          >
-            {loading ? 'Loading...' : 'Load all records'}
-          </Button>
-        {/snippet}
-      </Callout>
-    </div>
+    <Callout intent="primary" role="status">
+      Based on {records.length.toLocaleString()} of {total.toLocaleString()} records.
+      {#snippet actions()}
+        <Button
+          variant="outlined"
+          intent="neutral"
+          size="sm"
+          disabled={loading}
+          onclick={onloadall}
+        >
+          {loading ? 'Loading...' : 'Load all records'}
+        </Button>
+      {/snippet}
+    </Callout>
   {/if}
 
   {#if m.requests.length === 0}

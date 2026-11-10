@@ -1,11 +1,20 @@
 <script lang="ts">
-  import { Badge, Button, Callout, Checkbox, RadioGroup, Select, Tag } from '@ruckc/truss-ui';
+  import {
+    Badge,
+    Button,
+    Callout,
+    CheckboxGroup,
+    RadioGroup,
+    ReorderList,
+    Select,
+    Tag
+  } from '@ruckc/truss-ui';
   import { untrack } from 'svelte';
   import type { ModesApi, TemplateInfo } from '../host/modes';
   import type { SetupTarget } from '../host/setup';
   import { displayName, issuesAt } from '../modes/doc';
   import { ModesEditor } from '../state/modes.svelte';
-  import DiffText from './DiffText.svelte';
+  import { PatchText } from '@ruckc/truss-code/lite';
   import FlowDiagram from './FlowDiagram.svelte';
   import HooksEditor from './HooksEditor.svelte';
   import ModeForm from './ModeForm.svelte';
@@ -55,30 +64,23 @@
     }
   }
 
-  // ----- reordering by drag and drop -----
-  let dragFrom = $state<number | null>(null);
-  let dragOver = $state<number | null>(null);
-  function drop(to: number) {
-    if (dragFrom !== null) {
-      const id = editor.doc.modes[dragFrom]?.id;
-      if (id) editor.move(id, to);
-    }
-    dragFrom = dragOver = null;
-  }
-
   const addOptions = $derived([
     { value: 'blank', label: 'Blank mode' },
     { value: 'duplicate', label: 'Duplicate selected', disabled: !editor.selectedMode },
-    ...fullTemplates.map((t) => ({
-      value: `full:${t.mode.id}`,
-      label: displayName(t.mode),
-      description: 'Lifecycle template'
-    })),
-    ...minimalTemplates.map((t) => ({
-      value: `minimal:${t.mode.id}`,
-      label: displayName(t.mode),
-      description: 'Minimal template'
-    }))
+    {
+      group: 'Lifecycle templates',
+      options: fullTemplates.map((t) => ({
+        value: `full:${t.mode.id}`,
+        label: displayName(t.mode)
+      }))
+    },
+    {
+      group: 'Minimal templates',
+      options: minimalTemplates.map((t) => ({
+        value: `minimal:${t.mode.id}`,
+        label: displayName(t.mode)
+      }))
+    }
   ]);
   const defaultOptions = $derived([
     ...(editor.doc.modes.some((m) => m.id === editor.doc.defaultMode)
@@ -156,24 +158,19 @@
         </p>
       {/if}
       {#if editor.problem}<Callout intent="danger">{editor.problem}</Callout>{/if}
-      {#if editor.initialized}<div role="status">
-          <Callout intent="success">{editor.initialized}</Callout>
-        </div>{/if}
+      {#if editor.initialized}<Callout intent="success" role="status">{editor.initialized}</Callout
+        >{/if}
       <RadioGroup label="Template" options={initOptions} bind:value={initKind} />
       {#if initKind === 'subset'}
-        <ul class="plain subset" aria-label="Modes to create">
-          {#each fullTemplates as t (t.mode.id)}
-            <li>
-              <Checkbox
-                label={t.mode.id}
-                description={t.mode.description}
-                checked={subset.includes(t.mode.id)}
-                oncheckedchange={(on) =>
-                  (subset = on ? [...subset, t.mode.id] : subset.filter((x) => x !== t.mode.id))}
-              />
-            </li>
-          {/each}
-        </ul>
+        <CheckboxGroup
+          label="Modes to create"
+          options={fullTemplates.map((t) => ({
+            value: t.mode.id,
+            label: t.mode.id,
+            description: t.mode.description
+          }))}
+          bind:value={subset}
+        />
       {/if}
       <div class="actions">
         {#if editor.status === 'broken'}
@@ -265,18 +262,16 @@
             Only the lines below change; comments and formatting elsewhere in <code>modes.toml</code
             > stay as they are.
           </p>
-          <DiffText text={editor.diff} label="Changes to modes.toml" maxHeight="62vh" />
+          <PatchText text={editor.diff} label="Changes to modes.toml" maxHeight="62vh" />
         {:else}
           <p class="muted">No changes to write.</p>
         {/if}
         {#if editor.rewritten.length}
-          <div role="status">
-            <Callout intent="warning">
-              Written out fresh (their layout cannot be edited in place, so comments in them are
-              lost):
-              {editor.rewritten.join(', ')}.
-            </Callout>
-          </div>
+          <Callout intent="warning" role="status">
+            Written out fresh (their layout cannot be edited in place, so comments in them are
+            lost):
+            {editor.rewritten.join(', ')}.
+          </Callout>
         {/if}
         <div class="actions">
           <Button
@@ -299,61 +294,26 @@
             aria-current={editor.selected === null ? 'true' : undefined}
             onclick={() => editor.select(null)}>Overview &amp; flow</Button
           >
-          <ul aria-label="Modes list">
-            {#each editor.doc.modes as m, i (m.originalId ?? `new-${i}`)}
-              <!-- TODO(truss-ui#145): no reorderable/selectable list row (pick + move arrows + drag handle);
-                   a minimal custom row is composed from a native button, Tag and icon Buttons. -->
-              <li
-                class:sel={m.id === editor.selected}
-                class:over={dragOver === i && dragFrom !== i}
-                draggable="true"
-                ondragstart={() => (dragFrom = i)}
-                ondragover={(e) => {
-                  e.preventDefault();
-                  dragOver = i;
-                }}
-                ondrop={(e) => {
-                  e.preventDefault();
-                  drop(i);
-                }}
-                ondragend={() => (dragFrom = dragOver = null)}
-              >
-                <button
-                  type="button"
-                  class="pick"
-                  aria-current={m.id === editor.selected ? 'true' : undefined}
-                  onclick={() => editor.select(m.id)}
-                >
-                  <span class="nm">{displayName(m)}</span>
-                  <code>{m.id}</code>
-                  {#if m.id === editor.doc.defaultMode}<Tag size="sm">default</Tag>{/if}
-                  {#if m.originalId === undefined}<Tag size="sm" intent="success">new</Tag>{/if}
-                  {#if modeHasError(i)}<span class="dot" title="Has errors" aria-label="has errors"
-                    ></span>{/if}
-                </button>
-                <span class="mv">
-                  <Button
-                    size="sm"
-                    variant="minimal"
-                    intent="neutral"
-                    icon="arrow-up"
-                    disabled={i === 0}
-                    aria-label={`Move ${m.id} up`}
-                    onclick={() => editor.move(m.id, i - 1)}
-                  />
-                  <Button
-                    size="sm"
-                    variant="minimal"
-                    intent="neutral"
-                    icon="arrow-down"
-                    disabled={i === editor.doc.modes.length - 1}
-                    aria-label={`Move ${m.id} down`}
-                    onclick={() => editor.move(m.id, i + 1)}
-                  />
-                </span>
-              </li>
-            {/each}
-          </ul>
+          <ReorderList
+            label="Modes list"
+            items={editor.doc.modes}
+            getKey={(m) => m.id}
+            getLabel={(m) => m.id}
+            selected={editor.selected ?? undefined}
+            buttons
+            handles
+            onselect={(id) => editor.select(id)}
+            onreorder={(from, to) => editor.move(editor.doc.modes[from].id, to)}
+          >
+            {#snippet item(m, i)}
+              <span class="nm">{displayName(m)}</span>
+              <code>{m.id}</code>
+              {#if m.id === editor.doc.defaultMode}<Tag size="sm">default</Tag>{/if}
+              {#if m.originalId === undefined}<Tag size="sm" intent="success">new</Tag>{/if}
+              {#if modeHasError(i)}<span class="dot" title="Has errors" aria-label="has errors"
+                ></span>{/if}
+            {/snippet}
+          </ReorderList>
           <div class="add">
             <div class="grow">
               <Select
@@ -522,53 +482,8 @@
     gap: var(--tr-space-2);
     align-content: start;
   }
-  .list ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: var(--tr-space-1);
-  }
-  .list li {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    border: 1px solid var(--tr-outline-variant);
-    border-radius: var(--tr-radius-md);
-    background: var(--tr-surface-container-low);
-  }
-  .list li.sel {
-    border-color: var(--tr-primary);
-  }
-  .list li.over {
-    border-top: 3px solid var(--tr-primary);
-  }
-  .pick {
-    flex: 1;
-    min-width: 0;
-    text-align: left;
-    border: none;
-    background: none;
-    color: inherit;
-    font: inherit;
-    padding: var(--tr-space-2);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px var(--tr-space-2);
-    align-items: center;
-    cursor: grab;
-    border-radius: var(--tr-radius-md);
-  }
-  .pick:focus-visible {
-    outline: none;
-    box-shadow: var(--tr-focus-ring);
-  }
   .nm {
     font-weight: 600;
-  }
-  .mv {
-    display: flex;
-    padding-right: 2px;
   }
   .dot {
     width: 8px;
@@ -629,11 +544,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--tr-space-1) var(--tr-space-2);
-  }
-  .plain {
-    list-style: none;
-    margin: 0;
-    padding: 0 0 0 var(--tr-space-5);
   }
   .review {
     display: grid;

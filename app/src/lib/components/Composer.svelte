@@ -27,12 +27,10 @@
   } = $props();
 
   let text = $state('');
-  let root: HTMLElement | undefined = $state();
+  let composer: ReturnType<typeof ChatComposer> | undefined = $state();
   /** Position in `history` while recalling (history.length = not recalling). */
   let cursor = $state(-1);
   let draft = '';
-
-  const field = () => root?.querySelector('textarea') ?? null;
 
   /** Commands matching a `/name` being typed (before any argument). */
   const matches = $derived.by(() => {
@@ -49,13 +47,13 @@
   function complete(c: CommandInfo) {
     text = `/${c.name}${c.hint ? ' ' : ''}`;
     queueMicrotask(() => {
-      field()?.focus();
-      field()?.setSelectionRange(text.length, text.length);
+      composer?.focus();
+      composer?.select(text.length, text.length);
     });
   }
 
   export function focus() {
-    field()?.focus();
+    composer?.focus();
   }
 
   function recall(delta: -1 | 1) {
@@ -74,35 +72,32 @@
       cursor = n;
       text = history[n];
     }
-    queueMicrotask(() => field()?.setSelectionRange(text.length, text.length));
+    queueMicrotask(() => composer?.select(text.length, text.length));
     return true;
   }
 
   /**
-   * TODO(truss-ui#136): ChatComposer needs focus() and a key hook; until then, a capture-phase handler.
-   * truss-chat's composer owns Enter (send) and Shift+Enter; this capture-phase handler adds what
+   * truss-chat's composer owns Enter (send) and Shift+Enter; this hook runs first and adds what
    * ruckcode needs on top: slash-command completion, Esc to stop and Up/Down prompt history.
+   * `preventDefault()` keeps the composer from also acting on the key.
    */
-  function onkeydowncapture(e: KeyboardEvent) {
+  function onkeydown(e: KeyboardEvent) {
     if (e.isComposing) return;
     if (matches.length) {
       const c = matches[pick];
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
-        e.stopPropagation();
         const d = e.key === 'ArrowDown' ? 1 : -1;
         pick = (pick + d + matches.length) % matches.length;
         return;
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && text !== `/${c.name}`)) {
         e.preventDefault();
-        e.stopPropagation();
         complete(c);
         return;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        e.stopPropagation();
         text = '';
         return;
       }
@@ -127,7 +122,7 @@
   }
 </script>
 
-<div class="composer" bind:this={root}>
+<div class="composer">
   {#if queue.length}
     <ol class="queue" aria-label="Queued prompts">
       {#each queue as q, i (i)}
@@ -165,14 +160,16 @@
     </ul>
   {/if}
   <ChatComposer
+    bind:this={composer}
     bind:value={text}
+    trim={false}
     {disabled}
     {placeholder}
     label="Prompt"
     sendLabel={running ? 'Queue' : 'Send'}
     maxRows={8}
     onsend={send}
-    {onkeydowncapture}
+    {onkeydown}
     oninput={() => {
       if (cursor !== -1) cursor = -1;
     }}

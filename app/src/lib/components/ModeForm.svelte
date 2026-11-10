@@ -1,9 +1,18 @@
 <script lang="ts">
-  import { Badge, Button, Callout, Checkbox, Input, Select, Textarea } from '@ruckc/truss-ui';
+  import {
+    Badge,
+    Button,
+    Callout,
+    Checkbox,
+    CheckboxGroup,
+    Input,
+    Select,
+    TagInput,
+    Textarea
+  } from '@ruckc/truss-ui';
   import type { ModesEditor } from '../state/modes.svelte';
   import { displayName, issuesAt, toggle } from '../modes/doc';
   import { globMatches, globProblem, globToRegExp } from '../modes/glob';
-  import ChipInput from './ChipInput.svelte';
   import HooksEditor from './HooksEditor.svelte';
   import IssueList from './IssueList.svelte';
   import PermissionsTable from './PermissionsTable.svelte';
@@ -195,9 +204,9 @@
           {/each}
         </ul>
         <p class="muted small">Other tool names (for example <code>mise__test</code>):</p>
-        <ChipInput
-          bind:values={() => extraTools, setExtraTools}
-          label="Other tools"
+        <TagInput
+          bind:value={() => extraTools, setExtraTools}
+          ariaLabel="Other tools"
           placeholder="Tool name"
         />
       {:else}
@@ -212,13 +221,13 @@
         Task names or globs (<code>test*</code>) the agent can run as tools in this mode.
         {taskNames.length} task{taskNames.length === 1 ? '' : 's'} discovered.
       </p>
-      <ChipInput
-        bind:values={m.miseTasks}
-        label="Mise tasks"
+      <TagInput
+        bind:value={m.miseTasks}
+        ariaLabel="Mise tasks"
         suggestions={taskNames}
         placeholder="Task or glob, e.g. test*"
-        problem={(v) => globProblem(v) && `Invalid glob: ${globProblem(v)}`}
-        preview={taskPreview}
+        warn={(v) => (globProblem(v) ? `Invalid glob: ${globProblem(v)}` : undefined)}
+        note={(v) => taskPreview(v) ?? undefined}
       />
       <IssueList issues={issuesAt(editor.issues, `${p}.miseTasks`)} />
     </section>
@@ -229,13 +238,13 @@
         Globs over full MCP tool names (<code>mcp__&lt;server&gt;__&lt;tool&gt;</code>). Empty: no
         MCP tools in this mode.
       </p>
-      <ChipInput
-        bind:values={m.mcpTools}
-        label="MCP tools"
+      <TagInput
+        bind:value={m.mcpTools}
+        ariaLabel="MCP tools"
         suggestions={['mcp__*', ...servers.map((s) => `mcp__${s}__*`)]}
         placeholder="Glob, e.g. mcp__github__*"
-        problem={(v) => globProblem(v) && `Invalid glob: ${globProblem(v)}`}
-        preview={mcpPreview}
+        warn={(v) => (globProblem(v) ? `Invalid glob: ${globProblem(v)}` : undefined)}
+        note={(v) => mcpPreview(v) ?? undefined}
       />
       <IssueList issues={issuesAt(editor.issues, `${p}.mcpTools`)} />
     </section>
@@ -244,41 +253,26 @@
       <h3 id="sec-next">Transitions</h3>
       {#if others.length}
         <div class="two">
-          <!-- TODO(truss-ui#149): no Fieldset/CheckboxGroup component (RadioGroup is the only grouped control). -->
-          <fieldset>
-            <legend>Can switch to</legend>
-            <ul class="plain">
-              {#each others as o (o.id)}
-                <li>
-                  <Checkbox
-                    checked={m.next.includes(o.id)}
-                    oncheckedchange={(on) => (m.next = toggle(m.next, o.id, on))}
-                    aria-label={`next: ${o.id}`}
-                  >
-                    {displayName(o)} <code>{o.id}</code>
-                  </Checkbox>
-                </li>
-              {/each}
-            </ul>
-            <p class="muted small">None selected: SwitchMode may target any other mode.</p>
-          </fieldset>
-          <fieldset>
-            <legend>Auto-advance to</legend>
-            <ul class="plain">
-              {#each others as o (o.id)}
-                <li>
-                  <Checkbox
-                    checked={m.autoAdvanceTo.includes(o.id)}
-                    oncheckedchange={(on) => (m.autoAdvanceTo = toggle(m.autoAdvanceTo, o.id, on))}
-                    aria-label={`auto-advance: ${o.id}`}
-                  >
-                    {displayName(o)} <code>{o.id}</code>
-                  </Checkbox>
-                </li>
-              {/each}
-            </ul>
-            <p class="muted small">These switches happen without asking you first.</p>
-          </fieldset>
+          <CheckboxGroup
+            label="Can switch to"
+            description="None selected: SwitchMode may target any other mode."
+            options={others.map((o) => ({
+              value: o.id,
+              label: `${displayName(o)} (${o.id})`,
+              attrs: { 'aria-label': `next: ${o.id}` }
+            }))}
+            bind:value={() => m.next, (v) => (m.next = v)}
+          />
+          <CheckboxGroup
+            label="Auto-advance to"
+            description="These switches happen without asking you first."
+            options={others.map((o) => ({
+              value: o.id,
+              label: `${displayName(o)} (${o.id})`,
+              attrs: { 'aria-label': `auto-advance: ${o.id}` }
+            }))}
+            bind:value={() => m.autoAdvanceTo, (v) => (m.autoAdvanceTo = v)}
+          />
         </div>
       {:else}
         <p class="muted small">Add another mode to define transitions.</p>
@@ -422,26 +416,10 @@
     align-items: center;
   }
   .tools,
-  .plain {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
   .tools {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: var(--tr-space-1) var(--tr-space-3);
-  }
-  fieldset {
-    border: 1px solid var(--tr-outline-variant);
-    border-radius: var(--tr-radius-md);
-    margin: 0;
-    padding: var(--tr-space-1) var(--tr-space-3) var(--tr-space-2);
-  }
-  legend {
-    font-size: var(--tr-text-sm);
-    color: var(--tr-on-surface-variant);
-    padding: 0 var(--tr-space-1);
   }
   .danger-zone {
     border-top: 1px solid var(--tr-outline-variant);

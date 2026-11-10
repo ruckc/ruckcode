@@ -7,10 +7,11 @@
     RadioGroup,
     Select,
     Spinner,
-    Stepper
+    Stepper,
+    Table
   } from '@ruckc/truss-ui';
   import { STEPS, STEP_LABEL, choiceValue, type SetupWizard } from '../state/wizard.svelte';
-  import DiffText from './DiffText.svelte';
+  import { PatchText } from '@ruckc/truss-code/lite';
 
   let {
     wizard,
@@ -51,12 +52,12 @@
   const everyFilteredSelected = $derived(
     w.filtered.length > 0 && w.filtered.every((m) => w.selected.includes(m))
   );
-  /** One flat option list per mode: truss-ui's Select has no option groups yet. */
   const choiceOptions = (initial: string) => [
     { value: '', label: 'Profile default' },
-    ...w.choiceGroups.flatMap((g) =>
-      g.models.map((m) => ({ value: choiceValue(g.profile, m), label: `${g.profile}: ${m}` }))
-    ),
+    ...w.choiceGroups.map((g) => ({
+      group: g.profile,
+      options: g.models.map((m) => ({ value: choiceValue(g.profile, m), label: m }))
+    })),
     ...(initial &&
     !w.choiceGroups.some((g) => g.models.some((m) => choiceValue(g.profile, m) === initial))
       ? [{ value: initial, label: `${initial.replace(/^::/, '')} (current)` }]
@@ -287,24 +288,21 @@
             Pick a model per mode, or keep the profile default. Only changed modes are written to
             .ruckcode/modes.toml.
           </p>
-          <table class="data modes">
-            <thead><tr><th>Mode</th><th>Model</th></tr></thead>
-            <tbody>
-              {#each w.modeRows as r (r.id)}
-                <tr>
-                  <td><code>{r.id}</code><br /><span class="muted">{r.description}</span></td>
-                  <td>
-                    <Select
-                      ariaLabel={`Model for mode ${r.id}`}
-                      size="sm"
-                      bind:value={w.choices[r.id]}
-                      options={choiceOptions(r.initial)}
-                    />
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <Table columns={['Mode', 'Model']}>
+            {#each w.modeRows as r (r.id)}
+              <tr>
+                <td><code>{r.id}</code><br /><span class="muted">{r.description}</span></td>
+                <td>
+                  <Select
+                    ariaLabel={`Model for mode ${r.id}`}
+                    size="sm"
+                    bind:value={w.choices[r.id]}
+                    options={choiceOptions(r.initial)}
+                  />
+                </td>
+              </tr>
+            {/each}
+          </Table>
         {:else if w.state.modes.status === 'missing'}
           <div class="box">
             <p>
@@ -334,7 +332,7 @@
           <Callout intent="danger">{w.diffError}</Callout>
         {:else}
           <p class="muted">Review what will be written. API keys are never shown.</p>
-          <DiffText text={w.diff} />
+          <PatchText text={w.diff} label="Changes to be written" maxHeight="340px" />
         {/if}
       {/if}
       {#if w.problem && w.step !== 'review' && w.step !== 'endpoint'}
@@ -427,8 +425,5 @@
     display: flex;
     gap: var(--tr-space-2);
     align-items: center;
-  }
-  .modes td {
-    vertical-align: top;
   }
 </style>

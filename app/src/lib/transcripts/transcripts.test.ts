@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeTranscripts, seedSessions } from '../host/fake-transcripts';
 import type { RecordType, TranscriptRecord } from '../host/transcripts';
-import { parsePatch } from '@ruckc/truss-code';
+import { parsePatch } from '@ruckc/truss-code/lite';
 import { distinct, filterItems, sortItems } from './list';
 import { computeMetrics } from './metrics';
 import { buildTimeline, keyForRecord, toMarkdown } from './timeline';

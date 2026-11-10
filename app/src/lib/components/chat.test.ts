@@ -32,6 +32,8 @@ describe('ToolCard', () => {
     expect(out.textContent).not.toContain('line 12');
     await fireEvent.click(screen.getByRole('button', { name: /Show all \(18 more lines\)/ }));
     expect(out.textContent).toContain('line 29');
+    expect(screen.queryByLabelText('Input')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show input' }));
     expect(screen.getByLabelText('Input').textContent).toContain('"command": "cargo test"');
   });
 
@@ -115,8 +117,10 @@ describe('ChatView', () => {
     expect(screen.getByTestId('user-msg')).toHaveTextContent('hello');
     expect(screen.getByRole('button', { name: /Show reasoning/ })).toBeInTheDocument();
     expect(screen.getByTestId('assistant-msg')).toHaveTextContent('answer');
-    expect(screen.getByRole('alert')).toHaveTextContent('Careful');
-    expect(screen.getByRole('alert')).toHaveTextContent('details');
+    const notice = document.querySelector('[data-severity="warning"]');
+    expect(notice).toHaveAttribute('role', 'status');
+    expect(notice).toHaveTextContent('Careful');
+    expect(notice).toHaveTextContent('details');
     expect(screen.getByTestId('turn-end')).toHaveTextContent('Cancelled');
     expect(screen.getByTestId('turn-end')).toHaveTextContent('cancelled');
   });

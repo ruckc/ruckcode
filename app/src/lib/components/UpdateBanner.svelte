@@ -31,79 +31,80 @@
       </div>
     </div>
   {:else}
-    <div role="status" data-testid="update-banner" data-phase={updates.phase}>
-      <Callout intent={updates.phase === 'error' ? 'danger' : busy ? 'warning' : 'primary'}>
-        {#if updates.phase === 'ready' || updates.phase === 'installing'}
-          <strong>Update v{updates.version} ready.</strong>
-          {#if busy}
-            An agent is working, so restarting now would interrupt it. Restart once it is done.
-          {:else if openSessions > 0}
-            <span class="muted">
-              {openSessions === 1 ? 'The open session ends' : `${openSessions} open sessions end`}
-              on restart (resume from the sidebar).
-            </span>
-          {/if}
-          {#if platform === 'windows'}
-            <span class="muted">
-              After restarting, a WSL project offers to update rc to match.
-            </span>
-          {/if}
-        {:else if updates.phase === 'available'}
-          <strong>Update v{updates.version} is available.</strong>
-          <span class="muted">Automatic downloads are off.</span>
-        {:else if updates.phase === 'manual'}
-          <strong>Update v{updates.version} is available.</strong>
-          <span class="muted">{updates.reason}</span>
-          <Link href={updates.downloadPage} external>{updates.downloadPage}</Link>
-        {:else}
-          <strong>Update v{updates.version} failed.</strong>
-          {updates.error}
+    <Callout
+      intent={updates.phase === 'error' ? 'danger' : busy ? 'warning' : 'primary'}
+      role="status"
+      data-testid="update-banner"
+      data-phase={updates.phase}
+    >
+      {#if updates.phase === 'ready' || updates.phase === 'installing'}
+        <strong>Update v{updates.version} ready.</strong>
+        {#if busy}
+          An agent is working, so restarting now would interrupt it. Restart once it is done.
+        {:else if openSessions > 0}
+          <span class="muted">
+            {openSessions === 1 ? 'The open session ends' : `${openSessions} open sessions end`}
+            on restart (resume from the sidebar).
+          </span>
         {/if}
-        {#snippet actions()}
-          {#if updates.notes}
-            <Button
-              variant="minimal"
-              intent="neutral"
-              aria-expanded={notes}
-              onclick={() => (notes = !notes)}
-            >
-              Release notes
+        {#if platform === 'windows'}
+          <span class="muted"> After restarting, a WSL project offers to update rc to match. </span>
+        {/if}
+      {:else if updates.phase === 'available'}
+        <strong>Update v{updates.version} is available.</strong>
+        <span class="muted">Automatic downloads are off.</span>
+      {:else if updates.phase === 'manual'}
+        <strong>Update v{updates.version} is available.</strong>
+        <span class="muted">{updates.reason}</span>
+        <Link href={updates.downloadPage} external>{updates.downloadPage}</Link>
+      {:else}
+        <strong>Update v{updates.version} failed.</strong>
+        {updates.error}
+      {/if}
+      {#snippet actions()}
+        {#if updates.notes}
+          <Button
+            variant="minimal"
+            intent="neutral"
+            aria-expanded={notes}
+            onclick={() => (notes = !notes)}
+          >
+            Release notes
+          </Button>
+        {/if}
+        {#if updates.phase === 'ready' || updates.phase === 'installing'}
+          {#if busy && !confirmForce}
+            <Button variant="outlined" onclick={() => (confirmForce = true)}>
+              Restart anyway…
             </Button>
-          {/if}
-          {#if updates.phase === 'ready' || updates.phase === 'installing'}
-            {#if busy && !confirmForce}
-              <Button variant="outlined" onclick={() => (confirmForce = true)}>
-                Restart anyway…
-              </Button>
-            {:else if busy && confirmForce}
-              <Button
-                intent="danger"
-                onclick={() => {
-                  confirmForce = false;
-                  void updates.restartNow(true);
-                }}>Interrupt the agent and restart</Button
-              >
-              <Button variant="outlined" onclick={() => (confirmForce = false)}>Cancel</Button>
-            {:else}
-              <Button
-                disabled={updates.phase === 'installing'}
-                onclick={() => void updates.restartNow()}
-                >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</Button
-              >
-            {/if}
-            <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
-          {:else if updates.phase === 'available'}
-            <Button onclick={() => void updates.download()}>Download</Button>
-            <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
-          {:else if updates.phase === 'error'}
-            <Button onclick={() => void updates.download()}>Retry</Button>
-            <Button variant="outlined" onclick={() => updates.later()}>Dismiss</Button>
+          {:else if busy && confirmForce}
+            <Button
+              intent="danger"
+              onclick={() => {
+                confirmForce = false;
+                void updates.restartNow(true);
+              }}>Interrupt the agent and restart</Button
+            >
+            <Button variant="outlined" onclick={() => (confirmForce = false)}>Cancel</Button>
           {:else}
-            <Button variant="outlined" onclick={() => updates.later()}>Dismiss</Button>
+            <Button
+              disabled={updates.phase === 'installing'}
+              onclick={() => void updates.restartNow()}
+              >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</Button
+            >
           {/if}
-        {/snippet}
-      </Callout>
-    </div>
+          <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
+        {:else if updates.phase === 'available'}
+          <Button onclick={() => void updates.download()}>Download</Button>
+          <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
+        {:else if updates.phase === 'error'}
+          <Button onclick={() => void updates.download()}>Retry</Button>
+          <Button variant="outlined" onclick={() => updates.later()}>Dismiss</Button>
+        {:else}
+          <Button variant="outlined" onclick={() => updates.later()}>Dismiss</Button>
+        {/if}
+      {/snippet}
+    </Callout>
     {#if notes && updates.notes}
       <div class="notes" aria-label="Release notes"><Markdown text={updates.notes} /></div>
     {/if}

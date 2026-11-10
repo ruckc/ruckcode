@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { DiffView } from '@ruckc/truss-code';
+  import { DiffView } from '@ruckc/truss-code/lite';
   import { Tag } from '@ruckc/truss-ui';
   import type { DiffContent } from '../state/reducer';
 
@@ -27,7 +27,6 @@
       patch={patch.text}
       {path}
       label="Diff"
-      highlight={false}
       persist="ruckcode.diff.layout"
       height={compact ? 220 : undefined}
     />
@@ -37,7 +36,6 @@
       new={diff.newText}
       {path}
       label="Diff"
-      highlight={false}
       persist="ruckcode.diff.layout"
       height={compact ? 220 : undefined}
     />

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Callout, Combobox, Input, RadioGroup } from '@ruckc/truss-ui';
+  import { Button, Callout, Combobox, Input, RadioGroup, Table } from '@ruckc/truss-ui';
   import { KEY_NAME_RE, type SetupApi, type SetupState, type SetupTarget } from '../host/setup';
 
   let {
@@ -92,52 +92,47 @@
 
 <div class="keys">
   {#if error}<Callout intent="danger">{error}</Callout>{/if}
-  {#if notice}<div role="status"><Callout intent="success">{notice}</Callout></div>{/if}
+  {#if notice}<Callout intent="success" role="status">{notice}</Callout>{/if}
   {#if keys.length}
-    <table class="data" aria-label="API keys">
-      <thead>
-        <tr
-          ><th>Name</th><th>Description</th><th>Created</th><th>Key</th><th>Used by</th><th
-          ></th></tr
-        >
-      </thead>
-      <tbody>
-        {#each keys as k (k.name)}
-          <tr>
-            <td><code>{k.name}</code></td>
-            <td>{k.description ?? ''}</td>
-            <td>{k.createdAt ? k.createdAt.slice(0, 10) : ''}</td>
-            <td><code>{k.masked}</code></td>
-            <td>{k.usedBy.length ? k.usedBy.join(', ') : 'unused'}</td>
-            <td class="rowactions">
-              <Button size="sm" variant="outlined" disabled={busy} onclick={() => openUse(k.name)}>
-                Use for profile
-              </Button>
-              {#if confirmRemove === k.name}
-                <Button size="sm" intent="danger" disabled={busy} onclick={() => remove(k.name)}
-                  >Confirm remove</Button
-                >
-                <Button
-                  size="sm"
-                  variant="minimal"
-                  intent="neutral"
-                  onclick={() => (confirmRemove = null)}>Cancel</Button
-                >
-              {:else}
-                <Button
-                  size="sm"
-                  variant="outlined"
-                  intent="danger"
-                  aria-label={`Remove ${k.name}`}
-                  disabled={busy}
-                  onclick={() => (confirmRemove = k.name)}>Remove</Button
-                >
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <Table
+      aria-label="API keys"
+      columns={['Name', 'Description', 'Created', 'Key', 'Used by', 'Actions']}
+    >
+      {#each keys as k (k.name)}
+        <tr>
+          <td><code>{k.name}</code></td>
+          <td>{k.description ?? ''}</td>
+          <td>{k.createdAt ? k.createdAt.slice(0, 10) : ''}</td>
+          <td><code>{k.masked}</code></td>
+          <td>{k.usedBy.length ? k.usedBy.join(', ') : 'unused'}</td>
+          <td class="rowactions">
+            <Button size="sm" variant="outlined" disabled={busy} onclick={() => openUse(k.name)}>
+              Use for profile
+            </Button>
+            {#if confirmRemove === k.name}
+              <Button size="sm" intent="danger" disabled={busy} onclick={() => remove(k.name)}
+                >Confirm remove</Button
+              >
+              <Button
+                size="sm"
+                variant="minimal"
+                intent="neutral"
+                onclick={() => (confirmRemove = null)}>Cancel</Button
+              >
+            {:else}
+              <Button
+                size="sm"
+                variant="outlined"
+                intent="danger"
+                aria-label={`Remove ${k.name}`}
+                disabled={busy}
+                onclick={() => (confirmRemove = k.name)}>Remove</Button
+              >
+            {/if}
+          </td>
+        </tr>
+      {/each}
+    </Table>
   {:else}
     <p class="muted">
       No saved keys. Add one below; secrets are stored in a private file and never shown.

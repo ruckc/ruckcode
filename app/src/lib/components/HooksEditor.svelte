@@ -88,7 +88,7 @@
 
 {#each events as info (info.name)}
   {@const list = hooks[info.name] ?? []}
-  <!-- TODO(truss-ui): consider Accordion; Accordion would fit, but the tests and e2e rely on a native <details>/<summary>. -->
+  <!-- Native <details>/<summary>: truss-ui's Accordion would also fit, but the groups are small and keep their semantics. -->
   <details open={list.length > 0} class="event">
     <summary>
       <code>{info.name}</code>

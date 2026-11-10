@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Input, Select } from '@ruckc/truss-ui';
+  import { Button, Combobox, Select, Table } from '@ruckc/truss-ui';
   import type { Catalog, PermissionValue } from '../host/modes';
   import { globProblem } from '../modes/glob';
 
@@ -57,61 +57,48 @@
 </script>
 
 {#if rows.length}
-  <table class="data" aria-label="Permissions">
-    <thead>
-      <tr
-        ><th>Tool or glob</th><th>Permission</th><th
-          ><span class="tr-visually-hidden">Actions</span></th
-        ></tr
-      >
-    </thead>
-    <tbody>
-      {#each rows as [p, v] (p)}
-        <tr>
-          <td>
-            <code>{p}</code>
-            {#if defaultFor(p)}<span class="muted small">(default {defaultFor(p)})</span>{/if}
-            {#if errors[p]}<div class="err small">{errors[p]}</div>{/if}
-          </td>
-          <td class="perm">
-            <Select
-              size="sm"
-              searchable={false}
-              ariaLabel={`Permission for ${p}`}
-              options={permOptions}
-              value={v}
-              onchange={(x) => set(p, x)}
-            />
-          </td>
-          <td>
-            <Button
-              size="sm"
-              variant="minimal"
-              intent="neutral"
-              icon="cross"
-              aria-label={`Remove rule ${p}`}
-              onclick={() => remove(p)}
-            />
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <Table aria-label="Permissions" columns={['Tool or glob', 'Permission', 'Actions']}>
+    {#each rows as [p, v] (p)}
+      <tr>
+        <td>
+          <code>{p}</code>
+          {#if defaultFor(p)}<span class="muted small">(default {defaultFor(p)})</span>{/if}
+          {#if errors[p]}<div class="err small">{errors[p]}</div>{/if}
+        </td>
+        <td class="perm">
+          <Select
+            size="sm"
+            searchable={false}
+            ariaLabel={`Permission for ${p}`}
+            options={permOptions}
+            value={v}
+            onchange={(x) => set(p, x)}
+          />
+        </td>
+        <td>
+          <Button
+            size="sm"
+            variant="minimal"
+            intent="neutral"
+            icon="cross"
+            aria-label={`Remove rule ${p}`}
+            onclick={() => remove(p)}
+          />
+        </td>
+      </tr>
+    {/each}
+  </Table>
 {:else}
   <p class="muted small">No rules: tools use their defaults (read-only tools allow, others ask).</p>
 {/if}
 <div class="add">
   <div class="pattern">
-    <!-- TODO(truss-ui#144): Combobox with allowCustom only commits its value on Enter/blur and has no
-         onkeydown/oninput passthrough, so a "type a glob, press Enter to add" field cannot be built on it.
-         Using Input with a native <datalist> for the suggestions instead. -->
-    <Input
-      size="sm"
-      aria-label="Tool or glob"
+    <Combobox
+      allowCustom
+      ariaLabel="Tool or glob"
       placeholder="Tool name or glob, e.g. Bash or mise__*"
-      list="perm-names"
-      value={pattern}
-      oninput={(e) => (pattern = e.currentTarget.value)}
+      options={names.map((n) => ({ value: n, label: n }))}
+      bind:text={pattern}
       spellcheck="false"
       onkeydown={(e) => {
         if (e.key === 'Enter') {
@@ -120,9 +107,6 @@
         }
       }}
     />
-    <datalist id="perm-names"
-      >{#each names as n (n)}<option value={n}></option>{/each}</datalist
-    >
   </div>
   <div class="perm">
     <Select
@@ -141,9 +125,6 @@
 {#if problem}<p class="err small" role="status">{problem}</p>{/if}
 
 <style>
-  table {
-    margin-bottom: var(--tr-space-2);
-  }
   .add {
     display: flex;
     gap: var(--tr-space-2);

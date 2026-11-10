@@ -202,9 +202,8 @@
     <div class="wsl">
       <div class="row">
         <div class="grow">
-          <!-- TODO(truss-ui#140): Select `label` replaces `ariaLabel`; a visible caption with another name is needed. -->
-          <span class="tr-label" aria-hidden="true">Distribution</span>
           <Select
+            label="Distribution"
             ariaLabel="WSL distro"
             bind:value={distro}
             disabled={disabled || listing || !distros.length}

@@ -4,11 +4,9 @@
   import type { HTMLDialogAttributes } from 'svelte/elements';
 
   /**
-   * A truss-ui `Dialog` that is open for as long as it is mounted, hands focus back to whatever had
-   * it when it goes away, and can ignore clicks on the backdrop.
-   *
-   * TODO(truss-ui#135): `Dialog` should offer `closeOnBackdrop` / `closable` props (and `Escape` opt-out)
-   * so this wrapper's capture-phase guard and focus restore are not needed.
+   * A truss-ui `Dialog` that is open for as long as it is mounted and hands focus back to whatever had
+   * it when it goes away. Esc, the close button and (optionally) a backdrop click do not close it
+   * themselves: they call `onclose`, and the owner decides by unmounting.
    */
   let {
     title,
@@ -27,7 +25,7 @@
     width?: string;
     /** `role="alertdialog"`: a prompt that needs an answer. */
     alert?: boolean;
-    /** A click outside the dialog closes it. Off for prompts where a stray click must not answer. */
+    /** A click outside the dialog asks to close. Off for prompts where a stray click must not answer. */
     backdropClose?: boolean;
     /** Esc, the close button (and a backdrop click when `backdropClose`) ask to close. */
     onclose?: () => void;
@@ -44,19 +42,10 @@
     if (previous?.isConnected) previous.focus();
   });
 
-  /**
-   * Esc and the close button close the native dialog; `onclose` decides whether that is final. When
-   * the owner keeps this modal mounted (e.g. "keep editing" on unsaved changes), it opens again.
-   */
-  function closed() {
-    // Reopened before the owner reacts, so anything it opens meanwhile (a confirmation) stacks above.
-    open = true;
+  /** Veto every user-initiated close; the owner unmounts the modal if it wants it gone. */
+  function beforeclose() {
     onclose?.();
-  }
-
-  /** Runs before truss-ui's own handler on the dialog element, which closes on a backdrop click. */
-  function guard(e: MouseEvent) {
-    if (!backdropClose && e.target === e.currentTarget) e.stopImmediatePropagation();
+    return false;
   }
 </script>
 
@@ -66,8 +55,8 @@
   {size}
   {width}
   {alert}
-  onclose={closed}
-  onclickcapture={guard}
+  closeOnBackdrop={backdropClose}
+  {beforeclose}
   {...rest}
   {children}
   {footer}

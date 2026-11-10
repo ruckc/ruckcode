@@ -35,7 +35,6 @@
     error: 'Turn failed'
   };
 
-  // TODO(truss-ui#139): Callout takes no attributes/role, hence the wrapper div on notices.
   /** truss-ui intents for the agent's notice severities. */
   const intents = { error: 'danger', warning: 'warning' } as const;
   const intentOf = (severity: string) => intents[severity as keyof typeof intents] ?? 'primary';
@@ -64,11 +63,14 @@
     {:else if item.kind === 'tool'}
       <ToolCard tool={item} />
     {:else if item.kind === 'notice'}
-      <div data-severity={item.severity} role={item.severity === 'error' ? undefined : 'status'}>
-        <Callout intent={intentOf(item.severity)} title={item.title}>
-          {item.description}
-        </Callout>
-      </div>
+      <Callout
+        intent={intentOf(item.severity)}
+        title={item.title}
+        role={item.severity === 'error' ? 'alert' : 'status'}
+        data-severity={item.severity}
+      >
+        {item.description}
+      </Callout>
     {:else}
       <div class="turn-end" data-reason={item.stopReason} data-testid="turn-end">
         <span>{reasons[item.stopReason] ?? item.stopReason}</span>

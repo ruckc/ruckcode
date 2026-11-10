@@ -8,7 +8,7 @@ test('send a prompt and see the streamed reply, plan and usage', async ({ page }
   await expect(page.getByTestId('assistant-msg')).toContainText('You said: hello there.');
   await expect(page.getByTestId('turn-end')).toContainText('end_turn');
   await expect(page.getByRole('complementary', { name: 'Plan' })).toContainText('Double-check');
-  await expect(page.getByRole('progressbar', { name: 'Context window usage' })).toBeVisible();
+  await expect(page.getByRole('meter', { name: 'Context window usage' })).toBeVisible();
   // the session is now named after its first prompt
   await expect(page.getByRole('button', { name: 'Projects and sessions' })).toContainText(
     'hello there'
@@ -59,13 +59,13 @@ test('answer a multi-question ask with multi-select and Other', async ({ page })
   await openApp(page);
   await send(page, 'mock:askmulti');
   const dialog = page.getByRole('dialog', { name: /questions/ });
-  await expect(dialog.getByText('Recommended')).toBeVisible();
+  await expect(dialog.getByText(/Recommended/)).toBeVisible();
   await dialog.getByLabel(/sqlite/).check();
   await dialog.getByRole('tab', { name: /Features/ }).click();
   await dialog.getByLabel(/auth/).check();
   await dialog.getByLabel(/search/).check();
-  await dialog.getByLabel('Other answer').fill('tracing');
-  await dialog.getByRole('tab', { name: /Q3/ }).click();
+  await dialog.getByLabel('Other', { exact: true }).fill('tracing');
+  await dialog.getByRole('tab').nth(2).click();
   await dialog.getByLabel(/No/).check();
   await dialog.getByRole('button', { name: /Submit/ }).click();
   await expect(page.getByTestId('assistant-msg')).toContainText(
@@ -154,6 +154,7 @@ test('tool output is truncated until expanded, and diffs toggle side by side', a
   await expect(card.getByRole('region', { name: 'Output' })).not.toContainText('case_40');
   await card.getByRole('button', { name: /Show all/ }).click();
   await expect(card.getByRole('region', { name: 'Output' })).toContainText('case_59');
+  await card.getByRole('button', { name: 'Show input' }).click();
   await expect(card.getByRole('region', { name: 'Input' })).toContainText('cargo test');
 
   await send(page, 'mock:edit');

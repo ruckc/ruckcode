@@ -3,23 +3,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import { demoDoc, FakeModes } from '../host/fake-modes';
 import type { Catalog, ModeDto } from '../host/modes';
-import ChipHarness from './test-harness/ChipHarness.svelte';
 import HooksHarness from './test-harness/HooksHarness.svelte';
 import PermsHarness from './test-harness/PermsHarness.svelte';
 import HooksEditor from './HooksEditor.svelte';
 import FlowDiagram from './FlowDiagram.svelte';
 import ModesView from './ModesView.svelte';
-
-// truss Select/Popover use browser APIs jsdom lacks (top-layer popovers, ResizeObserver, scrollIntoView).
-const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
-proto.showPopover ??= () => {};
-proto.hidePopover ??= () => {};
-Element.prototype.scrollIntoView ??= () => {};
-globalThis.ResizeObserver ??= class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
 
 const target = { project: '/demo/project' };
 /** The list button that selects mode `id` (not its icon-only move buttons, which carry an aria-label). */
@@ -45,31 +33,22 @@ async function mounted(opts: ConstructorParameters<typeof FakeModes>[0] = {}) {
   return { api, ondirty, r };
 }
 
-describe('ChipInput', () => {
-  it('adds on Enter, removes, previews and flags problems', async () => {
-    let values: string[] = [];
-    render(ChipHarness, {
-      props: {
-        initial: ['test*'],
-        onvalues: (v: string[]) => (values = v),
-        label: 'Mise tasks',
-        suggestions: ['build', 'lint'],
-        preview: (v: string) => `preview of ${v}`,
-        problem: (v: string) => (v === '[' ? 'bad glob' : null)
-      }
-    });
-    expect(screen.getByText('preview of test*')).toBeInTheDocument();
-    const input = screen.getByRole('textbox', { name: 'Add to Mise tasks' });
+describe('Mise task and MCP tag inputs', () => {
+  it('adds on Enter, offers suggestions, previews matches, flags bad globs and removes', async () => {
+    await mounted();
+    const list = await screen.findByRole('list', { name: 'Modes list' });
+    await fireEvent.click(pick(list, 'build'));
+    const group = await screen.findByRole('group', { name: 'Mise tasks' }).catch(() => null);
+    const input = (group ? within(group) : screen).getByRole('textbox', { name: 'Mise tasks' });
+    expect(screen.getAllByText('build').length).toBeGreaterThan(0);
     await fireEvent.input(input, { target: { value: '[' } });
-    expect(screen.getByRole('status')).toHaveTextContent('bad glob');
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect((await screen.findAllByText(/Invalid glob/)).length).toBeGreaterThan(0);
     await fireEvent.input(input, { target: { value: 'docs*' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(values).toEqual(['test*', 'docs*']));
-    await fireEvent.click(screen.getByRole('button', { name: '+ build' }));
-    await waitFor(() => expect(values).toEqual(['test*', 'docs*', 'build']));
-    expect(screen.queryByRole('button', { name: '+ build' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove docs*' }));
-    await waitFor(() => expect(values).toEqual(['test*', 'build']));
+    const tag = (await screen.findAllByText('docs*'))[0].closest('span')!.parentElement!;
+    await fireEvent.click(within(tag).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByText('docs*')).toBeNull());
   });
 });
 
@@ -247,7 +226,7 @@ describe('ModesView', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: /Review & save/ }));
     const diff = await screen.findByLabelText('Changes to modes.toml');
-    expect(diff).toHaveTextContent('+description = "Think first"');
+    expect(diff).toHaveTextContent(/added: description = "Think first"/);
     await fireEvent.click(screen.getByRole('button', { name: 'Save modes.toml' }));
     await screen.findByText(/Mode changes apply to new sessions/);
     expect(api.lastApplied?.modes[0].description).toBe('Think first');

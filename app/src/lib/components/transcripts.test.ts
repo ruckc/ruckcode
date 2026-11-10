@@ -1,31 +1,10 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeTranscripts } from '../host/fake-transcripts';
 import TranscriptsView from './TranscriptsView.svelte';
 
 const target = { project: '/demo/project' };
-
-// jsdom lacks what truss-ui (Select popover) and truss-code (DiffView) rely on.
-// TODO(tests): move into src/test-setup.ts if other component tests need it too.
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-beforeAll(() => {
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
-  vi.stubGlobal('matchMedia', (query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener() {},
-    removeEventListener() {}
-  }));
-  const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
-  proto.showPopover ??= function () {};
-  proto.hidePopover ??= function () {};
-  proto.scrollIntoView ??= function () {};
-});
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/?mock=1');

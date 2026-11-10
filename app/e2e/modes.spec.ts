@@ -41,9 +41,9 @@ test('edits a prompt and the tools, reviews the diff and saves', async ({ page }
 
   await reviewBtn(page).click();
   const diff = editor(page).getByLabel('Changes to modes.toml');
-  await expect(diff).toContainText('+Plan very carefully.');
-  await expect(diff).toContainText('-tools = ["Read", "Glob", "Grep", "Write"');
-  await expect(diff).toContainText('+tools = ["Read", "Glob", "Grep", "AskUserQuestion"');
+  await expect(diff).toContainText('added: Plan very carefully.');
+  await expect(diff).toContainText('removed: tools = ["Read", "Glob", "Grep", "Write"');
+  await expect(diff).toContainText('added: tools = ["Read", "Glob", "Grep", "AskUserQuestion"');
   await editor(page).getByRole('button', { name: 'Save modes.toml' }).click();
   await expect(editor(page)).toContainText('apply to new sessions');
   await expect(editor(page)).not.toContainText('Unsaved changes');
@@ -71,8 +71,8 @@ test('adds a mode from a lifecycle template', async ({ page }) => {
   await editor(page).getByLabel('next: build').check();
   await reviewBtn(page).click();
   const diff = editor(page).getByLabel('Changes to modes.toml');
-  await expect(diff).toContainText('+[modes.review]');
-  await expect(diff).toContainText('+next = ["build"]');
+  await expect(diff).toContainText('added: [modes.review]');
+  await expect(diff).toContainText('added: next = ["build"]');
   await editor(page).getByRole('button', { name: 'Save modes.toml' }).click();
   await expect(pick(page, 'review')).toBeVisible();
 });
@@ -94,9 +94,9 @@ test('renames a mode and updates every reference', async ({ page }) => {
 
   await reviewBtn(page).click();
   const diff = editor(page).getByLabel('Changes to modes.toml');
-  await expect(diff).toContainText('+[modes.implement]');
-  await expect(diff).toContainText('-[modes.build]');
-  await expect(diff).toContainText('+next = ["implement"]');
+  await expect(diff).toContainText('added: [modes.implement]');
+  await expect(diff).toContainText('removed: [modes.build]');
+  await expect(diff).toContainText('added: next = ["implement"]');
   await editor(page).getByRole('button', { name: 'Save modes.toml' }).click();
   await expect(editor(page)).toContainText('Saved');
 });
@@ -125,9 +125,9 @@ test('a hook with an invalid regex blocks saving until it is fixed', async ({ pa
   );
   await reviewBtn(page).click();
   const diff = editor(page).getByLabel('Changes to modes.toml');
-  await expect(diff).toContainText('+[[modes.build.hooks.pre_tool_use]]');
-  await expect(diff).toContainText('+matcher = "Bash|Edit"');
-  await expect(diff).toContainText('+on_failure = "block"');
+  await expect(diff).toContainText('added: [[modes.build.hooks.pre_tool_use]]');
+  await expect(diff).toContainText('added: matcher = "Bash|Edit"');
+  await expect(diff).toContainText('added: on_failure = "block"');
   await editor(page).getByRole('button', { name: 'Save modes.toml' }).click();
   await expect(editor(page)).toContainText('Saved');
 });
@@ -144,9 +144,9 @@ test('edits the permissions table', async ({ page }) => {
   await expect(table).toContainText('mise__*');
   await reviewBtn(page).click();
   const diff = editor(page).getByLabel('Changes to modes.toml');
-  await expect(diff).toContainText('-Bash = "ask"');
-  await expect(diff).toContainText('+Bash = "deny"');
-  await expect(diff).toContainText('+"mise__*" = "allow"');
+  await expect(diff).toContainText('removed: Bash = "ask"');
+  await expect(diff).toContainText('added: Bash = "deny"');
+  await expect(diff).toContainText('added: "mise__*" = "allow"');
   await editor(page).getByRole('button', { name: 'Back to editing' }).click();
   await editor(page).getByRole('button', { name: 'Remove rule Bash' }).click();
   await expect(table).not.toContainText('Bash');
@@ -205,7 +205,7 @@ test('without a modes.toml it offers rc init (and a blank file)', async ({ page 
     .getByLabel(/Choose which modes/)
     .check();
   await editor(page)
-    .getByRole('list', { name: 'Modes to create' })
+    .getByRole('group', { name: 'Modes to create' })
     .getByLabel(/design/)
     .uncheck();
   await editor(page).getByRole('button', { name: 'Create modes.toml' }).click();
