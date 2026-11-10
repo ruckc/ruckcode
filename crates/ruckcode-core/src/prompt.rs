@@ -36,7 +36,17 @@ async fn git_branch(cwd: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-pub async fn system_prompt(cwd: &Path, modes: &ModeSet, mode_id: &str) -> String {
+/// Longest accepted client instruction text, in bytes.
+pub const MAX_CLIENT_INSTRUCTIONS: usize = 64 * 1024;
+
+/// Build the system prompt: built-in guidance, then the project's instruction files and the
+/// current mode, then the client's appended instructions (which never replace anything above).
+pub async fn system_prompt(
+    cwd: &Path,
+    modes: &ModeSet,
+    mode_id: &str,
+    client_instructions: Option<&str>,
+) -> String {
     let mut s = String::from(BASE);
     s.push_str("\n\n## Environment\n");
     s.push_str(&format!("- Working directory: {}\n", cwd.display()));
@@ -69,6 +79,12 @@ pub async fn system_prompt(cwd: &Path, modes: &ModeSet, mode_id: &str) -> String
         for (id, m) in &modes.modes {
             s.push_str(&format!("- {id}: {}\n", m.description));
         }
+    }
+    if let Some(c) = client_instructions.map(str::trim).filter(|c| !c.is_empty()) {
+        s.push_str(&format!(
+            "\n## Client instructions\nThe client that started this session supplied the following \
+instructions. They add to, and never override, the guidance above.\n\n{c}\n"
+        ));
     }
     s
 }

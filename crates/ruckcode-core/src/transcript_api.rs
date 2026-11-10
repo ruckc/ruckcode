@@ -582,6 +582,7 @@ fn searchable(r: &Record) -> Vec<String> {
         Record::ModeChange {
             from, to, reason, ..
         } => v.extend([from.clone(), to.clone(), reason.clone()]),
+        Record::ClientInstructions { append } => v.push(append.clone()),
         Record::McpServers { servers } => {
             for s in servers {
                 v.push(s.name.clone());
@@ -611,6 +612,7 @@ pub fn type_name(r: &Record) -> &'static str {
         Record::SessionResumed {} => "session_resumed",
         Record::SessionDismissed {} => "session_dismissed",
         Record::McpServers { .. } => "mcp_servers",
+        Record::ClientInstructions { .. } => "client_instructions",
     }
 }
 
@@ -732,6 +734,7 @@ pub fn normalize(index: usize, s: &Stamped) -> Value {
             "toolCalls": tool_calls, "inputTokens": input_tokens, "outputTokens": output_tokens,
         }),
         Record::SessionResumed {} | Record::SessionDismissed {} => json!({}),
+        Record::ClientInstructions { append } => json!({ "append": append }),
         Record::McpServers { servers } => json!({
             "servers": servers.iter().map(|s| json!({
                 "name": s.name, "ok": s.ok, "tools": s.tools, "error": s.error,

@@ -42,7 +42,8 @@ instead of failing the prompt.
    "loadSession": true,
    "promptCapabilities": {"image": false, "audio": false, "embeddedContext": true},
    "mcpCapabilities": {"http": true, "sse": false},
-   "sessionCapabilities": {"list": {}, "resume": {}, "close": {}}},
+   "sessionCapabilities": {"list": {}, "resume": {}, "close": {}},
+   "_meta": {"ruckcode": {"systemPrompt": {"append": true}}}},
  "authMethods": [], "agentInfo": {"name": "ruckcode", "version": "..."}}
 ```
 
@@ -131,6 +132,34 @@ overriding the mode's and profile's model (recorded in the transcript as a `mode
 announced as a notice). `model: null` or absent clears the pin, which the standard
 `session/set_config_option` cannot express; used by the TUI's `/model`. Selecting a model with
 `session/set_config_option` is equivalent to a non-null pin.
+
+### `_ruckcode/systemPrompt` (session `_meta`)
+
+Standing instructions for a session (what a workflow step may do, how to report results, "never
+push") that should not live in the conversation. Sent on `session/new`, `session/load` and
+`session/resume`; agents advertise support as `agentCapabilities._meta.ruckcode.systemPrompt.append = true`,
+so a client can keep a first-prompt fallback for older `rc` versions.
+
+```json
+{"method": "session/new", "params": {"cwd": "/project", "mcpServers": [],
+  "_meta": {"ruckcode": {"systemPrompt": {"append": "Never push. Report your result with the report_result MCP tool."}}}}}
+```
+
+- **Append only.** The text goes after ruckcode's own system prompt, in a `## Client instructions`
+  section. It never replaces or removes the built-in guidance (tools, sandbox, safety, plan
+  completion). There is no `replace` option and no per-turn scope. Unknown keys under
+  `systemPrompt` are ignored.
+- **Order.** Built-in prompt, environment, project instruction files (`AGENTS.md`, `CLAUDE.md`,
+  `.ruckcode/INSTRUCTIONS.md`), the current mode's `modes.toml` prompt and the mode list, then the
+  client instructions last. They apply across mode switches.
+- **Persisted per session.** Stored in the transcript as a `client_instructions` record. On
+  `session/load`/`session/resume`, a `systemPrompt` in the request replaces the stored text (and is
+  persisted); if it is omitted the stored text stays in effect. An empty or whitespace-only `append`
+  clears it. Compaction (`/compact`, automatic compaction) keeps them: they are part of the system
+  prompt, not of the history that gets summarized.
+- **Validation.** `append` must be a string of at most 65536 bytes and `systemPrompt` must be an
+  object; otherwise the request fails with JSON-RPC `-32602` (invalid params) and no session is
+  created or changed.
 
 ## MCP servers
 
