@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use async_trait::async_trait;
 use ruckcode_core::{
     Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, RateLimitEvent, SessionEvent,
-    SessionInfo as CoreSessionInfo, StopReason as CoreStop, ToolStatus,
+    SessionInfo as CoreSessionInfo, StopReason as CoreStop, ToolStatus, MAX_CLIENT_INSTRUCTIONS,
 };
 use ruckcode_mcp::McpServerConfig;
 use ruckcode_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
@@ -528,8 +528,43 @@ fn take_mcp_servers(params: &mut Value) -> Vec<Value> {
     }
 }
 
+/// The client's `_meta.ruckcode.systemPrompt.append`: `Ok(None)` when absent (leave the session's
+/// stored instructions alone), an invalid-params error when malformed or over the size limit.
+/// Unknown keys under `systemPrompt` are ignored.
+fn client_instructions(params: &Value) -> Result<Option<String>, RpcError> {
+    let Some(sp) = params.pointer("/_meta/ruckcode/systemPrompt") else {
+        return Ok(None);
+    };
+    let Some(obj) = sp.as_object() else {
+        return Err(RpcError::invalid_params(
+            "_meta.ruckcode.systemPrompt must be an object like {\"append\": \"...\"}",
+        ));
+    };
+    match obj.get("append") {
+        None => Ok(None),
+        Some(Value::String(s)) if s.len() > MAX_CLIENT_INSTRUCTIONS => {
+            Err(RpcError::invalid_params(format!(
+                "_meta.ruckcode.systemPrompt.append is {} bytes; the limit is {MAX_CLIENT_INSTRUCTIONS}",
+                s.len()
+            )))
+        }
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(RpcError::invalid_params(
+            "_meta.ruckcode.systemPrompt.append must be a string",
+        )),
+    }
+}
+
 fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, RpcError> {
     serde_json::to_value(v).map_err(|e| RpcError::internal(e.to_string()))
+}
+
+/// Agent capability extensions under `_meta.ruckcode`.
+fn agent_meta() -> serde_json::Map<String, Value> {
+    let Value::Object(m) = json!({"ruckcode": {"systemPrompt": {"append": true}}}) else {
+        unreachable!()
+    };
+    m
 }
 
 fn session_capabilities() -> SessionCapabilities {
@@ -635,7 +670,8 @@ impl Handler for AcpAgent {
                                         .embedded_context(true),
                                 )
                                 .mcp_capabilities(McpCapabilities::new().http(true).sse(false))
-                                .session_capabilities(session_capabilities()),
+                                .session_capabilities(session_capabilities())
+                                .meta(agent_meta()),
                         )
                         .agent_info(Implementation::new("ruckcode", env!("CARGO_PKG_VERSION"))),
                 )
@@ -643,11 +679,17 @@ impl Handler for AcpAgent {
             AUTHENTICATE => Ok(json!({})),
             SESSION_NEW => {
                 let mcp = take_mcp_servers(&mut params);
+                let instructions = client_instructions(&params)?;
                 let req: NewSessionRequest = parse(params)?;
                 let info = self
                     .agent()
                     .new_session_with(req.cwd, None, acp_mcp_servers(&mcp))
                     .await?;
+                if let Some(text) = instructions {
+                    self.agent()
+                        .set_client_instructions(&info.id, Some(text))
+                        .await?;
+                }
                 self.shared.advertise_commands(info.id.to_string());
                 let mut resp = NewSessionResponse::new(SessionId::new(info.id.as_str()))
                     .modes(mode_state(&info));
@@ -658,6 +700,7 @@ impl Handler for AcpAgent {
             }
             SESSION_LOAD => {
                 let mcp = take_mcp_servers(&mut params);
+                let instructions = client_instructions(&params)?;
                 let req: LoadSessionRequest = parse(params)?;
                 let info = self
                     .agent()
@@ -668,6 +711,11 @@ impl Handler for AcpAgent {
                         acp_mcp_servers(&mcp),
                     )
                     .await?;
+                if let Some(text) = instructions {
+                    self.agent()
+                        .set_client_instructions(&info.id, Some(text))
+                        .await?;
+                }
                 self.shared.advertise_commands(info.id.to_string());
                 let mut resp = LoadSessionResponse::new().modes(mode_state(&info));
                 if let Some(o) = self.config_options(&info) {
@@ -677,11 +725,17 @@ impl Handler for AcpAgent {
             }
             SESSION_RESUME => {
                 let mcp = take_mcp_servers(&mut params);
+                let instructions = client_instructions(&params)?;
                 let req: ResumeSessionRequest = parse(params)?;
                 let info = self
                     .agent()
                     .resume_session_with(&req.session_id.0, req.cwd, acp_mcp_servers(&mcp))
                     .await?;
+                if let Some(text) = instructions {
+                    self.agent()
+                        .set_client_instructions(&info.id, Some(text))
+                        .await?;
+                }
                 self.shared.advertise_commands(info.id.to_string());
                 let mut resp = ResumeSessionResponse::new().modes(mode_state(&info));
                 if let Some(o) = self.config_options(&info) {

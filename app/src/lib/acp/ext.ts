@@ -54,3 +54,13 @@ export const CLIENT_CAPABILITIES = {
   session: { notices: {} },
   _meta: { ruckcode: { askUserQuestion: true, notices: true, rateLimit: true } }
 } as const;
+
+/**
+ * Optional `_meta` on `session/new`, `session/load` and `session/resume`. `append` is added after
+ * ruckcode's own system prompt (never replacing it), persisted with the session, and kept when a
+ * later load/resume omits it. Up to 64 KiB. Agents advertise support as
+ * `agentCapabilities._meta.ruckcode.systemPrompt.append`. The desktop app does not send one.
+ */
+export interface RuckcodeSessionMeta {
+  ruckcode?: { systemPrompt?: { append?: string } };
+}

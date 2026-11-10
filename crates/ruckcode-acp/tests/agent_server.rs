@@ -846,3 +846,188 @@ async fn raw_in_process_relays_json_lines() {
         .expect("timeout");
     assert!(end.is_none());
 }
+
+// ---- _meta.ruckcode.systemPrompt ----------------------------------------------------------
+
+fn systems(m: &MockProvider) -> Vec<String> {
+    m.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.system.clone())
+        .collect()
+}
+
+async fn new_with_prompt(c: &Connection, env: &Env, sp: Value) -> Result<Value, RpcError> {
+    c.request(
+        SESSION_NEW,
+        json!({"cwd": env.cwd(), "mcpServers": [], "_meta": {"ruckcode": {"systemPrompt": sp}}}),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn initialize_advertises_system_prompt_append() {
+    let env = Env::new();
+    let c = env.connect(mock([]));
+    let r = init(&c, false).await;
+    assert_eq!(
+        r["agentCapabilities"]["_meta"]["ruckcode"]["systemPrompt"],
+        json!({"append": true})
+    );
+}
+
+#[tokio::test]
+async fn system_prompt_append_reaches_model_after_builtin_guidance() {
+    let env = Env::new();
+    let m = mock([Message::assistant_text("ok")]);
+    let c = env.connect(m.clone());
+    init(&c, false).await;
+    let r = new_with_prompt(
+        &c,
+        &env,
+        json!({"append": "NEVER push. Report via MCP.", "future": 1}),
+    )
+    .await
+    .unwrap();
+    let sid = r["sessionId"].as_str().unwrap().to_string();
+    prompt(&c, &sid, "hi").await;
+    let s = &systems(&m)[0];
+    assert!(s.contains("You are ruckcode"), "built-in guidance kept");
+    assert!(s.contains("Use TodoWrite"), "built-in guidance kept");
+    assert!(s.contains("## Client instructions"));
+    let at = s
+        .find("NEVER push. Report via MCP.")
+        .expect("append present");
+    assert!(at > s.find("Use TodoWrite").unwrap(), "after built-in");
+    assert!(at > s.find("## Current mode").unwrap(), "after the mode");
+}
+
+#[tokio::test]
+async fn system_prompt_absent_adds_no_section() {
+    let env = Env::new();
+    let m = mock([Message::assistant_text("ok")]);
+    let c = env.connect(m.clone());
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    prompt(&c, &sid, "hi").await;
+    assert!(!systems(&m)[0].contains("Client instructions"));
+}
+
+#[tokio::test]
+async fn system_prompt_persists_across_load_and_resume_and_is_replaced_when_resent() {
+    let env = Env::new();
+    let m = mock([
+        Message::assistant_text("a"),
+        Message::assistant_text("b"),
+        Message::assistant_text("c"),
+        Message::assistant_text("d"),
+    ]);
+    let c = env.connect(m.clone());
+    init(&c, false).await;
+    let r = new_with_prompt(&c, &env, json!({"append": "FIRST-RULES"}))
+        .await
+        .unwrap();
+    let sid = r["sessionId"].as_str().unwrap().to_string();
+    prompt(&c, &sid, "one").await;
+    c.request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .unwrap();
+
+    // Resume without resending: stored instructions stay in effect.
+    c.request(SESSION_RESUME, json!({"sessionId": sid, "cwd": env.cwd()}))
+        .await
+        .unwrap();
+    prompt(&c, &sid, "two").await;
+    c.request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .unwrap();
+
+    // Load without resending: still in effect.
+    c.request(
+        SESSION_LOAD,
+        json!({"sessionId": sid, "cwd": env.cwd(), "mcpServers": []}),
+    )
+    .await
+    .unwrap();
+    prompt(&c, &sid, "three").await;
+    c.request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .unwrap();
+
+    // Resume with new text: replaces the stored instructions (and persists).
+    c.request(
+        SESSION_RESUME,
+        json!({"sessionId": sid, "cwd": env.cwd(),
+               "_meta": {"ruckcode": {"systemPrompt": {"append": "SECOND-RULES"}}}}),
+    )
+    .await
+    .unwrap();
+    prompt(&c, &sid, "four").await;
+    let s = systems(&m);
+    assert!(s[1].contains("FIRST-RULES"));
+    assert!(s[2].contains("FIRST-RULES"));
+    assert!(s[3].contains("SECOND-RULES") && !s[3].contains("FIRST-RULES"));
+
+    // The replacement was persisted: a plain resume keeps SECOND-RULES.
+    c.request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .unwrap();
+    let m2 = mock([Message::assistant_text("e")]);
+    let c2 = env.connect(m2.clone());
+    init(&c2, false).await;
+    c2.request(SESSION_RESUME, json!({"sessionId": sid, "cwd": env.cwd()}))
+        .await
+        .unwrap();
+    prompt(&c2, &sid, "five").await;
+    assert!(systems(&m2)[0].contains("SECOND-RULES"));
+}
+
+#[tokio::test]
+async fn system_prompt_survives_compaction() {
+    let env = Env::new();
+    let m = mock([
+        Message::assistant_text("a"),
+        Message::assistant_text("summary of the chat"),
+        Message::assistant_text("b"),
+    ]);
+    let c = env.connect(m.clone());
+    init(&c, false).await;
+    let r = new_with_prompt(&c, &env, json!({"append": "KEEP-ME"}))
+        .await
+        .unwrap();
+    let sid = r["sessionId"].as_str().unwrap().to_string();
+    prompt(&c, &sid, "one").await;
+    prompt(&c, &sid, "/compact").await;
+    prompt(&c, &sid, "two").await;
+    let s = systems(&m);
+    assert_eq!(s.len(), 3);
+    assert!(s.iter().all(|x| x.contains("KEEP-ME")), "{s:?}");
+}
+
+#[tokio::test]
+async fn system_prompt_invalid_values_are_rejected() {
+    let env = Env::new();
+    let c = env.connect(mock([]));
+    init(&c, false).await;
+    let big = "x".repeat(64 * 1024 + 1);
+    for bad in [
+        json!({"append": 5}),
+        json!({"append": ["a"]}),
+        json!({"append": null}),
+        json!("just a string"),
+        json!({"append": big}),
+    ] {
+        let e = new_with_prompt(&c, &env, bad.clone())
+            .await
+            .expect_err("should be rejected");
+        assert_eq!(e.code, -32602, "{e:?}");
+    }
+    // Exactly at the limit is fine; unknown keys alone are ignored.
+    new_with_prompt(&c, &env, json!({"append": "x".repeat(64 * 1024)}))
+        .await
+        .unwrap();
+    new_with_prompt(&c, &env, json!({"replace": "nope"}))
+        .await
+        .unwrap();
+}

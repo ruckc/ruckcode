@@ -143,6 +143,11 @@ pub enum Record {
     McpServers {
         servers: Vec<McpServerRecord>,
     },
+    /// Client-supplied instructions appended to the system prompt (ACP
+    /// `_meta.ruckcode.systemPrompt.append`). The last record wins; empty clears them.
+    ClientInstructions {
+        append: String,
+    },
 }
 
 /// A record with its timestamp, as stored on one line.
@@ -248,6 +253,8 @@ pub struct LoadedSession {
     pub mode: String,
     /// Model pinned for the session by the last `model_change` record, if any.
     pub model: Option<String>,
+    /// Client instructions from the last `client_instructions` record, if any.
+    pub client_instructions: Option<String>,
     pub records: Vec<Stamped>,
 }
 
@@ -288,6 +295,7 @@ impl TranscriptReader {
         let mut messages = Vec::new();
         let mut mode = meta.mode.clone();
         let mut model = None;
+        let mut client_instructions = None;
         for r in &records {
             match &r.record {
                 Record::UserMessage { message, .. } | Record::AssistantMessage { message, .. } => {
@@ -297,6 +305,9 @@ impl TranscriptReader {
                 Record::HistoryCleared { .. } => messages.clear(),
                 Record::ModeChange { to, .. } => mode = to.clone(),
                 Record::ModelChange { to, .. } => model = to.clone(),
+                Record::ClientInstructions { append } => {
+                    client_instructions = Some(append.clone()).filter(|a| !a.is_empty())
+                }
                 _ => {}
             }
         }
@@ -305,6 +316,7 @@ impl TranscriptReader {
             messages,
             mode,
             model,
+            client_instructions,
             records,
         })
     }

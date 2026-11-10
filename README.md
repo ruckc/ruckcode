@@ -500,6 +500,11 @@ crate (ACP v1, stable surface only) and the JSON-RPC transport from the official
 `session/close` and the `model` config option), notifications and the `_ruckcode/*` extensions are
 documented in [docs/ACP.md](docs/ACP.md).
 
+Clients can give a session standing instructions with `_meta.ruckcode.systemPrompt.append` on
+`session/new`, `session/load` or `session/resume`. The text is appended to ruckcode's own system
+prompt (never replacing it), saved with the session and restored on load/resume; see
+[docs/ACP.md](docs/ACP.md).
+
 ## Desktop app
 
 A Tauri v2 + SvelteKit desktop app that is another ACP client, like the TUI and editors; see
