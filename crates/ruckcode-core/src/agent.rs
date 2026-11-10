@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{make_provider_with, Config, Profile};
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
-use crate::prompt::system_prompt;
+use crate::prompt::{system_prompt, MAX_CLIENT_INSTRUCTIONS};
 use crate::retry::{self, Decision, Pacer, RateLimitConfig};
 use crate::transcript::{
     self, compaction_message, interrupted_results, EditRecord, Initiator, McpServerRecord, Metrics,
@@ -229,6 +229,8 @@ struct SessionState {
     request_counter: u64,
     /// Model chosen with `/model` for this session; wins over mode, profile and `--model`.
     model_pin: Option<String>,
+    /// Client instructions appended to the system prompt (ACP `_meta.ruckcode.systemPrompt`).
+    client_instructions: Option<String>,
     /// Whether the "profile isn't configured" notices were already sent.
     warned_profiles: bool,
     /// Created on the first sandboxed command.
@@ -456,6 +458,7 @@ impl Agent {
             started: false,
             request_counter: 0,
             model_pin: None,
+            client_instructions: None,
             warned_profiles: false,
             sandbox: None,
             policy_notices,
@@ -552,6 +555,33 @@ impl Agent {
                 })
             })
             .collect()
+    }
+
+    /// Set the client instructions appended to the session's system prompt, replacing any earlier
+    /// ones (`None` or empty clears them) and recording them in the transcript. Applies from the
+    /// next model request. Fails if longer than [`MAX_CLIENT_INSTRUCTIONS`].
+    pub async fn set_client_instructions(
+        &self,
+        session_id: &str,
+        append: Option<String>,
+    ) -> Result<()> {
+        let append = append.filter(|a| !a.trim().is_empty());
+        if append
+            .as_ref()
+            .is_some_and(|a| a.len() > MAX_CLIENT_INSTRUCTIONS)
+        {
+            bail!("client instructions exceed {MAX_CLIENT_INSTRUCTIONS} bytes");
+        }
+        let session = self.session(session_id)?;
+        let mut s = session.lock().await;
+        if s.client_instructions == append {
+            return Ok(());
+        }
+        s.client_instructions = append.clone();
+        s.rec(Record::ClientInstructions {
+            append: append.unwrap_or_default(),
+        });
+        Ok(())
     }
 
     /// Pin the model for this session (`None` clears the pin), overriding the mode's and
@@ -760,6 +790,7 @@ impl Agent {
             .await?;
         s.started = true;
         s.model_pin = loaded.model.clone();
+        s.client_instructions = loaded.client_instructions.clone();
         s.messages = loaded.messages.clone();
         if self.options.persist {
             s.transcript = Some(TranscriptWriter::open(&path)?);
@@ -1051,14 +1082,16 @@ impl Agent {
             return Ok(StopReason::EndTurn);
         }
         self.start_mcp(s, client).await;
-        let system = system_prompt(&s.cwd, &s.modes, &s.mode).await;
+        let system =
+            system_prompt(&s.cwd, &s.modes, &s.mode, s.client_instructions.as_deref()).await;
         self.compact_if_needed(s, client, cancel, &system).await;
         s.push(Message::user_text(text), UserSource::User);
 
         let mut fix_turns = 0u32;
         for iteration in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
-            let system = system_prompt(&s.cwd, &s.modes, &s.mode).await;
+            let system =
+                system_prompt(&s.cwd, &s.modes, &s.mode, s.client_instructions.as_deref()).await;
             if iteration > 0 {
                 self.compact_if_needed(s, client, cancel, &system).await;
             }
@@ -1883,7 +1916,9 @@ impl Agent {
                 if s.messages.is_empty() {
                     client.send_event(&s.id, SessionEvent::Notice("nothing to compact yet".into()));
                 } else {
-                    let system = system_prompt(&s.cwd, &s.modes, &s.mode).await;
+                    let system =
+                        system_prompt(&s.cwd, &s.modes, &s.mode, s.client_instructions.as_deref())
+                            .await;
                     match self
                         .compact(s, client, cancel, &system, instructions.as_deref())
                         .await

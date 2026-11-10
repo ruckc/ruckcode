@@ -198,6 +198,8 @@ fn intended_differences(mut b: Value) -> Value {
     b["initialize"]["agentCapabilities"]["sessionCapabilities"] =
         json!({"list": {}, "resume": {}, "close": {}});
     b["initialize"]["agentCapabilities"]["auth"] = json!({});
+    b["initialize"]["agentCapabilities"]["_meta"] =
+        json!({"ruckcode": {"systemPrompt": {"append": true}}});
     // 2. session/new and session/load return `configOptions` with the `model` selector.
     //    (Injected by the caller of this function; see `strip_model_option`.)
     // 3. tool_call_update without output or edits omits `content` instead of sending `[]`
