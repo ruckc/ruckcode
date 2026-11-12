@@ -61,7 +61,7 @@ Client capabilities we look at: `session.notices` (standard `notice` updates, se
 | `session/resume` | Same as `session/load` but without replaying history. |
 | `session/list` | `{cwd?, cursor?}` -> `{sessions: [{sessionId, cwd, title, updatedAt, _meta}]}`, newest first, never paginated. `title` is the first line of the first prompt; `_meta.ruckcode` has `createdAt`, `mode`, `firstPrompt`. Sessions are stored per project, so a missing `cwd` lists the agent process's working directory. |
 | `session/close` | Cancels any running prompt and drops the session's in-memory state (MCP connections included). The transcript stays on disk; `session/load`/`resume` can reopen it. |
-| `session/prompt` | Returns `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). A rate limit too long to wait out is reported as `end_turn` with `_meta.ruckcode.stopReason = "rate_limited"`. |
+| `session/prompt` | Returns `{stopReason, usage?}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`); see [Token usage and cost](#token-usage-and-cost) for `usage`. A rate limit too long to wait out is reported as `end_turn` with `_meta.ruckcode.stopReason = "rate_limited"`. |
 | `_ruckcode/rate_limit` | Notification (agent -> client, when the client advertises `_meta.ruckcode.rateLimit`): `{sessionId, status: "waiting"\|"resumed"\|"stopped", reason, limit, waitMs, resumeAtMs, attempt, maxAttempts, message, resetsAtMs}`. `waiting` carries a countdown target (`resumeAtMs`, Unix ms); `resumed` clears it. Other clients get the wait as a notice. |
 | `session/cancel` | Notification. |
 | `session/set_mode` | Emits `current_mode_update`. |
@@ -90,8 +90,10 @@ model) the agent sends a `config_option_update` with the new state.
   `tool_call`, `tool_call_update` (text content plus one `diff` per edited file; `content` is
   omitted when there is nothing new, because a present `content` replaces what the client shows),
   `plan`, `current_mode_update`, `config_option_update`, `usage_update`, `notice`.
-  - `usage_update`: `{used, size}` after every model request, where `used` is the provider-reported
-    input plus output tokens and `size` the profile's `context_window`. Not sent when the provider
+  - `usage_update`: `{used, size, cost?}` after every model request, where `used` is the
+    provider-reported input plus output tokens (the whole prompt, cached tokens included) and `size`
+    the profile's `context_window`. `cost` is the session's running total and is present only for
+    priced models; see [Token usage and cost](#token-usage-and-cost). Not sent when the provider
     reports no usage.
   - Notices (hook output, model changes, MCP start-up failures, ...) are sent as the standard
     `notice` update (`severity: "info"`, `title`) only if the client advertised
@@ -102,6 +104,86 @@ model) the agent sends a `config_option_update` with the new state.
 
 Wire notes (the official serializer's conventions): `tool_call` omits `status` when `pending` and
 `kind` when `other`; diffs of new files omit `oldText`.
+
+## Token usage and cost
+
+### `session/prompt` response `usage`
+
+The standard ACP `usage` field (`PromptResponse.usage`, schema feature
+`unstable_end_turn_token_usage`), for that turn only:
+
+```json
+{
+  "stopReason": "end_turn",
+  "usage": {
+    "totalTokens": 315,
+    "inputTokens": 90,
+    "outputTokens": 15,
+    "cachedReadTokens": 190,
+    "cachedWriteTokens": 20
+  }
+}
+```
+
+- **`inputTokens` convention.** It counts only prompt tokens that were neither read from nor
+  written to the prompt cache (the convention of Anthropic's `input_tokens` and of Claude Code's ACP
+  adapter), so the buckets are disjoint and
+  `totalTokens = inputTokens + outputTokens + cachedReadTokens + cachedWriteTokens`.
+  OpenAI-compatible providers report `prompt_tokens` including cached tokens, so ruckcode sends
+  `prompt_tokens - prompt_tokens_details.cached_tokens`. Anthropic's `input_tokens` is already
+  uncached; `cache_read_input_tokens` / `cache_creation_input_tokens` become `cachedReadTokens` /
+  `cachedWriteTokens`. (`usage_update.used` is different on purpose: it is the whole prompt plus
+  output, the size of the context.)
+- **Summing.** A turn can make several model requests (tool loop iterations, a compaction
+  summary). `usage` is the sum over every request that returned a response, including a turn that
+  ends `cancelled` or rate limited (`_meta.ruckcode.stopReason = "rate_limited"`) after earlier
+  requests succeeded.
+- **Failed attempts count nothing.** A request that fails (429, overload, a dropped connection) and
+  is retried returns no usage, so only the successful attempt is counted. That includes a stream
+  that delivered some output and some usage before it was cut off and restarted: the partial
+  response is discarded as a whole, usage included, even though the provider may have billed it. A
+  request cancelled mid-stream is likewise not counted. A turn that fails with an error returns the
+  JSON-RPC error and no `usage`.
+- **Missing usage.** A provider that reports no usage (some local endpoints) yields no `usage` field
+  at all, never zeros. `cachedReadTokens` / `cachedWriteTokens` are omitted when the provider does
+  not report that kind of cache (OpenAI-compatible endpoints never report cache writes).
+  `thoughtTokens` is not sent (reasoning tokens are already inside `outputTokens`).
+
+### `usage_update` `cost`
+
+When the active model has prices configured, every `usage_update` carries the session's running
+total (all turns, including before a `session/load` / `session/resume`):
+
+```json
+{"sessionUpdate": "usage_update", "used": 1100000, "size": 200000,
+ "cost": {"amount": 6.3, "currency": "USD"}}
+```
+
+With no prices (for example a local Ollama), `cost` is omitted entirely, never `0`. Each request is
+priced at the time it is made and the amount stored in the transcript (`cost_usd` on the
+`assistant_message` and `compaction` records), so the total survives resume and later price
+changes do not rewrite history. If a session mixes priced and unpriced models the total covers
+the priced requests only.
+
+### Pricing config
+
+Per-million-token USD rates on a profile in `config.toml`:
+
+```toml
+[profiles.anthropic.pricing]
+input = 3.0          # uncached prompt tokens
+output = 15.0
+cache_read = 0.30    # optional, defaults to `input`
+cache_write = 3.75   # optional, defaults to `input`
+
+# Optional: replace the prices for one model of the profile (for `/model` switches).
+[profiles.anthropic.model_pricing."claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+```
+
+`cost = (uncached_input * input + output * output + cache_read * cache_read + cache_write *
+cache_write) / 1e6`, rounded to 1e-8. Rates must be non-negative numbers.
 
 ## Extensions
 

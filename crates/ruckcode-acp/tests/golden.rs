@@ -207,6 +207,8 @@ fn intended_differences(mut b: Value) -> Value {
     // 4. diffs of new files omit `oldText` instead of sending `"oldText": null`.
     // 5. New notifications `usage_update` (after each model request) and `config_option_update`
     //    (model changes) are stripped before comparing; see agent_server.rs for their tests.
+    //    `session/prompt` responses also gain `usage` when the provider reports it (the golden
+    //    mock reports none, so the baseline is unchanged; tested in agent_server.rs).
     for key in ["live_events", "replay_events"] {
         for ev in b[key].as_array_mut().unwrap() {
             if ev.get("agent_notification").is_none() {

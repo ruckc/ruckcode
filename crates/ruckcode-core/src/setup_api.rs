@@ -329,6 +329,8 @@ impl PlanInput {
                 max_tokens: 32_000,
                 context_window: 200_000,
                 thinking: None,
+                pricing: None,
+                model_pricing: Default::default(),
             },
             set_default: self.set_default,
             new_key,

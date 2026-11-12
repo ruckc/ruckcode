@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use ruckcode_hooks::{fix_turn_prompt, HookEvent, HookOutcome, HookRunner, HooksConfig, OnFailure};
 use ruckcode_llm::{
     ContentBlock, LimitKind, Message, Provider, Request, Response, Role, StopReason as LlmStop,
-    StreamEvent,
+    StreamEvent, Usage,
 };
 use ruckcode_mcp::{McpManager, McpServerConfig};
 use ruckcode_mise::{MiseTask, TaskSelector};
@@ -75,6 +75,8 @@ pub enum SessionEvent {
         input_tokens: u64,
         output_tokens: u64,
         context_window: u64,
+        /// The session's running total in USD, only when the model has prices configured.
+        cost_usd: Option<f64>,
     },
     /// The effective model of the session changed (`/model` pin or a mode switch).
     ModelChanged(String),
@@ -233,6 +235,11 @@ struct SessionState {
     client_instructions: Option<String>,
     /// Whether the "profile isn't configured" notices were already sent.
     warned_profiles: bool,
+    /// Running USD cost of the session (priced requests only); restored from the transcript.
+    cost_usd: f64,
+    /// Usage of the model requests of the turn in flight (every request counts, tool loops and
+    /// compaction included; failed attempts return no usage and count nothing).
+    turn_usage: Usage,
     /// Created on the first sandboxed command.
     sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
     /// Project sandbox policy messages, sent once at the first prompt.
@@ -246,6 +253,12 @@ impl SessionState {
                 tracing::warn!("failed to write transcript: {e:#}");
             }
         }
+    }
+
+    /// Add one model request to the turn's usage and the session's running cost.
+    fn account(&mut self, usage: &Usage, cost: Option<f64>) {
+        self.turn_usage.add(usage);
+        self.cost_usd += cost.unwrap_or(0.0);
     }
 
     fn push(&mut self, m: Message, source: UserSource) {
@@ -272,6 +285,7 @@ impl SessionState {
             model: String::new(),
             stop_reason: LlmStop::EndTurn,
             usage: Default::default(),
+            cost_usd: None,
             metrics: Metrics {
                 duration_ms: 0,
                 time_to_first_token_ms: None,
@@ -460,6 +474,8 @@ impl Agent {
             model_pin: None,
             client_instructions: None,
             warned_profiles: false,
+            cost_usd: 0.0,
+            turn_usage: Usage::default(),
             sandbox: None,
             policy_notices,
         })
@@ -789,6 +805,16 @@ impl Agent {
             .build_state(id.to_string(), cwd.clone(), mode, extra_mcp)
             .await?;
         s.started = true;
+        s.cost_usd = loaded
+            .records
+            .iter()
+            .map(|r| match &r.record {
+                Record::AssistantMessage { cost_usd, .. } | Record::Compaction { cost_usd, .. } => {
+                    cost_usd.unwrap_or(0.0)
+                }
+                _ => 0.0,
+            })
+            .sum();
         s.model_pin = loaded.model.clone();
         s.client_instructions = loaded.client_instructions.clone();
         s.messages = loaded.messages.clone();
@@ -930,6 +956,19 @@ impl Agent {
         text: String,
         client: Arc<dyn Client>,
     ) -> Result<StopReason> {
+        Ok(self.prompt_with_usage(session_id, text, client).await?.0)
+    }
+
+    /// Like [`prompt`](Self::prompt), plus the usage of the turn: the sum over every model
+    /// request it made (tool loop iterations and compaction included), also when it ended
+    /// cancelled or rate limited. `None` when no request reported usage. A turn that fails with
+    /// an error returns the error and no usage.
+    pub async fn prompt_with_usage(
+        &self,
+        session_id: &str,
+        text: String,
+        client: Arc<dyn Client>,
+    ) -> Result<(StopReason, Option<Usage>)> {
         let session = self.session(session_id)?;
         let cancel = CancellationToken::new();
         self.cancels
@@ -937,10 +976,12 @@ impl Agent {
             .unwrap()
             .insert(session_id.to_string(), cancel.clone());
         let mut s = session.lock().await;
+        s.turn_usage = Usage::default();
         if let Some(cmd) = Command::parse(&text) {
             let r = self.run_command(&mut s, cmd, &client, &cancel).await;
             self.cancels.lock().unwrap().remove(session_id);
-            return r;
+            let usage = Some(s.turn_usage).filter(Usage::is_reported);
+            return r.map(|r| (r, usage));
         }
         let mut stats = TurnStats {
             started: Instant::now(),
@@ -980,7 +1021,8 @@ impl Agent {
             });
         }
         self.cancels.lock().unwrap().remove(session_id);
-        result
+        let usage = Some(s.turn_usage).filter(Usage::is_reported);
+        result.map(|r| (r, usage))
     }
 
     async fn run_hooks(
@@ -1129,13 +1171,17 @@ impl Agent {
             stats.model_requests += 1;
             stats.input_tokens += response.usage.input_tokens;
             stats.output_tokens += response.usage.output_tokens;
-            if response.usage.input_tokens + response.usage.output_tokens > 0 {
+            let prices = profile.pricing_for(&model);
+            let cost = prices.and_then(|p| p.cost(&response.usage));
+            s.account(&response.usage, cost);
+            if response.usage.is_reported() {
                 client.send_event(
                     &s.id,
                     SessionEvent::Usage {
                         input_tokens: response.usage.input_tokens,
                         output_tokens: response.usage.output_tokens,
                         context_window: profile.context_window,
+                        cost_usd: prices.map(|_| s.cost_usd),
                     },
                 );
             }
@@ -1147,6 +1193,7 @@ impl Agent {
                 model,
                 stop_reason: response.stop_reason,
                 usage: response.usage,
+                cost_usd: cost,
                 metrics,
             });
             s.messages.push(response.message.clone());
@@ -1837,6 +1884,7 @@ impl Agent {
         instructions: Option<&str>,
     ) -> Result<Option<usize>> {
         let (model, profile) = self.model_for(s)?;
+        let model_id = model.clone();
         let provider = self.provider_for(s, &profile)?;
         let prompt = match instructions.map(str::trim).filter(|i| !i.is_empty()) {
             Some(i) => format!("{SUMMARY_PROMPT}\n\nAdditional instructions from the user: {i}"),
@@ -1872,6 +1920,10 @@ impl Agent {
             ModelOutcome::Cancelled => return Ok(None),
             ModelOutcome::RateLimited(msg) => bail!("{msg}"),
         };
+        let cost = profile
+            .pricing_for(&model_id)
+            .and_then(|p| p.cost(&response.usage));
+        s.account(&response.usage, cost);
         let summary = response.message.text();
         if summary.trim().is_empty() {
             return Ok(None);
@@ -1881,6 +1933,8 @@ impl Agent {
         s.rec(Record::Compaction {
             summary,
             replaced_messages: replaced,
+            usage: response.usage,
+            cost_usd: cost,
         });
         client.send_event(
             &s.id,

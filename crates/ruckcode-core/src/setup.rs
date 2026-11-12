@@ -538,6 +538,8 @@ mod tests {
             max_tokens: 32_000,
             context_window: 200_000,
             thinking: None,
+            pricing: None,
+            model_pricing: Default::default(),
         }
     }
 

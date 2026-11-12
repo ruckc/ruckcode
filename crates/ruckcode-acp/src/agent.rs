@@ -334,10 +334,11 @@ fn convert_event(ev: SessionEvent) -> SessionUpdate {
             input_tokens,
             output_tokens,
             context_window,
-        } => SessionUpdate::UsageUpdate(UsageUpdate::new(
-            input_tokens + output_tokens,
-            context_window,
-        )),
+            cost_usd,
+        } => SessionUpdate::UsageUpdate(
+            UsageUpdate::new(input_tokens + output_tokens, context_window)
+                .cost(cost_usd.map(|c| Cost::new(round_usd(c), "USD"))),
+        ),
         // Handled by `Shared::convert_event`; never reaches here.
         SessionEvent::ModelChanged(m) => {
             SessionUpdate::AgentMessageChunk(ContentChunk::new(text(format!("\n> model: {m}\n"))))
@@ -758,21 +759,24 @@ impl Handler for AcpAgent {
                 // Parsed by hand so that unknown content blocks are skipped, not fatal.
                 let session_id: SessionId = parse(params["sessionId"].clone())?;
                 let blocks = parse_prompt_blocks(&params["prompt"]);
-                let stop = self
+                let (stop, usage) = self
                     .agent()
-                    .prompt(&session_id.0, prompt_to_text(&blocks), self.client())
+                    .prompt_with_usage(&session_id.0, prompt_to_text(&blocks), self.client())
                     .await?;
                 // `rate_limited` is not an ACP stop reason: report `end_turn` and carry the real
                 // reason in `_meta.ruckcode.stopReason` for clients that know about it.
                 let rate_limited = stop == CoreStop::RateLimited;
-                let mut resp = to_value(&PromptResponse::new(match stop {
-                    CoreStop::RateLimited => StopReason::EndTurn,
-                    CoreStop::EndTurn => StopReason::EndTurn,
-                    CoreStop::MaxTokens => StopReason::MaxTokens,
-                    CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,
-                    CoreStop::Cancelled => StopReason::Cancelled,
-                    CoreStop::Refusal => StopReason::Refusal,
-                }))?;
+                let mut resp = to_value(
+                    &PromptResponse::new(match stop {
+                        CoreStop::RateLimited => StopReason::EndTurn,
+                        CoreStop::EndTurn => StopReason::EndTurn,
+                        CoreStop::MaxTokens => StopReason::MaxTokens,
+                        CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,
+                        CoreStop::Cancelled => StopReason::Cancelled,
+                        CoreStop::Refusal => StopReason::Refusal,
+                    })
+                    .usage(usage.as_ref().map(prompt_usage)),
+                )?;
                 if rate_limited {
                     resp["_meta"] = json!({"ruckcode": {"stopReason": "rate_limited"}});
                 }

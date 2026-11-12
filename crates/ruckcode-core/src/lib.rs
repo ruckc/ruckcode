@@ -22,9 +22,10 @@ pub use agent::{
     Agent, AgentOptions, Client, Command, ModeInfo, PermissionDecision, PermissionRequest,
     RateLimitEvent, SessionEvent, SessionInfo, StopReason, ToolStatus,
 };
-pub use config::{Config, Profile, ProviderKind};
+pub use config::{Config, Pricing, Profile, ProviderKind};
 pub use modes::{ModeDef, ModeSet};
 pub use permissions::Permission;
 pub use prompt::MAX_CLIENT_INSTRUCTIONS;
+pub use ruckcode_llm::Usage as TokenUsage;
 pub use ruckcode_mcp::McpServerConfig;
 pub use ruckcode_sandbox;

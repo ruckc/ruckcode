@@ -534,6 +534,7 @@ async fn resume_restores_history_and_repairs_dangling_tool_use() {
         model: "m".into(),
         stop_reason: LlmStop::ToolUse,
         usage: Usage::default(),
+        cost_usd: None,
         metrics: ruckcode_core::transcript::Metrics {
             duration_ms: 1,
             time_to_first_token_ms: None,

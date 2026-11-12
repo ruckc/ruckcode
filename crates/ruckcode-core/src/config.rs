@@ -77,6 +77,61 @@ pub struct Profile {
     /// Passed through as `Request.thinking`.
     #[serde(default)]
     pub thinking: Option<Value>,
+    /// Prices of the profile's models; when set, `usage_update` carries a running `cost`.
+    #[serde(default)]
+    pub pricing: Option<Pricing>,
+    /// Per-model prices (`[profiles.<name>.model_pricing."<model>"]`) that replace `pricing` for
+    /// that model, for profiles whose `models` differ in price.
+    #[serde(default)]
+    pub model_pricing: BTreeMap<String, Pricing>,
+}
+
+impl Profile {
+    /// The prices for `model`, if any are configured.
+    pub fn pricing_for(&self, model: &str) -> Option<&Pricing> {
+        self.model_pricing.get(model).or(self.pricing.as_ref())
+    }
+}
+
+/// USD per million tokens. `input` is the rate for uncached prompt tokens. `cache_read` and
+/// `cache_write` default to the `input` rate when omitted, so cached tokens are never free by
+/// accident.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct Pricing {
+    pub input: f64,
+    pub output: f64,
+    #[serde(default)]
+    pub cache_read: Option<f64>,
+    #[serde(default)]
+    pub cache_write: Option<f64>,
+}
+
+impl Pricing {
+    /// Cost in USD of one request's usage; `None` when the provider reported no usage.
+    pub fn cost(&self, u: &ruckcode_llm::Usage) -> Option<f64> {
+        if !u.is_reported() {
+            return None;
+        }
+        let read = u.cache_read_tokens.unwrap_or(0) as f64;
+        let write = u.cache_write_tokens.unwrap_or(0) as f64;
+        let usd = u.uncached_input_tokens() as f64 * self.input
+            + u.output_tokens as f64 * self.output
+            + read * self.cache_read.unwrap_or(self.input)
+            + write * self.cache_write.unwrap_or(self.input);
+        Some(usd / 1_000_000.0)
+    }
+
+    fn valid(&self) -> bool {
+        [
+            Some(self.input),
+            Some(self.output),
+            self.cache_read,
+            self.cache_write,
+        ]
+        .into_iter()
+        .flatten()
+        .all(|p| p.is_finite() && p >= 0.0)
+    }
 }
 
 fn default_lazy_threshold() -> usize {
@@ -303,6 +358,18 @@ fn from_tables(layers: Vec<toml::Table>) -> Result<Config> {
     for (name, p) in cfg.profiles.iter_mut() {
         p.name = name.clone();
     }
+    for p in cfg.profiles.values() {
+        if p.pricing
+            .iter()
+            .chain(p.model_pricing.values())
+            .any(|x| !x.valid())
+        {
+            bail!(
+                "profile `{}`: pricing rates must be non-negative numbers",
+                p.name
+            );
+        }
+    }
     if !cfg.profiles.contains_key(&cfg.default_profile) {
         bail!("default_profile `{}` is not defined", cfg.default_profile);
     }
@@ -402,6 +469,51 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cfg(text: &str) -> Result<Config> {
+        from_tables(vec![parse_table(text, "test")?])
+    }
+
+    #[test]
+    fn pricing_parses_and_costs_each_bucket() {
+        let c = cfg(r#"
+[profiles.anthropic.pricing]
+input = 3.0
+output = 15.0
+cache_read = 0.3
+[profiles.anthropic.model_pricing."big"]
+input = 15.0
+output = 75.0
+"#)
+        .unwrap();
+        let p = &c.profiles["anthropic"];
+        let u = ruckcode_llm::Usage {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            cache_read_tokens: Some(400_000),
+            cache_write_tokens: Some(100_000),
+        };
+        // 500k uncached * 3 + 400k read * 0.3 + 100k write * (input rate 3) + 100k out * 15
+        let usd = p.pricing_for("claude-opus-5-5").unwrap().cost(&u).unwrap();
+        assert!((usd - (1.5 + 0.12 + 0.3 + 1.5)).abs() < 1e-9, "{usd}");
+        // The per-model table replaces the profile prices.
+        assert_eq!(p.pricing_for("big").unwrap().input, 15.0);
+        // No usage reported: no cost.
+        assert_eq!(
+            p.pricing_for("x")
+                .unwrap()
+                .cost(&ruckcode_llm::Usage::default()),
+            None
+        );
+        // Unpriced profile.
+        assert!(c.profiles["openai"].pricing_for("gpt-5").is_none());
+    }
+
+    #[test]
+    fn negative_pricing_is_rejected() {
+        let e = cfg("[profiles.anthropic.pricing]\ninput = -1.0\noutput = 1.0\n").unwrap_err();
+        assert!(e.to_string().contains("pricing"), "{e}");
+    }
 
     #[test]
     fn defaults() {

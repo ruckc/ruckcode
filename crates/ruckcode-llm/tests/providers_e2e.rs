@@ -227,7 +227,9 @@ async fn anthropic_stream_thinking_text_and_tool() {
         r.usage,
         Usage {
             input_tokens: 30,
-            output_tokens: 77
+            output_tokens: 77,
+            cache_read_tokens: Some(5),
+            cache_write_tokens: None,
         }
     );
     assert_eq!(
@@ -363,7 +365,9 @@ async fn openai_stream_reasoning_text_and_tool_calls() {
         r.usage,
         Usage {
             input_tokens: 40,
-            output_tokens: 12
+            output_tokens: 12,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
         }
     );
     assert_eq!(
@@ -452,4 +456,106 @@ async fn openai_error_surfaces_body() {
     let e = p.complete(request(), tx).await.unwrap_err().to_string();
     assert!(e.contains("404"), "{e}");
     assert!(e.contains("model not found"), "{e}");
+}
+
+#[tokio::test]
+async fn anthropic_stream_without_usage_reports_none() {
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"type":"message_start","message":{"id":"m","role":"assistant"}}),
+        ),
+        (
+            "content_block_start",
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        ),
+        (
+            "content_block_delta",
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}),
+        ),
+        (
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}),
+        ),
+    ]);
+    let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let r = Anthropic::new("k", Some(url))
+        .complete(request(), tx)
+        .await
+        .unwrap();
+    assert_eq!(r.usage, Usage::default());
+    assert!(!r.usage.is_reported());
+}
+
+#[tokio::test]
+async fn anthropic_stream_usage_with_cache_writes() {
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"type":"message_start","message":{"id":"m","role":"assistant","usage":{"input_tokens":3,"cache_read_input_tokens":100,"cache_creation_input_tokens":20,"output_tokens":1}}}),
+        ),
+        (
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}),
+        ),
+    ]);
+    let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let r = Anthropic::new("k", Some(url))
+        .complete(request(), tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        r.usage,
+        Usage {
+            input_tokens: 123,
+            output_tokens: 9,
+            cache_read_tokens: Some(100),
+            cache_write_tokens: Some(20),
+        }
+    );
+}
+
+#[tokio::test]
+async fn openai_stream_cached_tokens_and_missing_usage() {
+    let chunk = |delta: Value, fr: Value| json!({"id":"c1","choices":[{"index":0,"delta":delta,"finish_reason":fr}]});
+    let mut body = sse(&[
+        ("", chunk(json!({"content":"hi"}), Value::Null)),
+        ("", chunk(json!({}), json!("stop"))),
+        (
+            "",
+            json!({"id":"c1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":4,"prompt_tokens_details":{"cached_tokens":64}}}),
+        ),
+    ]);
+    body.push_str("data: [DONE]\n\n");
+    let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let r = OpenAi::new(None, Some(format!("{url}/v1")))
+        .complete(request(), tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        r.usage,
+        Usage {
+            input_tokens: 100,
+            output_tokens: 4,
+            cache_read_tokens: Some(64),
+            cache_write_tokens: None,
+        }
+    );
+
+    // An endpoint that ignores `stream_options.include_usage` sends no usage at all.
+    let mut body = sse(&[
+        ("", chunk(json!({"content":"hi"}), Value::Null)),
+        ("", chunk(json!({}), json!("stop"))),
+    ]);
+    body.push_str("data: [DONE]\n\n");
+    let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let r = OpenAi::new(None, Some(format!("{url}/v1")))
+        .complete(request(), tx)
+        .await
+        .unwrap();
+    assert!(!r.usage.is_reported());
 }

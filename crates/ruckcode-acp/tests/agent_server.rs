@@ -769,6 +769,7 @@ impl Provider for UsageProvider {
             usage: ruckcode_llm::Usage {
                 input_tokens: 1200,
                 output_tokens: 34,
+                ..Default::default()
             },
             rate_limit: None,
         })
@@ -1030,4 +1031,279 @@ async fn system_prompt_invalid_values_are_rejected() {
     new_with_prompt(&c, &env, json!({"replace": "nope"}))
         .await
         .unwrap();
+}
+
+// ---- token usage and cost ---------------------------------------------------------------------
+
+fn usage_of(input: u64, output: u64, read: Option<u64>, write: Option<u64>) -> ruckcode_llm::Usage {
+    ruckcode_llm::Usage {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: read,
+        cache_write_tokens: write,
+    }
+}
+
+/// `(used, size, cost)` of every `usage_update`.
+type UsageRow = (u64, u64, Option<(f64, String)>);
+
+fn usage_updates(u: &[SessionUpdate]) -> Vec<UsageRow> {
+    u.iter()
+        .filter_map(|u| match u {
+            SessionUpdate::UsageUpdate(x) => Some((
+                x.used,
+                x.size,
+                x.cost.as_ref().map(|c| (c.amount, c.currency.clone())),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn allow_once(env: &Env, n: usize) {
+    for _ in 0..n {
+        env.client
+            .selections
+            .lock()
+            .unwrap()
+            .push_back(Some("allow_once".into()));
+    }
+}
+
+#[tokio::test]
+async fn prompt_response_sums_usage_across_a_tool_loop() {
+    let env = Env::new();
+    let m = mock([
+        tool_use("t1", "Bash", json!({"command": "true"})),
+        Message::assistant_text("done"),
+    ]);
+    // Request 1: 100 prompt tokens of which 40 cached; request 2: 200, of which 150 read and 20 written.
+    m.push_usage(usage_of(100, 10, Some(40), None));
+    m.push_usage(usage_of(200, 5, Some(150), Some(20)));
+    let c = env.connect(m);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    allow_once(&env, 1);
+    let r = prompt(&c, &sid, "run").await;
+    assert_eq!(r["stopReason"], "end_turn");
+    // inputTokens excludes cache reads and writes: (100 + 200) - 190 - 20 = 90.
+    assert_eq!(
+        r["usage"],
+        json!({
+            "totalTokens": 315, "inputTokens": 90, "outputTokens": 15,
+            "cachedReadTokens": 190, "cachedWriteTokens": 20,
+        })
+    );
+    // No prices configured: no cost on the running usage_update.
+    let ups = usage_updates(&env.client.updates());
+    assert_eq!(ups.len(), 2);
+    assert!(ups.iter().all(|u| u.2.is_none()));
+}
+
+#[tokio::test]
+async fn prompt_response_usage_without_cache_fields_or_without_usage() {
+    let env = Env::new();
+    let c = env.connect(Arc::new(UsageProvider));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    let r = prompt(&c, &sid, "count").await;
+    assert_eq!(
+        r["usage"],
+        json!({"totalTokens": 1234, "inputTokens": 1200, "outputTokens": 34})
+    );
+
+    // A provider that reports nothing: `usage` is omitted, not zeros.
+    let env = Env::new();
+    let c = env.connect(mock([Message::assistant_text("hi")]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    let r = prompt(&c, &sid, "hi").await;
+    assert!(r.get("usage").is_none(), "{r}");
+    assert!(usage_updates(&env.client.updates()).is_empty());
+}
+
+#[tokio::test]
+async fn retry_after_429_does_not_double_count() {
+    let env = Env::new();
+    let m = mock([Message::assistant_text("ok")]);
+    let info = ruckcode_llm::RateLimitInfo::parse(
+        &[("retry-after-ms".into(), "20".into())],
+        "",
+        std::time::SystemTime::now(),
+    );
+    m.push_failure(ruckcode_llm::ApiError::new(
+        "test",
+        429,
+        "slow down".into(),
+        info,
+    ));
+    m.push_usage(usage_of(50, 7, None, None));
+    let c = env.connect(m.clone());
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    let r = prompt(&c, &sid, "go").await;
+    assert_eq!(
+        m.requests.lock().unwrap().len(),
+        2,
+        "the request was retried"
+    );
+    assert_eq!(
+        r["usage"],
+        json!({"totalTokens": 57, "inputTokens": 50, "outputTokens": 7})
+    );
+}
+
+#[tokio::test]
+async fn rate_limited_and_cancelled_turns_report_consumed_usage() {
+    // Rate limited: request 1 succeeds (tool use), request 2 is told to wait an hour.
+    let env = Env::new();
+    let info = ruckcode_llm::RateLimitInfo::parse(
+        &[("retry-after".into(), "3600".into())],
+        "",
+        std::time::SystemTime::now(),
+    );
+    let seq = Arc::new(Seq(Mutex::new(VecDeque::from([
+        Ok((
+            tool_use("t1", "Bash", json!({"command": "true"})),
+            usage_of(80, 20, None, None),
+        )),
+        Err(ruckcode_llm::ApiError::new("test", 429, "x".into(), info).into()),
+    ]))));
+    let c = env.connect(seq);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    allow_once(&env, 1);
+    let r = prompt(&c, &sid, "go").await;
+    assert_eq!(r["_meta"]["ruckcode"]["stopReason"], "rate_limited");
+    assert_eq!(
+        r["usage"],
+        json!({"totalTokens": 100, "inputTokens": 80, "outputTokens": 20})
+    );
+
+    // Cancelled: the user declines to even answer the permission prompt after request 1.
+    let env = Env::new();
+    let m = mock([tool_use("t1", "Bash", json!({"command": "true"}))]);
+    m.push_usage(usage_of(80, 20, None, None));
+    let c = env.connect(m);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    // No selection queued: the permission request answers `cancelled`, which cancels the turn.
+    let r = prompt(&c, &sid, "go").await;
+    assert_eq!(r["stopReason"], "cancelled");
+    assert_eq!(
+        r["usage"],
+        json!({"totalTokens": 100, "inputTokens": 80, "outputTokens": 20})
+    );
+}
+
+/// Scripted `(message, usage)` results, one per request.
+struct Seq(Mutex<VecDeque<anyhow::Result<(Message, ruckcode_llm::Usage)>>>);
+
+#[async_trait]
+impl Provider for Seq {
+    fn name(&self) -> &str {
+        "seq"
+    }
+    async fn complete(
+        &self,
+        _: ruckcode_llm::Request,
+        _: tokio::sync::mpsc::UnboundedSender<ruckcode_llm::StreamEvent>,
+    ) -> anyhow::Result<ruckcode_llm::Response> {
+        let (message, usage) = self.0.lock().unwrap().pop_front().expect("scripted")?;
+        let stop_reason = if message.tool_uses().next().is_some() {
+            ruckcode_llm::StopReason::ToolUse
+        } else {
+            ruckcode_llm::StopReason::EndTurn
+        };
+        Ok(ruckcode_llm::Response {
+            message,
+            stop_reason,
+            usage,
+            rate_limit: None,
+        })
+    }
+}
+
+const PRICES: &str = "[profiles.anthropic.pricing]\ninput = 3.0\noutput = 15.0\ncache_read = 0.3\ncache_write = 3.75\n";
+
+fn priced_env() -> Env {
+    let env = Env::new();
+    std::fs::create_dir_all(env.cwd().join(".ruckcode")).unwrap();
+    std::fs::write(env.cwd().join(".ruckcode/config.toml"), PRICES).unwrap();
+    env
+}
+
+fn approx(a: f64, b: f64) {
+    assert!((a - b).abs() < 1e-9, "{a} != {b}");
+}
+
+#[tokio::test]
+async fn cost_accumulates_when_priced_and_survives_resume() {
+    let env = priced_env();
+    let m = mock([
+        Message::assistant_text("one"),
+        Message::assistant_text("two"),
+    ]);
+    // 1M prompt tokens (500k cached reads) + 100k output:
+    // 500k * 3 + 500k * 0.3 + 100k * 15 = 1.5 + 0.15 + 1.5 USD.
+    m.push_usage(usage_of(1_000_000, 100_000, Some(500_000), None));
+    m.push_usage(usage_of(1_000_000, 100_000, Some(500_000), None));
+    let c = env.connect(m);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    prompt(&c, &sid, "a").await;
+    prompt(&c, &sid, "b").await;
+    let ups = usage_updates(&env.client.updates());
+    assert_eq!(ups.len(), 2);
+    let (a, b) = (ups[0].2.clone().unwrap(), ups[1].2.clone().unwrap());
+    assert_eq!((a.1.as_str(), b.1.as_str()), ("USD", "USD"));
+    approx(a.0, 3.15);
+    approx(b.0, 6.30);
+    // The existing context-window fields are unchanged.
+    assert_eq!((ups[0].0, ups[0].1), (1_100_000, 200_000));
+
+    c.request(SESSION_CLOSE, json!({"sessionId": sid}))
+        .await
+        .unwrap();
+    let env2 = Env {
+        proj: env.proj,
+        user: tempfile::tempdir().unwrap(),
+        client: Arc::new(TestClient::default()),
+    };
+    let m2 = mock([Message::assistant_text("three")]);
+    m2.push_usage(usage_of(1_000_000, 100_000, Some(500_000), None));
+    let c2 = env2.connect(m2);
+    init(&c2, false).await;
+    c2.request(SESSION_RESUME, json!({"sessionId": sid, "cwd": env2.cwd()}))
+        .await
+        .unwrap();
+    prompt(&c2, &sid, "c").await;
+    let ups = usage_updates(&env2.client.updates());
+    approx(ups[0].2.clone().unwrap().0, 9.45);
+}
+
+#[tokio::test]
+async fn cost_is_omitted_when_unpriced() {
+    let env = Env::new();
+    let m = mock([Message::assistant_text("one")]);
+    m.push_usage(usage_of(1000, 100, None, None));
+    let c = env.connect(m);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    prompt(&c, &sid, "a").await;
+    let ups = usage_updates(&env.client.updates());
+    assert_eq!(ups, [(1100, 200_000, None)]);
+    // And on the wire there is no `cost` key at all.
+    let n = env
+        .client
+        .updates
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|n| matches!(n.update, SessionUpdate::UsageUpdate(_)))
+        .cloned()
+        .unwrap();
+    assert!(serde_json::to_value(&n).unwrap()["update"]
+        .get("cost")
+        .is_none());
 }
