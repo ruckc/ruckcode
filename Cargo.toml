@@ -12,7 +12,7 @@ repository = "https://github.com/ruckc/ruckcode"
 
 [workspace.dependencies]
 agent-client-protocol = { version = "5.0", default-features = false }
-agent-client-protocol-schema = { version = "=1.15.1", default-features = false }
+agent-client-protocol-schema = { version = "=1.15.1", default-features = false, features = ["unstable_end_turn_token_usage"] }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }

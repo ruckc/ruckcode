@@ -65,6 +65,14 @@ base_url = "http://localhost:11434/v1"
 # max_tokens = 32000                 # default 32000
 # context_window = 200000            # default 200000
 # thinking = "high"                  # passed through: Anthropic `thinking` object / OpenAI reasoning_effort
+
+# Optional prices (USD per million tokens). With them, `rc acp` reports the session's running cost
+# in `usage_update`; without them no cost is reported. See docs/ACP.md, "Token usage and cost".
+# [profiles.ollama.pricing]
+# input = 3.0
+# output = 15.0
+# cache_read = 0.30                  # optional, default: the input rate
+# cache_write = 3.75                 # optional, default: the input rate
 ```
 
 Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` (default 100),

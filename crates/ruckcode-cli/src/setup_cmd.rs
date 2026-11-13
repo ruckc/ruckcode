@@ -210,6 +210,8 @@ pub fn build_plan(args: &SetupArgs, stdin: impl FnOnce() -> Result<String>) -> R
             max_tokens: 32_000,
             context_window: 200_000,
             thinking: None,
+            pricing: None,
+            model_pricing: Default::default(),
         },
         set_default: !args.no_default,
         new_key,

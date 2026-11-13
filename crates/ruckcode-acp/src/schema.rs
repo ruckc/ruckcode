@@ -1,7 +1,7 @@
 //! ACP wire types.
 //!
 //! The protocol types are the official [`agent_client_protocol_schema`] crate (v1, stable
-//! surface only, no `unstable_*` features), re-exported here so that `ruckcode_acp::schema::*`
+//! surface plus `unstable_end_turn_token_usage` for `PromptResponse.usage`), re-exported here so that `ruckcode_acp::schema::*`
 //! is the one import for everything on the wire. On top of that this module holds:
 //!
 //! - method-name constants usable in `match` arms (the crate only exposes them as struct fields;
@@ -14,6 +14,31 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Round a USD amount to 1e-8 so float sums do not leak noise like `0.30000000000000004`.
+pub fn round_usd(amount: f64) -> f64 {
+    (amount * 1e8).round() / 1e8
+}
+
+/// The ACP `usage` of a prompt turn from the summed provider usage.
+///
+/// `inputTokens` counts only the prompt tokens that were NOT served from or written to the
+/// cache (the convention of Claude Code's ACP adapter and of Anthropic's `input_tokens`), so
+/// `totalTokens = inputTokens + outputTokens + cachedReadTokens + cachedWriteTokens` and cost can
+/// be computed per bucket without double counting. The cache fields are omitted when the provider
+/// does not report them.
+pub fn prompt_usage(u: &ruckcode_core::TokenUsage) -> Usage {
+    let read = u.cache_read_tokens;
+    let write = u.cache_write_tokens;
+    let input = u.uncached_input_tokens();
+    Usage::new(
+        input + u.output_tokens + read.unwrap_or(0) + write.unwrap_or(0),
+        input,
+        u.output_tokens,
+    )
+    .cached_read_tokens(read)
+    .cached_write_tokens(write)
+}
 
 pub use agent_client_protocol_schema::v1::*;
 pub use agent_client_protocol_schema::ProtocolVersion;

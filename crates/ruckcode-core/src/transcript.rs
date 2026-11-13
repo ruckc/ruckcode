@@ -83,6 +83,10 @@ pub enum Record {
         model: String,
         stop_reason: StopReason,
         usage: Usage,
+        /// USD cost of this request when the profile has prices; summed on load to restore the
+        /// session's running cost.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
         metrics: Metrics,
     },
     ToolCall {
@@ -123,6 +127,11 @@ pub enum Record {
     Compaction {
         summary: String,
         replaced_messages: usize,
+        /// The summarizing request's usage and cost (it is a model request like any other).
+        #[serde(default)]
+        usage: Usage,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
     },
     /// `/clear`: the history before this record is not sent to the model again.
     HistoryCleared {
@@ -513,6 +522,7 @@ mod tests {
             model: "m".into(),
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),
+            cost_usd: None,
             metrics: Metrics {
                 duration_ms: 1,
                 time_to_first_token_ms: None,
@@ -646,6 +656,8 @@ mod tests {
         w.append(&Record::Compaction {
             summary: "S".into(),
             replaced_messages: 3,
+            usage: Usage::default(),
+            cost_usd: None,
         })
         .unwrap();
         let l = TranscriptReader::load(w.path()).unwrap();

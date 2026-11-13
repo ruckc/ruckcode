@@ -48,6 +48,8 @@ pub struct MockProvider {
     pub requests: Mutex<Vec<Request>>,
     /// Failures returned (one per request, before any scripted response) ahead of the queue.
     failures: Mutex<VecDeque<anyhow::Error>>,
+    /// Usage reported by successive successful responses (none reported once it runs out).
+    usages: Mutex<VecDeque<Usage>>,
     /// Rate-limit headers attached to every successful response.
     rate_limit: Mutex<Option<crate::RateLimitInfo>>,
     limited: Mutex<std::collections::HashSet<String>>,
@@ -74,6 +76,12 @@ impl MockProvider {
     /// Make the next request fail with `err` (queued in order, ahead of scripted responses).
     pub fn push_failure(&self, err: impl Into<anyhow::Error>) {
         self.failures.lock().unwrap().push_back(err.into());
+    }
+
+    /// Queue the usage the next successful response reports (one entry per response, in order;
+    /// responses beyond the queue report no usage, like an endpoint without a usage block).
+    pub fn push_usage(&self, u: Usage) {
+        self.usages.lock().unwrap().push_back(u);
     }
 
     /// Attach rate-limit headers to every successful response (proactive pacing tests).
@@ -400,7 +408,7 @@ impl Provider for MockProvider {
         Ok(Response {
             message,
             stop_reason,
-            usage: Usage::default(),
+            usage: self.usages.lock().unwrap().pop_front().unwrap_or_default(),
             rate_limit: self.rate_limit.lock().unwrap().clone(),
         })
     }

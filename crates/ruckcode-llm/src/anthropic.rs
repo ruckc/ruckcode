@@ -95,6 +95,34 @@ fn message_json(m: &Message) -> Value {
     json!({"role": role, "content": content})
 }
 
+/// Fold an Anthropic `usage` object into `usage`. `message_start` carries the prompt side and a
+/// first `output_tokens`; `message_delta` carries the final cumulative `output_tokens` (and, on
+/// newer API versions, cumulative input/cache counts). Fields a block omits keep their value, so
+/// a delta with only `output_tokens` does not reset the prompt counts. Anthropic's
+/// `input_tokens` excludes cache reads and writes; they are added so that
+/// [`Usage::input_tokens`] is the whole prompt.
+pub(crate) fn merge_usage(usage: &mut Usage, u: &Value) {
+    if !u.is_object() {
+        return;
+    }
+    let get = |k: &str| u[k].as_u64();
+    if get("input_tokens").is_some()
+        || get("cache_read_input_tokens").is_some()
+        || get("cache_creation_input_tokens").is_some()
+    {
+        let read = get("cache_read_input_tokens").or(usage.cache_read_tokens);
+        let write = get("cache_creation_input_tokens").or(usage.cache_write_tokens);
+        // `usage.input_tokens` is the whole prompt; recover the uncached part for the fallback.
+        let uncached = get("input_tokens").unwrap_or_else(|| usage.uncached_input_tokens());
+        usage.cache_read_tokens = read;
+        usage.cache_write_tokens = write;
+        usage.input_tokens = uncached + read.unwrap_or(0) + write.unwrap_or(0);
+    }
+    if let Some(out) = get("output_tokens") {
+        usage.output_tokens = out;
+    }
+}
+
 enum Block {
     Thinking(String, Option<String>),
     Redacted(String),
@@ -143,14 +171,7 @@ impl Provider for Anthropic {
                 .with_context(|| format!("invalid SSE payload: {}", ev.data))?;
             match v["type"].as_str().unwrap_or_default() {
                 "message_start" => {
-                    usage.input_tokens =
-                        v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0)
-                            + v["message"]["usage"]["cache_read_input_tokens"]
-                                .as_u64()
-                                .unwrap_or(0)
-                            + v["message"]["usage"]["cache_creation_input_tokens"]
-                                .as_u64()
-                                .unwrap_or(0);
+                    merge_usage(&mut usage, &v["message"]["usage"]);
                 }
                 "content_block_start" => {
                     let cb = &v["content_block"];
@@ -206,7 +227,7 @@ impl Provider for Anthropic {
                         Some("max_tokens") => StopReason::MaxTokens,
                         _ => StopReason::Other,
                     };
-                    usage.output_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                    merge_usage(&mut usage, &v["usage"]);
                 }
                 "error" => {
                     let status = ratelimit::stream_error_status(
@@ -256,6 +277,32 @@ impl Provider for Anthropic {
 mod tests {
     use super::*;
     use crate::ToolSpec;
+
+    #[test]
+    fn usage_start_then_delta() {
+        let mut u = Usage::default();
+        merge_usage(
+            &mut u,
+            &json!({"input_tokens": 25, "cache_read_input_tokens": 5,
+                    "cache_creation_input_tokens": 10, "output_tokens": 1}),
+        );
+        assert_eq!(u.input_tokens, 40);
+        assert_eq!(
+            (u.cache_read_tokens, u.cache_write_tokens),
+            (Some(5), Some(10))
+        );
+        // A delta with only output_tokens keeps the prompt side.
+        merge_usage(&mut u, &json!({"output_tokens": 77}));
+        assert_eq!((u.input_tokens, u.output_tokens), (40, 77));
+        assert_eq!(u.uncached_input_tokens(), 25);
+        // A delta that repeats the cumulative input counts replaces, not adds.
+        merge_usage(&mut u, &json!({"input_tokens": 25, "output_tokens": 80}));
+        assert_eq!((u.input_tokens, u.output_tokens), (40, 80));
+        // No usage object: nothing changes, nothing reported.
+        let mut none = Usage::default();
+        merge_usage(&mut none, &Value::Null);
+        assert!(!none.is_reported());
+    }
 
     #[test]
     fn body_marks_cache_breakpoints() {

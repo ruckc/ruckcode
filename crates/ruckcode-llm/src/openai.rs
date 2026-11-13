@@ -56,6 +56,20 @@ pub(crate) fn build_body(req: &Request) -> Value {
     body
 }
 
+/// Map an OpenAI `usage` object. `prompt_tokens` already includes the cached tokens
+/// (`prompt_tokens_details.cached_tokens`; DeepSeek says `prompt_cache_hit_tokens`), which is
+/// the convention of [`Usage::input_tokens`]. OpenAI reports no cache writes.
+pub(crate) fn parse_usage(u: &Value) -> Usage {
+    Usage {
+        input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
+        output_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
+        cache_read_tokens: u["prompt_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .or_else(|| u["prompt_cache_hit_tokens"].as_u64()),
+        cache_write_tokens: None,
+    }
+}
+
 /// One internal message can become several OpenAI messages (tool results are separate messages).
 fn message_json(m: &Message) -> Vec<Value> {
     match m.role {
@@ -155,8 +169,7 @@ impl Provider for OpenAi {
             let v: Value = serde_json::from_str(&ev.data)
                 .with_context(|| format!("invalid SSE payload: {}", ev.data))?;
             if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
-                usage.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0);
-                usage.output_tokens = u["completion_tokens"].as_u64().unwrap_or(0);
+                usage = parse_usage(u);
             }
             let Some(choice) = v["choices"].get(0) else {
                 continue;
@@ -245,6 +258,33 @@ impl Provider for OpenAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_maps_cached_tokens() {
+        let u = parse_usage(&json!({
+            "prompt_tokens": 100, "completion_tokens": 7, "total_tokens": 107,
+            "prompt_tokens_details": {"cached_tokens": 60},
+        }));
+        assert_eq!(
+            u,
+            Usage {
+                input_tokens: 100,
+                output_tokens: 7,
+                cache_read_tokens: Some(60),
+                cache_write_tokens: None
+            }
+        );
+        assert_eq!(u.uncached_input_tokens(), 40);
+    }
+
+    #[test]
+    fn usage_without_cache_details_or_block() {
+        let u = parse_usage(&json!({"prompt_tokens": 5, "completion_tokens": 2}));
+        assert_eq!(u.cache_read_tokens, None);
+        // No usage block at all: nothing reported.
+        assert!(!parse_usage(&json!({})).is_reported());
+        assert!(u.is_reported());
+    }
 
     #[test]
     fn tool_results_become_tool_messages() {

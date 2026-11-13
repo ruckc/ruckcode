@@ -119,10 +119,55 @@ pub enum StopReason {
     Other,
 }
 
+/// Token usage of one model request (or a sum of several).
+///
+/// `input_tokens` is the WHOLE prompt, cached tokens included, for every provider: OpenAI's
+/// `prompt_tokens` already includes them, and the Anthropic client adds `cache_read_input_tokens`
+/// and `cache_creation_input_tokens` to `input_tokens` (which excludes them). `cache_read_tokens`
+/// and `cache_write_tokens` are the parts of `input_tokens` served from / written to the prompt
+/// cache; `None` means the provider did not say.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+}
+
+impl Usage {
+    /// Whether the provider reported anything. A request cannot really consume zero tokens, so
+    /// an all-zero usage means "no usage block" (e.g. a local endpoint that reports none).
+    pub fn is_reported(&self) -> bool {
+        self.input_tokens > 0
+            || self.output_tokens > 0
+            || self.cache_read_tokens.is_some_and(|n| n > 0)
+            || self.cache_write_tokens.is_some_and(|n| n > 0)
+    }
+
+    /// Prompt tokens that were neither read from nor written to the cache.
+    pub fn uncached_input_tokens(&self) -> u64 {
+        self.input_tokens.saturating_sub(
+            self.cache_read_tokens
+                .unwrap_or(0)
+                .saturating_add(self.cache_write_tokens.unwrap_or(0)),
+        )
+    }
+
+    /// Add another request's usage; a cache count stays `None` until some request reports it.
+    pub fn add(&mut self, other: &Usage) {
+        fn opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+            match (a, b) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+            }
+        }
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cache_read_tokens = opt(self.cache_read_tokens, other.cache_read_tokens);
+        self.cache_write_tokens = opt(self.cache_write_tokens, other.cache_write_tokens);
+    }
 }
 
 #[derive(Debug, Clone)]

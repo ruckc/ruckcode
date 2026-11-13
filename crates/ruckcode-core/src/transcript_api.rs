@@ -662,10 +662,16 @@ pub fn normalize(index: usize, s: &Stamped) -> Value {
             model,
             stop_reason,
             usage,
+            cost_usd,
             metrics,
         } => json!({
             "requestId": request_id, "model": model, "stopReason": enum_str(stop_reason),
-            "usage": {"inputTokens": usage.input_tokens, "outputTokens": usage.output_tokens},
+            "usage": {
+                "inputTokens": usage.input_tokens, "outputTokens": usage.output_tokens,
+                "cachedReadTokens": usage.cache_read_tokens,
+                "cachedWriteTokens": usage.cache_write_tokens,
+            },
+            "costUsd": cost_usd,
             "metrics": {
                 "durationMs": metrics.duration_ms,
                 "timeToFirstTokenMs": metrics.time_to_first_token_ms,
@@ -718,6 +724,7 @@ pub fn normalize(index: usize, s: &Stamped) -> Value {
         Record::Compaction {
             summary,
             replaced_messages,
+            ..
         } => json!({"summary": summary, "replacedMessages": replaced_messages}),
         Record::HistoryCleared { cleared_messages } => {
             json!({ "clearedMessages": cleared_messages })
@@ -788,7 +795,9 @@ mod tests {
             usage: Usage {
                 input_tokens: i,
                 output_tokens: o,
+                ..Default::default()
             },
+            cost_usd: None,
             metrics: Metrics {
                 duration_ms: 900,
                 time_to_first_token_ms: Some(120),
@@ -857,6 +866,8 @@ mod tests {
             },
             assistant("Done", 50, 5),
             Record::Compaction {
+                usage: Usage::default(),
+                cost_usd: None,
                 summary: "Summary of work".into(),
                 replaced_messages: 4,
             },
