@@ -15,6 +15,8 @@ pub struct OpenAi {
     api_key: Option<String>,
     base_url: String,
     client: reqwest::Client,
+    /// Extra top-level request fields (e.g. Ollama sampling options), merged into every body.
+    extra: Option<Value>,
 }
 
 impl OpenAi {
@@ -23,6 +25,30 @@ impl OpenAi {
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),
             client: http_client(),
+            extra: None,
+        }
+    }
+
+    /// Merge `extra` into every request body (objects one level deep, so `options` extends).
+    pub fn with_extra_body(mut self, extra: Value) -> Self {
+        self.extra = Some(extra);
+        self
+    }
+}
+
+/// Merge `extra` into `body`: keys replace, except objects, which are merged key by key.
+pub(crate) fn merge_extra(body: &mut Value, extra: &Value) {
+    let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) else {
+        return;
+    };
+    for (k, v) in e {
+        match (b.get_mut(k), v) {
+            (Some(Value::Object(bo)), Value::Object(vo)) => {
+                bo.extend(vo.iter().map(|(k, v)| (k.clone(), v.clone())))
+            }
+            _ => {
+                b.insert(k.clone(), v.clone());
+            }
         }
     }
 }
@@ -137,13 +163,17 @@ impl Provider for OpenAi {
         request: Request,
         events: UnboundedSender<StreamEvent>,
     ) -> anyhow::Result<Response> {
+        let mut body = build_body(&request);
+        if let Some(extra) = &self.extra {
+            merge_extra(&mut body, extra);
+        }
         let mut rb = self
             .client
             .post(format!(
                 "{}/chat/completions",
                 self.base_url.trim_end_matches('/')
             ))
-            .json(&build_body(&request));
+            .json(&body);
         if let Some(key) = &self.api_key {
             rb = rb.bearer_auth(key);
         }

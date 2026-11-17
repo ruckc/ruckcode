@@ -26,6 +26,8 @@ pub enum UserSource {
     FixTurn,
     Hook,
     ToolResults,
+    /// Synthetic reminder sent after the thinking guard aborted a looping request.
+    Nudge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,7 +388,7 @@ pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
                 work_after_end = false;
                 bad_end = matches!(
                     stop_reason.as_str(),
-                    "error" | "interrupted" | "rate_limited"
+                    "error" | "interrupted" | "rate_limited" | "thinking_loop"
                 );
             }
             Record::SessionDismissed {} => {

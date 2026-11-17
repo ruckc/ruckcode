@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::permissions::Permission;
 use crate::retry::RateLimitConfig;
+use crate::thinking_guard::{OllamaOptions, ThinkingGuardConfig, ThinkingGuardOverride};
 
 const DEFAULTS: &str = r#"
 default_profile = "anthropic"
@@ -84,6 +85,12 @@ pub struct Profile {
     /// that model, for profiles whose `models` differ in price.
     #[serde(default)]
     pub model_pricing: BTreeMap<String, Pricing>,
+    /// Overrides of the global `[thinking_guard]` for this profile.
+    #[serde(default)]
+    pub thinking_guard: Option<ThinkingGuardOverride>,
+    /// Ollama sampling options (`[profiles.<name>.ollama]`); sent only when this section is set.
+    #[serde(default)]
+    pub ollama: Option<OllamaOptions>,
 }
 
 impl Profile {
@@ -235,6 +242,9 @@ pub struct Config {
     /// Retry and wait behaviour for 429 / overloaded / transient API failures (`[rate_limit]`).
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// Detection of a model looping in its reasoning (`[thinking_guard]`).
+    #[serde(default)]
+    pub thinking_guard: ThinkingGuardConfig,
     /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
     #[serde(default)]
     pub sandbox: ruckcode_sandbox::SandboxConfig,
@@ -458,10 +468,11 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
             if key.is_none() && !local {
                 return Err(missing());
             }
-            Arc::new(ruckcode_llm::openai::OpenAi::new(
-                key,
-                profile.base_url.clone(),
-            ))
+            let mut p = ruckcode_llm::openai::OpenAi::new(key, profile.base_url.clone());
+            if let Some(extra) = profile.ollama.as_ref().and_then(OllamaOptions::extra_body) {
+                p = p.with_extra_body(extra);
+            }
+            Arc::new(p)
         }
     })
 }
@@ -472,6 +483,38 @@ mod tests {
 
     fn cfg(text: &str) -> Result<Config> {
         from_tables(vec![parse_table(text, "test")?])
+    }
+
+    #[test]
+    fn thinking_guard_and_ollama_options_parse() {
+        let c = cfg(r#"
+default_profile = "local"
+[thinking_guard]
+repeat_count = 6
+max_nudges = 3
+[profiles.local]
+provider = "openai"
+model = "gemma4:26b"
+[profiles.local.thinking_guard]
+budget_tokens = 8000
+[profiles.local.ollama]
+repeat_penalty = 1.15
+[profiles.cloud]
+provider = "openai"
+model = "gpt"
+"#)
+        .unwrap();
+        assert_eq!(c.thinking_guard.repeat_count, 6);
+        assert_eq!(c.thinking_guard.window_chars, 4000);
+        let local = c.profile("local").unwrap();
+        let g = c
+            .thinking_guard
+            .with_override(local.thinking_guard.as_ref());
+        assert_eq!((g.budget_tokens, g.max_nudges), (Some(8000), 3));
+        assert!(local.ollama.as_ref().unwrap().extra_body().is_some());
+        // Other profiles get no Ollama options and the global guard settings.
+        let cloud = c.profile("cloud").unwrap();
+        assert!(cloud.ollama.is_none() && cloud.thinking_guard.is_none());
     }
 
     #[test]

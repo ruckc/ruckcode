@@ -23,6 +23,7 @@ use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::{system_prompt, MAX_CLIENT_INSTRUCTIONS};
 use crate::retry::{self, Decision, Pacer, RateLimitConfig};
+use crate::thinking_guard::{LoopDetector, ThinkingGuardConfig, Trip};
 use crate::transcript::{
     self, compaction_message, interrupted_results, EditRecord, Initiator, McpServerRecord, Metrics,
     PermissionOutcome, Record, SessionMeta, SessionSummary, TranscriptReader, TranscriptWriter,
@@ -33,6 +34,10 @@ const SWITCH_MODE: &str = "SwitchMode";
 const INTERRUPTED: &str = "[Request interrupted by user]";
 const RATE_LIMITED_NOTE: &str =
     "[Turn paused: the API rate limit was reached. The work continues when the user asks to resume.]";
+const THINKING_LOOP_NOTE: &str =
+    "[Turn stopped: the model kept repeating itself in its reasoning without acting.]";
+/// Sent to a model whose request was aborted for looping in its reasoning.
+const THINKING_NUDGE: &str = "You were repeating yourself without acting. Take the next concrete step now with a tool call, or answer.";
 const FAILED_NOTE: &str = "[Turn stopped: the model request failed.]";
 const SUMMARY_PROMPT: &str = "Summarize the conversation so far so that work can continue from \
 the summary alone. Cover: the user's goals, decisions made, files read or changed, the current \
@@ -150,6 +155,9 @@ pub enum StopReason {
     /// A rate limit (or exhausted budget) ended the turn; the session is resumable after the
     /// reset. Counts as unfinished work.
     RateLimited,
+    /// The model kept looping in its reasoning (see `[thinking_guard]`) even after being
+    /// nudged; the session is resumable and the turn counts as unfinished work.
+    ThinkingLoop,
 }
 
 impl StopReason {
@@ -161,6 +169,7 @@ impl StopReason {
             StopReason::Cancelled => "cancelled",
             StopReason::Refusal => "refusal",
             StopReason::RateLimited => "rate_limited",
+            StopReason::ThinkingLoop => "thinking_loop",
         }
     }
 }
@@ -655,8 +664,8 @@ impl Agent {
             return Ok(p.clone());
         }
         let key = format!(
-            "{:?}/{}/{:?}/{:?}",
-            profile.provider, profile.model, profile.base_url, profile.api_key_env
+            "{:?}/{}/{:?}/{:?}/{:?}",
+            profile.provider, profile.model, profile.base_url, profile.api_key_env, profile.ollama
         );
         if let Some(p) = s.providers.get(&key) {
             return Ok(p.clone());
@@ -1001,6 +1010,7 @@ impl Agent {
             match &result {
                 Ok(StopReason::Cancelled) => s.push_interruption(),
                 Ok(StopReason::RateLimited) => s.push_closing(RATE_LIMITED_NOTE),
+                Ok(StopReason::ThinkingLoop) => s.push_closing(THINKING_LOOP_NOTE),
                 Err(_) => s.push_closing(FAILED_NOTE),
                 _ => {}
             }
@@ -1130,6 +1140,7 @@ impl Agent {
         s.push(Message::user_text(text), UserSource::User);
 
         let mut fix_turns = 0u32;
+        let mut nudges = 0u32;
         for iteration in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
             let system =
@@ -1143,6 +1154,10 @@ impl Agent {
             let tools = build_tools(s);
             let (model, profile) = self.model_for(s)?;
             let provider = self.provider_for(s, &profile)?;
+            let guard_cfg = s
+                .config
+                .thinking_guard
+                .with_override(profile.thinking_guard.as_ref());
             let request = Request {
                 model: model.clone(),
                 system,
@@ -1161,12 +1176,48 @@ impl Agent {
                     cancel,
                     &s.config.rate_limit,
                     true,
+                    Some((&guard_cfg, profile.context_window)),
                 )
                 .await?
             {
                 ModelOutcome::Done(r, m) => (r, m),
                 ModelOutcome::Cancelled => return Ok(StopReason::Cancelled),
                 ModelOutcome::RateLimited(_) => return Ok(StopReason::RateLimited),
+                ModelOutcome::Looped { trip, usage } => {
+                    // The aborted request still cost tokens (estimated: the stream was cut
+                    // before the provider reported any). Its thinking is never recorded, so it
+                    // reaches neither the history nor a later compaction.
+                    stats.model_requests += 1;
+                    stats.input_tokens += usage.input_tokens;
+                    stats.output_tokens += usage.output_tokens;
+                    let cost = profile.pricing_for(&model).and_then(|p| p.cost(&usage));
+                    s.account(&usage, cost);
+                    if nudges >= guard_cfg.max_nudges {
+                        client.send_event(
+                            &s.id,
+                            SessionEvent::Notice(format!(
+                                "The model kept {} in its reasoning without acting; stopping \
+                                 this turn after {nudges} nudge(s). The session can be \
+                                 continued with a new message (try rephrasing or a more \
+                                 specific request).",
+                                trip.describe()
+                            )),
+                        );
+                        return Ok(StopReason::ThinkingLoop);
+                    }
+                    nudges += 1;
+                    client.send_event(
+                        &s.id,
+                        SessionEvent::Notice(format!(
+                            "The model was {} in its reasoning; the request was aborted and \
+                             its reasoning discarded. Nudging it to act (nudge {nudges}/{}).",
+                            trip.describe(),
+                            guard_cfg.max_nudges
+                        )),
+                    );
+                    s.push(Message::user_text(THINKING_NUDGE), UserSource::Nudge);
+                    continue;
+                }
             };
             stats.model_requests += 1;
             stats.input_tokens += response.usage.input_tokens;
@@ -1706,6 +1757,7 @@ impl Agent {
         cancel: &CancellationToken,
         cfg: &RateLimitConfig,
         forward: bool,
+        guard: Option<(&ThinkingGuardConfig, u64)>,
     ) -> Result<ModelOutcome> {
         let mut attempt = 0u32;
         loop {
@@ -1738,16 +1790,20 @@ impl Agent {
                 request.clone(),
                 cancel,
                 forward,
+                guard.map(|(c, w)| LoopDetector::new(c, w)),
             )
             .await
             {
-                Ok(Some((response, metrics))) => {
+                Ok(StreamOutcome::Looped { trip, usage }) => {
+                    return Ok(ModelOutcome::Looped { trip, usage });
+                }
+                Ok(StreamOutcome::Done(response, metrics)) => {
                     if let Some(info) = &response.rate_limit {
                         self.pacer.observe(pace_key, info);
                     }
                     return Ok(ModelOutcome::Done(response, metrics));
                 }
-                Ok(None) => return Ok(ModelOutcome::Cancelled),
+                Ok(StreamOutcome::Cancelled) => return Ok(ModelOutcome::Cancelled),
                 Err(StreamFail { error, streamed }) => {
                     let api = error
                         .chain()
@@ -1913,12 +1969,14 @@ impl Agent {
                 cancel,
                 &s.config.rate_limit,
                 false,
+                None,
             )
             .await?
         {
             ModelOutcome::Done(r, _) => r,
             ModelOutcome::Cancelled => return Ok(None),
             ModelOutcome::RateLimited(msg) => bail!("{msg}"),
+            ModelOutcome::Looped { .. } => unreachable!("compaction runs without the guard"),
         };
         let cost = profile
             .pricing_for(&model_id)
@@ -2143,6 +2201,17 @@ enum ModelOutcome {
     Cancelled,
     /// Gave up because of rate limits; the message was already shown to the user.
     RateLimited(String),
+    /// The thinking guard aborted the request; `usage` is an estimate of what it consumed.
+    Looped {
+        trip: Trip,
+        usage: Usage,
+    },
+}
+
+enum StreamOutcome {
+    Done(Response, Metrics),
+    Cancelled,
+    Looped { trip: Trip, usage: Usage },
 }
 
 fn unix_ms(t: std::time::SystemTime) -> u64 {
@@ -2159,37 +2228,68 @@ async fn stream_request(
     request: Request,
     cancel: &CancellationToken,
     forward: bool,
-) -> Result<Option<(Response, Metrics)>, StreamFail> {
+    mut guard: Option<LoopDetector>,
+) -> Result<StreamOutcome, StreamFail> {
     let started = Instant::now();
+    // Rough prompt size (4 chars per token) for the usage of a request cut short by the guard.
+    let prompt_chars =
+        serde_json::to_string(&request.messages).map_or(0, |j| j.len()) + request.system.len();
     let mut first_token: Option<Duration> = None;
     let mut streamed = false;
     let (tx, mut rx) = unbounded_channel();
     let fut = provider.complete(request, tx);
     tokio::pin!(fut);
-    let mut handle = |ev: StreamEvent, first: &mut Option<Duration>| match ev {
-        StreamEvent::TextDelta(t) => {
-            first.get_or_insert_with(|| started.elapsed());
-            streamed = true;
-            if forward {
-                client.send_event(session_id, SessionEvent::AgentText(t));
+    // Returns the trip (and the thinking seen so far) when the guard fires.
+    let mut handle = |ev: StreamEvent, first: &mut Option<Duration>| -> Option<(Trip, usize)> {
+        match ev {
+            StreamEvent::TextDelta(t) => {
+                first.get_or_insert_with(|| started.elapsed());
+                streamed = true;
+                if let Some(g) = guard.as_mut() {
+                    g.mark_acted();
+                }
+                if forward {
+                    client.send_event(session_id, SessionEvent::AgentText(t));
+                }
+                None
+            }
+            StreamEvent::ThinkingDelta(t) => {
+                first.get_or_insert_with(|| started.elapsed());
+                streamed = true;
+                let trip = guard
+                    .as_mut()
+                    .and_then(|g| g.feed(&t).map(|trip| (trip, g.thinking_chars())));
+                if forward {
+                    client.send_event(session_id, SessionEvent::AgentThought(t));
+                }
+                trip
+            }
+            StreamEvent::ToolUseStart { .. } => {
+                if let Some(g) = guard.as_mut() {
+                    g.mark_acted();
+                }
+                None
             }
         }
-        StreamEvent::ThinkingDelta(t) => {
-            first.get_or_insert_with(|| started.elapsed());
-            streamed = true;
-            if forward {
-                client.send_event(session_id, SessionEvent::AgentThought(t));
-            }
-        }
-        StreamEvent::ToolUseStart { .. } => {}
     };
     let mut open = true;
     let response = loop {
         tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Ok(None),
+            _ = cancel.cancelled() => return Ok(StreamOutcome::Cancelled),
             ev = rx.recv(), if open => match ev {
-                Some(ev) => handle(ev, &mut first_token),
+                Some(ev) => {
+                    if let Some((trip, out)) = handle(ev, &mut first_token) {
+                        // Returning drops the request future, which closes the connection and
+                        // ends generation.
+                        let usage = Usage {
+                            input_tokens: (prompt_chars / 4) as u64,
+                            output_tokens: (out / 4) as u64,
+                            ..Default::default()
+                        };
+                        return Ok(StreamOutcome::Looped { trip, usage });
+                    }
+                }
                 None => open = false,
             },
             r = &mut fut => match r {
@@ -2215,7 +2315,7 @@ async fn stream_request(
         output_tokens_per_sec: (out > 0 && !generating.is_zero())
             .then(|| out as f64 / generating.as_secs_f64()),
     };
-    Ok(Some((response, metrics)))
+    Ok(StreamOutcome::Done(response, metrics))
 }
 
 fn edit_record(cwd: &Path, e: &FileEdit) -> EditRecord {

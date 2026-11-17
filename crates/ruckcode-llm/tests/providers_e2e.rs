@@ -685,3 +685,37 @@ async fn anthropic_empty_assistant_turns_send_no_empty_blocks() {
     assert_eq!(think["content"][0]["signature"], "sig");
     assert_eq!(think["content"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn openai_extra_body_is_sent_only_when_configured() {
+    let extra =
+        json!({"presence_penalty": 0.5, "options": {"repeat_penalty": 1.1, "repeat_last_n": 256}});
+    let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    OpenAi::new(None, Some(url))
+        .with_extra_body(extra)
+        .complete(request(), tx)
+        .await
+        .unwrap();
+    let c = cap.await.unwrap();
+    assert_eq!(c.body["options"]["repeat_penalty"], 1.1);
+    assert_eq!(c.body["options"]["repeat_last_n"], 256);
+    assert_eq!(c.body["presence_penalty"], 0.5);
+    assert_eq!(c.body["model"], "test-model");
+
+    let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    OpenAi::new(None, Some(url))
+        .complete(request(), tx)
+        .await
+        .unwrap();
+    let c = cap.await.unwrap();
+    for k in [
+        "options",
+        "presence_penalty",
+        "frequency_penalty",
+        "repeat_penalty",
+    ] {
+        assert!(c.body.get(k).is_none(), "{k} must not be sent by default");
+    }
+}
