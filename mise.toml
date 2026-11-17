@@ -1,6 +1,7 @@
 [tools]
 node = "22"
 pnpm = "10"
+rust = "1.100.0"
 
 [tasks.build]
 description = "Build the workspace (the desktop app crate is excluded, see app:*)"
