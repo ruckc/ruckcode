@@ -2046,9 +2046,22 @@ enum Gate {
 
 /// Merge adjacent same-role messages so providers always see strictly alternating roles.
 /// Tool results stay ahead of any text merged into the same user message.
-fn normalize_messages(messages: &[Message]) -> Vec<Message> {
+///
+/// Assistant messages with no text and no tool calls (thinking only, or nothing; e.g. a model
+/// that looped in its reasoning) are dropped first. They carry nothing the next request needs,
+/// and some servers reject them (OpenAI-compatible: empty/null content; Anthropic: empty
+/// blocks). Dropping one leaves its neighbouring user messages adjacent, which the merge below
+/// folds into one, so roles stay alternating. Applies to normal requests and to compaction.
+pub fn normalize_messages(messages: &[Message]) -> Vec<Message> {
     let mut out: Vec<Message> = Vec::with_capacity(messages.len());
-    for m in messages {
+    for m in messages.iter().filter(|m| {
+        m.role != Role::Assistant
+            || m.content.iter().any(|b| match b {
+                ContentBlock::Text { text } => !text.is_empty(),
+                ContentBlock::ToolUse { .. } => true,
+                _ => false,
+            })
+    }) {
         match out.last_mut() {
             Some(last) if last.role == m.role => {
                 last.content.extend(m.content.iter().cloned());

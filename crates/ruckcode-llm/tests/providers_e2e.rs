@@ -559,3 +559,129 @@ async fn openai_stream_cached_tokens_and_missing_usage() {
         .unwrap();
     assert!(!r.usage.is_reported());
 }
+
+fn no_nulls(v: &Value) {
+    match v {
+        Value::Null => panic!("request body contains null"),
+        Value::Array(a) => a.iter().for_each(no_nulls),
+        Value::Object(o) => o.values().for_each(no_nulls),
+        _ => {}
+    }
+}
+
+fn assistant(content: Vec<ContentBlock>) -> Message {
+    Message {
+        role: ruckcode_llm::Role::Assistant,
+        content,
+    }
+}
+
+fn openai_ok_body() -> String {
+    let mut b = sse(&[(
+        "",
+        json!({"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}),
+    )]);
+    b.push_str("data: [DONE]\n\n");
+    b
+}
+
+#[tokio::test]
+async fn openai_empty_assistant_content_is_never_null() {
+    let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
+    let mut req = request();
+    req.messages = vec![
+        Message::user_text("a"),
+        // Thinking only: no text, no tool calls.
+        assistant(vec![ContentBlock::Thinking {
+            thinking: "hmm".into(),
+            signature: None,
+        }]),
+        Message::user_text("b"),
+        // Empty text plus a tool call.
+        assistant(vec![
+            ContentBlock::Text { text: "".into() },
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "Bash".into(),
+                input: json!({"command": "ls"}),
+            },
+        ]),
+        Message {
+            role: ruckcode_llm::Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "t1".into(),
+                content: "".into(),
+                is_error: false,
+            }],
+        },
+    ];
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    OpenAi::new(None, Some(url))
+        .complete(req, tx)
+        .await
+        .unwrap();
+    let c = cap.await.unwrap();
+    no_nulls(&c.body["messages"]);
+    let m = &c.body["messages"];
+    assert_eq!(m[2]["role"], "assistant");
+    assert_eq!(m[2]["content"], "");
+    assert!(m[2].get("tool_calls").is_none());
+    assert_eq!(m[4]["content"], "");
+    assert_eq!(m[4]["tool_calls"][0]["id"], "t1");
+    assert_eq!(m[5]["role"], "tool");
+    assert_eq!(m[5]["content"], "");
+}
+
+#[tokio::test]
+async fn anthropic_empty_assistant_turns_send_no_empty_blocks() {
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"type":"message_start","message":{"usage":{"input_tokens":1}}}),
+        ),
+        (
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        ),
+    ]);
+    let (url, cap) = serve("200 OK", "text/event-stream", body).await;
+    let mut req = request();
+    req.messages = vec![
+        Message::user_text("a"),
+        assistant(vec![ContentBlock::Text { text: "".into() }]),
+        Message::user_text("b"),
+        // Thinking-only keeps its block and signature.
+        assistant(vec![
+            ContentBlock::Thinking {
+                thinking: "hmm".into(),
+                signature: Some("sig".into()),
+            },
+            ContentBlock::Text { text: "".into() },
+        ]),
+        Message::user_text("c"),
+        assistant(vec![]),
+        Message::user_text("d"),
+    ];
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    Anthropic::new("k", Some(url))
+        .complete(req, tx)
+        .await
+        .unwrap();
+    let c = cap.await.unwrap();
+    let msgs = c.body["messages"].as_array().unwrap();
+    for m in msgs {
+        let blocks = m["content"].as_array().unwrap();
+        assert!(!blocks.is_empty(), "empty content array: {m}");
+        for b in blocks {
+            if b["type"] == "text" {
+                assert!(!b["text"].as_str().unwrap().is_empty(), "empty text block");
+            }
+        }
+    }
+    let think = msgs
+        .iter()
+        .find(|m| m["content"][0]["type"] == "thinking")
+        .expect("thinking block kept");
+    assert_eq!(think["content"][0]["signature"], "sig");
+    assert_eq!(think["content"].as_array().unwrap().len(), 1);
+}

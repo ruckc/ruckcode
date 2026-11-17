@@ -82,7 +82,9 @@ fn message_json(m: &Message) -> Vec<Value> {
                            "function": {"name": name, "arguments": input.to_string()}})
                 })
                 .collect();
-            let mut v = json!({"role": "assistant", "content": if text.is_empty() { Value::Null } else { text.into() }});
+            // Never `null`: Ollama (and other servers) reject it with "invalid message content
+            // type: <nil>". `""` is valid for OpenAI with or without `tool_calls`.
+            let mut v = json!({"role": "assistant", "content": text});
             if !calls.is_empty() {
                 v["tool_calls"] = Value::Array(calls);
             }
@@ -114,6 +116,8 @@ fn message_json(m: &Message) -> Vec<Value> {
                     _ => {}
                 }
             }
+            // Tool results already became `tool` messages. A user message that carries no text
+            // (only tool results, or nothing) is omitted rather than sent with empty content.
             if !text.is_empty() {
                 out.push(json!({"role": "user", "content": text}));
             }
