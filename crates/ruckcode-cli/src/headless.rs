@@ -286,6 +286,10 @@ pub async fn run(cli: &Cli) -> Result<u8> {
         eprintln!("rc: stopped: rate limited; continue the session after the limit resets");
         return Ok(EXIT_RATE_LIMITED);
     }
+    if v["_meta"]["ruckcode"]["stopReason"] == "thinking_loop" {
+        eprintln!("rc: stopped: the model kept looping in its reasoning; continue the session with a new message");
+        return Ok(1);
+    }
     let stop: StopReason = serde_json::from_value(v.get("stopReason").cloned().unwrap_or_default())
         .context("bad prompt response")?;
     Ok(match stop {

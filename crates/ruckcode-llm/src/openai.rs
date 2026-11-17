@@ -15,6 +15,8 @@ pub struct OpenAi {
     api_key: Option<String>,
     base_url: String,
     client: reqwest::Client,
+    /// Extra top-level request fields (e.g. Ollama sampling options), merged into every body.
+    extra: Option<Value>,
 }
 
 impl OpenAi {
@@ -23,6 +25,30 @@ impl OpenAi {
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),
             client: http_client(),
+            extra: None,
+        }
+    }
+
+    /// Merge `extra` into every request body (objects one level deep, so `options` extends).
+    pub fn with_extra_body(mut self, extra: Value) -> Self {
+        self.extra = Some(extra);
+        self
+    }
+}
+
+/// Merge `extra` into `body`: keys replace, except objects, which are merged key by key.
+pub(crate) fn merge_extra(body: &mut Value, extra: &Value) {
+    let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) else {
+        return;
+    };
+    for (k, v) in e {
+        match (b.get_mut(k), v) {
+            (Some(Value::Object(bo)), Value::Object(vo)) => {
+                bo.extend(vo.iter().map(|(k, v)| (k.clone(), v.clone())))
+            }
+            _ => {
+                b.insert(k.clone(), v.clone());
+            }
         }
     }
 }
@@ -82,7 +108,9 @@ fn message_json(m: &Message) -> Vec<Value> {
                            "function": {"name": name, "arguments": input.to_string()}})
                 })
                 .collect();
-            let mut v = json!({"role": "assistant", "content": if text.is_empty() { Value::Null } else { text.into() }});
+            // Never `null`: Ollama (and other servers) reject it with "invalid message content
+            // type: <nil>". `""` is valid for OpenAI with or without `tool_calls`.
+            let mut v = json!({"role": "assistant", "content": text});
             if !calls.is_empty() {
                 v["tool_calls"] = Value::Array(calls);
             }
@@ -114,6 +142,8 @@ fn message_json(m: &Message) -> Vec<Value> {
                     _ => {}
                 }
             }
+            // Tool results already became `tool` messages. A user message that carries no text
+            // (only tool results, or nothing) is omitted rather than sent with empty content.
             if !text.is_empty() {
                 out.push(json!({"role": "user", "content": text}));
             }
@@ -133,13 +163,17 @@ impl Provider for OpenAi {
         request: Request,
         events: UnboundedSender<StreamEvent>,
     ) -> anyhow::Result<Response> {
+        let mut body = build_body(&request);
+        if let Some(extra) = &self.extra {
+            merge_extra(&mut body, extra);
+        }
         let mut rb = self
             .client
             .post(format!(
                 "{}/chat/completions",
                 self.base_url.trim_end_matches('/')
             ))
-            .json(&build_body(&request));
+            .json(&body);
         if let Some(key) = &self.api_key {
             rb = rb.bearer_auth(key);
         }

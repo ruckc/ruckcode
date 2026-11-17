@@ -102,6 +102,50 @@ max_retries = 6           # retries per request (default 6)
 pacing = true             # delay requests until an emptied per-minute bucket resets (default true)
 ```
 
+## Thinking-loop guard
+
+Some models (seen with local Gemma on Ollama) loop in their reasoning, repeating the same few
+sentences for tens of thousands of tokens without answering or calling a tool, until the context
+is full. The guard watches the streamed thinking of each request and, when it trips, aborts the
+request, discards that reasoning (it never enters the history or a compaction), shows a notice,
+and re-prompts with a short nudge ("You were repeating yourself without acting. Take the next
+concrete step now with a tool call, or answer."). After `max_nudges` per turn the turn ends with
+stop reason `thinking_loop` (ACP: `end_turn` with `_meta.ruckcode.stopReason = "thinking_loop"`;
+headless `rc` exits 1); the session stays resumable. Tokens of aborted requests are estimated
+(4 characters per token) and counted in the turn's usage and cost.
+
+```toml
+[thinking_guard]
+enabled = true          # default true
+repeat_count = 4        # trip when one sentence (24+ chars) recurs this often within window_chars
+window_chars = 4000     # sliding window, in characters of thinking
+min_ratio = 0.2         # trip when under this share of a full window is new text (0 = off)
+budget_fraction = 0.25  # per-request thinking budget as a share of the profile's context_window (0 = off)
+# budget_tokens = 8000  # absolute per-request budget; overrides budget_fraction
+max_nudges = 2          # nudges per turn before stopping with `thinking_loop`
+
+[profiles.local.thinking_guard]   # any key here overrides the global value for that profile
+budget_tokens = 8000
+```
+
+The guard stands down for a request as soon as it produces text or a tool call.
+
+### Ollama sampling options
+
+A profile that sets `[profiles.<name>.ollama]` sends extra sampling fields to its endpoint; other
+profiles and providers are never sent anything extra. Ollama's OpenAI-compatible `/v1` endpoint
+maps only `frequency_penalty` and `presence_penalty` onto its sampler; `repeat_penalty` and
+`repeat_last_n` are sent in the native `options` object, which `/v1` ignores on versions that do
+not read it (harmless then). Use the penalties for a dependable effect through `/v1`.
+
+```toml
+[profiles.local.ollama]
+frequency_penalty = 0.3
+presence_penalty = 0.3
+repeat_penalty = 1.15
+repeat_last_n = 256
+```
+
 ## Setup
 
 The first time you run interactive `rc` without a usable profile (one with a stored key, or a

@@ -1126,3 +1126,54 @@ async fn set_session_model_pins_records_and_restores() {
         .unwrap();
     assert_eq!(env.mock.requests.lock().unwrap()[2].model, "custom");
 }
+
+#[tokio::test]
+async fn compaction_drops_thinking_only_assistant_turns() {
+    let env = Env::new(None, None);
+    // r1: the model looped in its reasoning and produced no text and no tool call.
+    env.mock.push(Message {
+        role: Role::Assistant,
+        content: vec![ContentBlock::Thinking {
+            thinking: "loop loop loop".into(),
+            signature: None,
+        }],
+    });
+    env.mock.push(Message::assistant_text("THE SUMMARY"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    agent
+        .prompt(&info.id, "p1".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    agent
+        .prompt(&info.id, "/compact".into(), TestClient::with([]))
+        .await
+        .unwrap();
+    let reqs = env.mock.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    let m = &reqs[1].messages;
+    // The thinking-only turn is gone; the user messages around it merged, so roles alternate.
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0].role, Role::User);
+    assert!(m[0].text().contains("p1"));
+    assert!(reqs[1].tools.is_empty());
+}
+
+#[test]
+fn normalize_keeps_tool_calls_and_text_but_drops_empty_assistant_turns() {
+    use ruckcode_core::agent::normalize_messages;
+    let empty_text = Message {
+        role: Role::Assistant,
+        content: vec![ContentBlock::Text { text: "".into() }],
+    };
+    let out = normalize_messages(&[
+        Message::user_text("a"),
+        empty_text,
+        Message::user_text("b"),
+        tool_use("t", "Bash", json!({})),
+        Message::user_text("c"),
+    ]);
+    assert_eq!(out.len(), 3);
+    assert_eq!(out[0].text(), "ab");
+    assert_eq!(out[1].tool_uses().count(), 1);
+}

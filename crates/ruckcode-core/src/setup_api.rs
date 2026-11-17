@@ -331,6 +331,8 @@ impl PlanInput {
                 thinking: None,
                 pricing: None,
                 model_pricing: Default::default(),
+                thinking_guard: None,
+                ollama: None,
             },
             set_default: self.set_default,
             new_key,

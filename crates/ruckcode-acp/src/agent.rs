@@ -763,12 +763,14 @@ impl Handler for AcpAgent {
                     .agent()
                     .prompt_with_usage(&session_id.0, prompt_to_text(&blocks), self.client())
                     .await?;
-                // `rate_limited` is not an ACP stop reason: report `end_turn` and carry the real
-                // reason in `_meta.ruckcode.stopReason` for clients that know about it.
-                let rate_limited = stop == CoreStop::RateLimited;
+                // `rate_limited` and `thinking_loop` are not ACP stop reasons: report `end_turn`
+                // and carry the real reason in `_meta.ruckcode.stopReason` for clients that know
+                // about it.
+                let custom = matches!(stop, CoreStop::RateLimited | CoreStop::ThinkingLoop)
+                    .then(|| stop.as_str());
                 let mut resp = to_value(
                     &PromptResponse::new(match stop {
-                        CoreStop::RateLimited => StopReason::EndTurn,
+                        CoreStop::RateLimited | CoreStop::ThinkingLoop => StopReason::EndTurn,
                         CoreStop::EndTurn => StopReason::EndTurn,
                         CoreStop::MaxTokens => StopReason::MaxTokens,
                         CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,
@@ -777,8 +779,8 @@ impl Handler for AcpAgent {
                     })
                     .usage(usage.as_ref().map(prompt_usage)),
                 )?;
-                if rate_limited {
-                    resp["_meta"] = json!({"ruckcode": {"stopReason": "rate_limited"}});
+                if let Some(reason) = custom {
+                    resp["_meta"] = json!({"ruckcode": {"stopReason": reason}});
                 }
                 Ok(resp)
             }

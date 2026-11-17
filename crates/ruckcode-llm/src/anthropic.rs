@@ -27,7 +27,7 @@ impl Anthropic {
 }
 
 pub(crate) fn build_body(req: &Request) -> Value {
-    let mut messages: Vec<Value> = req.messages.iter().map(message_json).collect();
+    let mut messages: Vec<Value> = req.messages.iter().filter_map(message_json).collect();
     // Cache the conversation prefix: mark the last block of the final message.
     if let Some(last) = messages.last_mut() {
         if let Some(Value::Object(block)) =
@@ -60,7 +60,11 @@ pub(crate) fn build_body(req: &Request) -> Value {
     body
 }
 
-fn message_json(m: &Message) -> Value {
+/// Serialise one message. Anthropic rejects empty text blocks and empty `content` arrays, so
+/// empty text blocks are omitted and a message left with no blocks (an assistant turn that
+/// produced nothing) yields `None` and is dropped; adjacent same-role messages are accepted
+/// and merged by the API. Thinking blocks (with their signatures) are kept as-is.
+fn message_json(m: &Message) -> Option<Value> {
     let role = match m.role {
         Role::User => "user",
         Role::Assistant => "assistant",
@@ -68,6 +72,7 @@ fn message_json(m: &Message) -> Value {
     let content: Vec<Value> = m
         .content
         .iter()
+        .filter(|b| !matches!(b, ContentBlock::Text { text } if text.is_empty()))
         .map(|b| match b {
             ContentBlock::Thinking {
                 thinking,
@@ -92,7 +97,10 @@ fn message_json(m: &Message) -> Value {
             }),
         })
         .collect();
-    json!({"role": role, "content": content})
+    if content.is_empty() {
+        return None;
+    }
+    Some(json!({"role": role, "content": content}))
 }
 
 /// Fold an Anthropic `usage` object into `usage`. `message_start` carries the prompt side and a
