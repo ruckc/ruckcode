@@ -24,6 +24,7 @@ use crate::permissions::{self, Permission};
 use crate::prompt::{system_prompt, MAX_CLIENT_INSTRUCTIONS};
 use crate::retry::{self, Decision, Pacer, RateLimitConfig};
 use crate::thinking_guard::{LoopDetector, ThinkingGuardConfig, Trip};
+use crate::tool_loop_guard::{self, ToolLoopDetector};
 use crate::transcript::{
     self, compaction_message, interrupted_results, EditRecord, Initiator, McpServerRecord, Metrics,
     PermissionOutcome, Record, SessionMeta, SessionSummary, TranscriptReader, TranscriptWriter,
@@ -31,11 +32,17 @@ use crate::transcript::{
 };
 
 const SWITCH_MODE: &str = "SwitchMode";
+const PLAN_TOOL: &str = "TodoWrite";
 const INTERRUPTED: &str = "[Request interrupted by user]";
 const RATE_LIMITED_NOTE: &str =
     "[Turn paused: the API rate limit was reached. The work continues when the user asks to resume.]";
 const THINKING_LOOP_NOTE: &str =
     "[Turn stopped: the model kept repeating itself in its reasoning without acting.]";
+const TOOL_LOOP_NOTE: &str =
+    "[Turn stopped: the model kept repeating the same tool call without making progress.]";
+/// Sent to a model whose repeated tool calls were dropped from the history.
+const TOOL_LOOP_NUDGE: &str =
+    "You are repeating the same tool call without progress. Take a different next step, or answer.";
 /// Sent to a model whose request was aborted for looping in its reasoning.
 const THINKING_NUDGE: &str = "You were repeating yourself without acting. Take the next concrete step now with a tool call, or answer.";
 const FAILED_NOTE: &str = "[Turn stopped: the model request failed.]";
@@ -158,6 +165,9 @@ pub enum StopReason {
     /// The model kept looping in its reasoning (see `[thinking_guard]`) even after being
     /// nudged; the session is resumable and the turn counts as unfinished work.
     ThinkingLoop,
+    /// The model kept repeating tool calls without progress (see `[tool_loop_guard]`) even
+    /// after being nudged; the session is resumable and the turn counts as unfinished work.
+    ToolLoop,
 }
 
 impl StopReason {
@@ -170,6 +180,7 @@ impl StopReason {
             StopReason::Refusal => "refusal",
             StopReason::RateLimited => "rate_limited",
             StopReason::ThinkingLoop => "thinking_loop",
+            StopReason::ToolLoop => "tool_loop",
         }
     }
 }
@@ -233,6 +244,8 @@ struct SessionState {
     profile: String,
     messages: Vec<Message>,
     allow_always: HashSet<String>,
+    /// The plan as last written (normalised), to recognise updates that change nothing.
+    last_plan: Option<Vec<(String, String)>>,
     edited: BTreeSet<PathBuf>,
     transcript: Option<TranscriptWriter>,
     providers: HashMap<String, Arc<dyn Provider>>,
@@ -475,6 +488,7 @@ impl Agent {
             profile,
             messages: vec![],
             allow_always: HashSet::new(),
+            last_plan: None,
             edited: BTreeSet::new(),
             transcript: None,
             providers: HashMap::new(),
@@ -1011,6 +1025,7 @@ impl Agent {
                 Ok(StopReason::Cancelled) => s.push_interruption(),
                 Ok(StopReason::RateLimited) => s.push_closing(RATE_LIMITED_NOTE),
                 Ok(StopReason::ThinkingLoop) => s.push_closing(THINKING_LOOP_NOTE),
+                Ok(StopReason::ToolLoop) => s.push_closing(TOOL_LOOP_NOTE),
                 Err(_) => s.push_closing(FAILED_NOTE),
                 _ => {}
             }
@@ -1141,6 +1156,8 @@ impl Agent {
 
         let mut fix_turns = 0u32;
         let mut nudges = 0u32;
+        let mut tool_nudges = 0u32;
+        let mut tool_guard = ToolLoopDetector::default();
         for iteration in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
             let system =
@@ -1158,6 +1175,10 @@ impl Agent {
                 .config
                 .thinking_guard
                 .with_override(profile.thinking_guard.as_ref());
+            let loop_cfg = s
+                .config
+                .tool_loop_guard
+                .with_override(profile.tool_loop_guard.as_ref());
             let request = Request {
                 model: model.clone(),
                 system,
@@ -1275,6 +1296,14 @@ impl Agent {
                 .collect();
             let mut results = Vec::new();
             let mut cancelled = false;
+            if response
+                .message
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if !text.trim().is_empty()))
+            {
+                tool_guard.note_text();
+            }
             for (id, name, input) in &uses {
                 if cancelled {
                     results.push(self.skip_tool_use(s, id, name, input));
@@ -1285,6 +1314,14 @@ impl Agent {
                     .execute_tool_use(s, client, cancel, &tools, id, name, input)
                     .await;
                 cancelled = c;
+                if let ContentBlock::ToolResult {
+                    content, is_error, ..
+                } = &block
+                {
+                    let noop =
+                        name == PLAN_TOOL && content.starts_with(tool_loop_guard::PLAN_UNCHANGED);
+                    tool_guard.observe(&loop_cfg, id, name, input, content, *is_error, noop);
+                }
                 results.push(block);
             }
             s.push(
@@ -1296,6 +1333,36 @@ impl Agent {
             );
             if cancelled {
                 return Ok(StopReason::Cancelled);
+            }
+            if let Some(trip) = tool_guard.take_trip() {
+                // Keep the first occurrence; the repeats and their results leave the history
+                // so they stop inflating every following request.
+                let ids: Vec<String> = trip.drop_ids.iter().cloned().collect();
+                tool_loop_guard::drop_tool_calls(&mut s.messages, &trip.drop_ids);
+                s.rec(Record::ToolCallsDropped { tool_use_ids: ids });
+                if tool_nudges >= loop_cfg.max_nudges {
+                    client.send_event(
+                        &s.id,
+                        SessionEvent::Notice(format!(
+                            "The model {} without making progress; stopping this turn after \
+                             {tool_nudges} nudge(s). The session can be continued with a new \
+                             message (try rephrasing or a more specific request).",
+                            trip.describe()
+                        )),
+                    );
+                    return Ok(StopReason::ToolLoop);
+                }
+                tool_nudges += 1;
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Notice(format!(
+                        "The model {}; the repeated calls were dropped from the history. \
+                         Nudging it to take a different step (nudge {tool_nudges}/{}).",
+                        trip.describe(),
+                        loop_cfg.max_nudges
+                    )),
+                );
+                s.push(Message::user_text(TOOL_LOOP_NUDGE), UserSource::Nudge);
             }
         }
         // Never leave this turn's edits unformatted; a failing hook cannot start a fix turn here.
@@ -1435,6 +1502,19 @@ impl Agent {
                 permission = PermissionOutcome::Rejected;
                 break 'run ("cancelled before execution".into(), true);
             }
+            if name == PLAN_TOOL && s.config.tool_loop_guard.enabled {
+                if let Some(items) = tool_loop_guard::plan_items(input) {
+                    if s.last_plan.as_ref() == Some(&items) {
+                        // Nothing changed: answer locally, run nothing, send no plan update.
+                        let mut msg = tool_loop_guard::PLAN_UNCHANGED.to_string();
+                        if !items.is_empty() && items.iter().all(|(_, st)| st == "completed") {
+                            msg.push(' ');
+                            msg.push_str(ruckcode_tools::PLAN_ALL_DONE);
+                        }
+                        break 'run (msg, false);
+                    }
+                }
+            }
             let gate = if name == SWITCH_MODE {
                 self.switch_gate(s, client, id, &title, input).await
             } else {
@@ -1510,6 +1590,7 @@ impl Agent {
             match tool.call(input.clone(), &ctx).await {
                 Ok(out) => {
                     if let Some(plan) = out.plan {
+                        s.last_plan = tool_loop_guard::plan_items(input);
                         client.send_event(&s.id, SessionEvent::Plan(plan));
                     }
                     if !out.is_error {

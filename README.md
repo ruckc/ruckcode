@@ -146,6 +146,44 @@ repeat_penalty = 1.15
 repeat_last_n = 256
 ```
 
+## Tool-loop guard
+
+The counterpart of the thinking-loop guard for tool calls. Some models call the same tool over and
+over (seen: 45 consecutive plan updates in one turn on a local Gemma), re-reading the whole context
+each time. Per turn the guard trips on either of:
+
+- **Repeat**: `repeat_count` calls in a row of the same tool with identical or near-identical
+  arguments (JSON key order and whitespace ignored; long strings may differ by under 5%) that all
+  returned the same result, with no other tool call or assistant text between. The same command
+  whose output changes (a test run after an edit) is progress.
+- **No progress**: at least `max_noprogress_ratio` of the last `window` calls repeated an earlier
+  call of the turn (same tool, arguments and result).
+
+A plan (`TodoWrite`) update whose items and statuses are unchanged is a no-op: it is not executed,
+no plan update is sent to clients, and the model is told "Plan unchanged (no items or statuses
+changed)." `plan_noop_count` no-ops in a row trip the guard. Real changes are progress, and
+completing the plan still hides it and reminds the model to report.
+
+On a trip the repeated calls and their results are dropped from the history (the first occurrence
+stays), a notice is shown (TUI, desktop app, ACP) and the model is nudged ("You are repeating the
+same tool call without progress. Take a different next step, or answer."). After `max_nudges` per
+turn the turn ends with stop reason `tool_loop` (ACP: `end_turn` with
+`_meta.ruckcode.stopReason = "tool_loop"`; headless `rc` exits 1); the session stays resumable.
+Usage and cost of every request still count.
+
+```toml
+[tool_loop_guard]
+enabled = true              # default true (also turns off the plan no-op short-circuit)
+repeat_count = 4            # same tool + args + result this many times in a row
+plan_noop_count = 3         # consecutive no-op plan updates
+window = 10                 # sliding window, in tool calls (0 = off)
+max_noprogress_ratio = 0.6  # share of the window that repeated earlier calls
+max_nudges = 2              # nudges per turn before stopping with `tool_loop`
+
+[profiles.local.tool_loop_guard]   # any key here overrides the global value for that profile
+repeat_count = 3
+```
+
 ## Setup
 
 The first time you run interactive `rc` without a usable profile (one with a stored key, or a

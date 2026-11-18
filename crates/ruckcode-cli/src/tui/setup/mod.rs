@@ -1088,6 +1088,7 @@ impl SetupWizard {
                 pricing: None,
                 model_pricing: Default::default(),
                 thinking_guard: None,
+                tool_loop_guard: None,
                 ollama: None,
             },
             set_default: self.set_default,

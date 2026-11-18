@@ -12,7 +12,7 @@ pub use bash::Bash;
 pub use fs::{Edit, Read, Write};
 pub use sandboxed::{launch, Launch, SandboxHandle, PROTECTED_WRITE_MSG};
 pub use search::{Glob, Grep};
-pub use todo::{TodoItem, TodoStatus, TodoWrite};
+pub use todo::{TodoItem, TodoStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
 
 use async_trait::async_trait;
 use ruckcode_llm::ToolSpec;

@@ -1307,3 +1307,22 @@ async fn cost_is_omitted_when_unpriced() {
         .get("cost")
         .is_none());
 }
+
+#[tokio::test]
+async fn tool_loop_stop_is_reported_in_meta() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.cwd().join(".ruckcode")).unwrap();
+    std::fs::write(
+        env.cwd().join(".ruckcode/config.toml"),
+        "[tool_loop_guard]\nmax_nudges = 0\n",
+    )
+    .unwrap();
+    let same = json!({"todos": [{"content": "a", "status": "pending"}]});
+    let m = mock((0..4).map(|i| tool_use(&format!("t{i}"), "TodoWrite", same.clone())));
+    let c = env.connect(m);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    let r = prompt(&c, &sid, "go").await;
+    assert_eq!(r["stopReason"], "end_turn");
+    assert_eq!(r["_meta"]["ruckcode"]["stopReason"], "tool_loop");
+}
