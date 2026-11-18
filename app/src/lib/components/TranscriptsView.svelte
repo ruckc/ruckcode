@@ -119,16 +119,19 @@
   <aside class="list" aria-label="Transcript list">
     <div class="lhead">
       <h2>Transcripts</h2>
-      <span class="muted count" data-testid="count">{ctl.visible.length} of {ctl.items.length}</span
-      >
+      <span class="muted count" data-testid="count">
+        {ctl.visible.length} of {ctl.items.length}
+      </span>
       <Button
         variant="outlined"
         intent="neutral"
         size="sm"
         icon="refresh"
         onclick={() => ctl.refresh()}
-        disabled={ctl.loading}>Refresh</Button
+        disabled={ctl.loading}
       >
+        Refresh
+      </Button>
     </div>
     <Input
       type="search"
@@ -199,10 +202,10 @@
                   data-testid="hit"
                   onclick={() => openSession(h.id, h.recordIndex)}
                 >
-                  <span class="hitmeta"
-                    ><Tag size="sm" class="chip">{typeLabel(h.type)}</Tag> #{h.recordIndex} in
-                    <em>{titleOf(h.id)}</em></span
-                  >
+                  <span class="hitmeta">
+                    <Tag size="sm" class="chip">{typeLabel(h.type)}</Tag> #{h.recordIndex} in
+                    <em>{titleOf(h.id)}</em>
+                  </span>
                   <span class="snippet">{h.snippet}</span>
                 </button>
               </li>
@@ -229,9 +232,9 @@
               <span class="meta muted">
                 <Tag size="sm" class="chip">{s.mode}</Tag>
                 <span>{s.model}</span>
-                <span title={s.updatedAt}
-                  >{relativeTime(s.updatedAt) || s.updatedAt.slice(0, 10)}</span
-                >
+                <span title={s.updatedAt}>
+                  {relativeTime(s.updatedAt) || s.updatedAt.slice(0, 10)}
+                </span>
               </span>
               <span class="meta muted">
                 <span>{formatTokens(s.inputTokens + s.outputTokens)} tokens</span>
@@ -239,9 +242,9 @@
                 <span>{s.turns} turns</span>
                 <span>{s.toolCalls} tools</span>
                 {#if s.skippedLines > 0}
-                  <Tag size="sm" intent="warning" title="Unreadable lines were skipped"
-                    >{s.skippedLines} bad line{s.skippedLines === 1 ? '' : 's'}</Tag
-                  >
+                  <Tag size="sm" intent="warning" title="Unreadable lines were skipped">
+                    {s.skippedLines} bad line{s.skippedLines === 1 ? '' : 's'}
+                  </Tag>
                 {/if}
               </span>
             </button>
@@ -275,8 +278,10 @@
           intent="neutral"
           size="sm"
           icon="arrow-left"
-          onclick={() => ctl.close()}>Back to list</Button
+          onclick={() => ctl.close()}
         >
+          Back to list
+        </Button>
         <div class="titles">
           <h2 title={d.meta.firstPrompt}>{d.meta.firstPrompt || d.meta.id}</h2>
           <p class="muted ids">
@@ -294,8 +299,10 @@
             intent="neutral"
             icon="copy"
             onclick={copyMarkdown}
-            disabled={copyState === 'busy'}>{copyLabel}</Button
+            disabled={copyState === 'busy'}
           >
+            {copyLabel}
+          </Button>
         </div>
       </header>
       {#if d.skippedLines > 0}
@@ -316,9 +323,9 @@
           controls={(id) => (id === tab ? 'transcript-panel' : undefined)}
           tabId={(id) => `transcript-tab-${id}`}
         />
-        <span class="muted loaded" data-testid="loaded"
-          >{d.records.length.toLocaleString()} of {d.total.toLocaleString()} records loaded</span
-        >
+        <span class="muted loaded" data-testid="loaded">
+          {d.records.length.toLocaleString()} of {d.total.toLocaleString()} records loaded
+        </span>
       </div>
       {#if ctl.detailError}
         <div class="pad"><Callout intent="danger">{ctl.detailError}</Callout></div>

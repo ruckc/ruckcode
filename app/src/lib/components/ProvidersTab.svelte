@@ -10,8 +10,9 @@
     {#each info.profiles as p (p.name)}
       <tr>
         <td>
-          {p.name}{#if p.name === info.defaultProfile}<Tag size="sm" intent="primary">default</Tag
-            >{/if}
+          {p.name}{#if p.name === info.defaultProfile}<Tag size="sm" intent="primary">
+              default
+            </Tag>{/if}
         </td>
         <td>{p.provider === 'anthropic' ? 'Anthropic' : 'OpenAI-compatible'}</td>
         <td class="mono">{p.baseUrl ?? '(default)'}</td>

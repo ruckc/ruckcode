@@ -71,10 +71,10 @@
         </header>
         {#if item.rec.source === 'tool_results'}
           <details>
-            <summary
-              >{item.rec.content.filter((b) => b.type === 'tool_result').length} tool results sent to
-              the model</summary
-            >
+            <summary>
+              {item.rec.content.filter((b) => b.type === 'tool_result').length} tool results sent to the
+              model
+            </summary>
             {#each item.rec.content as b, i (i)}
               {#if b.type === 'tool_result'}
                 <pre class="out" class:err={b.isError}>{b.content}</pre>
@@ -113,11 +113,11 @@
           {#if item.rec.metrics.outputTokensPerSec !== null}
             <span>{item.rec.metrics.outputTokensPerSec} tok/s</span>
           {/if}
-          <span
-            >{formatTokens(item.rec.usage.inputTokens)} in / {formatTokens(
+          <span>
+            {formatTokens(item.rec.usage.inputTokens)} in / {formatTokens(
               item.rec.usage.outputTokens
-            )} out</span
-          >
+            )} out
+          </span>
           <span>stop: {item.rec.stopReason.replace('_', ' ')}</span>
         </footer>
       </section>
@@ -154,9 +154,9 @@
           <div class="body">
             {#if item.result}
               <p class="perm muted">
-                Permission: <strong data-testid="permission"
-                  >{permissionLabel(item.result.permission)}</strong
-                >
+                Permission: <strong data-testid="permission">
+                  {permissionLabel(item.result.permission)}
+                </strong>
               </p>
             {/if}
             {#each item.result?.edits ?? [] as e, i (i)}
@@ -173,8 +173,9 @@
                 size="sm"
                 aria-expanded={showInput}
                 onclick={() => (showInput = !showInput)}
-                >{showInput ? 'Hide input' : 'Show input'}</Button
               >
+                {showInput ? 'Hide input' : 'Show input'}
+              </Button>
               {#if showInput}
                 <pre class="out" aria-label="Tool input">{pretty(item.call.input)}</pre>
               {/if}
@@ -212,9 +213,9 @@
       <p class="line">
         <Tag size="sm" class="chip">Mode</Tag>
         <code>{item.rec.from}</code> &rarr; <code>{item.rec.to}</code>
-        <span class="muted"
-          >({item.rec.initiatedBy === 'agent' ? 'agent' : 'you'}) {item.rec.reason}</span
-        >
+        <span class="muted">
+          ({item.rec.initiatedBy === 'agent' ? 'agent' : 'you'}) {item.rec.reason}
+        </span>
       </p>
     {:else if item.kind === 'model'}
       <p class="line">

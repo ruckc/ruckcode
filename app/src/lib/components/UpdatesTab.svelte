@@ -49,16 +49,19 @@
       disabled={updates.phase === 'installing' || updates.busy}
       title={updates.busy ? 'Waiting for the agent to finish its turn' : undefined}
       onclick={() => void updates.restartNow()}
-      >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</Button
     >
+      {updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}
+    </Button>
   {:else if updates.phase === 'available'}
     <Button onclick={() => void updates.download()}>Download v{updates.version}</Button>
   {:else}
     <Button
       variant="outlined"
       disabled={updates.phase === 'checking' || updates.phase === 'downloading'}
-      onclick={() => void updates.check(true)}>Check for updates</Button
+      onclick={() => void updates.check(true)}
     >
+      Check for updates
+    </Button>
   {/if}
 </section>
 
