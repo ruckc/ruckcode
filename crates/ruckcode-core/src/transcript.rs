@@ -139,6 +139,11 @@ pub enum Record {
     HistoryCleared {
         cleared_messages: usize,
     },
+    /// The tool-loop guard dropped these repeated tool calls (and their results) from the
+    /// history; the records before this one stay for the audit trail.
+    ToolCallsDropped {
+        tool_use_ids: Vec<String>,
+    },
     TurnEnd {
         stop_reason: String,
         duration_ms: u64,
@@ -314,6 +319,10 @@ impl TranscriptReader {
                 }
                 Record::Compaction { summary, .. } => messages = vec![compaction_message(summary)],
                 Record::HistoryCleared { .. } => messages.clear(),
+                Record::ToolCallsDropped { tool_use_ids } => {
+                    let ids = tool_use_ids.iter().cloned().collect();
+                    crate::tool_loop_guard::drop_tool_calls(&mut messages, &ids);
+                }
                 Record::ModeChange { to, .. } => mode = to.clone(),
                 Record::ModelChange { to, .. } => model = to.clone(),
                 Record::ClientInstructions { append } => {
@@ -388,7 +397,7 @@ pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
                 work_after_end = false;
                 bad_end = matches!(
                     stop_reason.as_str(),
-                    "error" | "interrupted" | "rate_limited" | "thinking_loop"
+                    "error" | "interrupted" | "rate_limited" | "thinking_loop" | "tool_loop"
                 );
             }
             Record::SessionDismissed {} => {

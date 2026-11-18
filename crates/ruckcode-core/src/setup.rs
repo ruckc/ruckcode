@@ -541,6 +541,7 @@ mod tests {
             pricing: None,
             model_pricing: Default::default(),
             thinking_guard: None,
+            tool_loop_guard: None,
             ollama: None,
         }
     }

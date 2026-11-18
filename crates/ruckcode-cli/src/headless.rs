@@ -290,6 +290,10 @@ pub async fn run(cli: &Cli) -> Result<u8> {
         eprintln!("rc: stopped: the model kept looping in its reasoning; continue the session with a new message");
         return Ok(1);
     }
+    if v["_meta"]["ruckcode"]["stopReason"] == "tool_loop" {
+        eprintln!("rc: stopped: the model kept repeating the same tool call without progress; continue the session with a new message");
+        return Ok(1);
+    }
     let stop: StopReason = serde_json::from_value(v.get("stopReason").cloned().unwrap_or_default())
         .context("bad prompt response")?;
     Ok(match stop {

@@ -766,11 +766,16 @@ impl Handler for AcpAgent {
                 // `rate_limited` and `thinking_loop` are not ACP stop reasons: report `end_turn`
                 // and carry the real reason in `_meta.ruckcode.stopReason` for clients that know
                 // about it.
-                let custom = matches!(stop, CoreStop::RateLimited | CoreStop::ThinkingLoop)
-                    .then(|| stop.as_str());
+                let custom = matches!(
+                    stop,
+                    CoreStop::RateLimited | CoreStop::ThinkingLoop | CoreStop::ToolLoop
+                )
+                .then(|| stop.as_str());
                 let mut resp = to_value(
                     &PromptResponse::new(match stop {
-                        CoreStop::RateLimited | CoreStop::ThinkingLoop => StopReason::EndTurn,
+                        CoreStop::RateLimited | CoreStop::ThinkingLoop | CoreStop::ToolLoop => {
+                            StopReason::EndTurn
+                        }
                         CoreStop::EndTurn => StopReason::EndTurn,
                         CoreStop::MaxTokens => StopReason::MaxTokens,
                         CoreStop::MaxTurnRequests => StopReason::MaxTurnRequests,

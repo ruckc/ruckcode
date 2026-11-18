@@ -14,6 +14,7 @@ mod sandbox;
 pub mod setup;
 pub mod setup_api;
 pub mod thinking_guard;
+pub mod tool_loop_guard;
 pub mod transcript;
 pub mod transcript_api;
 

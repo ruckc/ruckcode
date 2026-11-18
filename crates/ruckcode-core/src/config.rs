@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::permissions::Permission;
 use crate::retry::RateLimitConfig;
 use crate::thinking_guard::{OllamaOptions, ThinkingGuardConfig, ThinkingGuardOverride};
+use crate::tool_loop_guard::{ToolLoopGuardConfig, ToolLoopGuardOverride};
 
 const DEFAULTS: &str = r#"
 default_profile = "anthropic"
@@ -88,6 +89,9 @@ pub struct Profile {
     /// Overrides of the global `[thinking_guard]` for this profile.
     #[serde(default)]
     pub thinking_guard: Option<ThinkingGuardOverride>,
+    /// Overrides of the global `[tool_loop_guard]` for this profile.
+    #[serde(default)]
+    pub tool_loop_guard: Option<ToolLoopGuardOverride>,
     /// Ollama sampling options (`[profiles.<name>.ollama]`); sent only when this section is set.
     #[serde(default)]
     pub ollama: Option<OllamaOptions>,
@@ -245,6 +249,9 @@ pub struct Config {
     /// Detection of a model looping in its reasoning (`[thinking_guard]`).
     #[serde(default)]
     pub thinking_guard: ThinkingGuardConfig,
+    /// Detection of repeated no-progress tool calls (`[tool_loop_guard]`).
+    #[serde(default)]
+    pub tool_loop_guard: ToolLoopGuardConfig,
     /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
     #[serde(default)]
     pub sandbox: ruckcode_sandbox::SandboxConfig,
@@ -515,6 +522,40 @@ model = "gpt"
         // Other profiles get no Ollama options and the global guard settings.
         let cloud = c.profile("cloud").unwrap();
         assert!(cloud.ollama.is_none() && cloud.thinking_guard.is_none());
+    }
+
+    #[test]
+    fn tool_loop_guard_parses_with_profile_override() {
+        let c = cfg(r#"
+default_profile = "local"
+[tool_loop_guard]
+repeat_count = 6
+window = 12
+[profiles.local]
+provider = "openai"
+model = "gemma4:26b"
+[profiles.local.tool_loop_guard]
+max_nudges = 1
+enabled = false
+[profiles.cloud]
+provider = "openai"
+model = "gpt"
+"#)
+        .unwrap();
+        assert_eq!(c.tool_loop_guard.repeat_count, 6);
+        assert_eq!(c.tool_loop_guard.plan_noop_count, 3);
+        let local = c.profile("local").unwrap();
+        let g = c
+            .tool_loop_guard
+            .with_override(local.tool_loop_guard.as_ref());
+        assert_eq!((g.enabled, g.max_nudges, g.window), (false, 1, 12));
+        let cloud = c.profile("cloud").unwrap();
+        assert!(cloud.tool_loop_guard.is_none());
+        assert!(
+            c.tool_loop_guard
+                .with_override(cloud.tool_loop_guard.as_ref())
+                .enabled
+        );
     }
 
     #[test]

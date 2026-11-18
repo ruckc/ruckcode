@@ -498,7 +498,10 @@ impl App {
             self.error(e);
         } else if let Some(s) = stop {
             // A rate-limit stop already posted its own explanation.
-            if !matches!(s, "end_turn" | "rate_limited" | "thinking_loop") {
+            if !matches!(
+                s,
+                "end_turn" | "rate_limited" | "thinking_loop" | "tool_loop"
+            ) {
                 self.notice(format!("stopped: {s}"));
             }
         }
