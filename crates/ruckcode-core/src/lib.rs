@@ -11,6 +11,7 @@ pub mod permissions;
 pub mod project_policy;
 pub mod retry;
 mod sandbox;
+pub mod search_pattern;
 pub mod setup;
 pub mod setup_api;
 pub mod thinking_guard;

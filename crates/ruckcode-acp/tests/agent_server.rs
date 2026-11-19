@@ -1325,4 +1325,35 @@ async fn tool_loop_stop_is_reported_in_meta() {
     let r = prompt(&c, &sid, "go").await;
     assert_eq!(r["stopReason"], "end_turn");
     assert_eq!(r["_meta"]["ruckcode"]["stopReason"], "tool_loop");
+    assert_eq!(r["_meta"]["ruckcode"]["loopKind"], "repeat");
+}
+
+#[tokio::test]
+async fn oscillation_tool_loop_reports_its_kind() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.cwd().join(".ruckcode")).unwrap();
+    std::fs::write(
+        env.cwd().join(".ruckcode/config.toml"),
+        "[tool_loop_guard]\nmax_nudges = 0\n",
+    )
+    .unwrap();
+    let states = ["A\n", "B\n", "C\n"];
+    let m = mock((0..8).map(|i| {
+        tool_use(
+            &format!("w{i}"),
+            "Write",
+            json!({"file_path": "f.txt", "content": states[i % 3]}),
+        )
+    }));
+    let c = env.connect(m);
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    env.client
+        .selections
+        .lock()
+        .unwrap()
+        .push_back(Some("allow_always".into()));
+    let r = prompt(&c, &sid, "go").await;
+    assert_eq!(r["_meta"]["ruckcode"]["stopReason"], "tool_loop");
+    assert_eq!(r["_meta"]["ruckcode"]["loopKind"], "oscillation");
 }

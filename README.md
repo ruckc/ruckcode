@@ -186,11 +186,33 @@ no plan update is sent to clients, and the model is told "Plan unchanged (no ite
 changed)." `plan_noop_count` no-ops in a row trip the guard. Real changes are progress, and
 completing the plan still hides it and reminds the model to report.
 
+Two more detectors catch loops whose arguments keep changing:
+
+- **Repeated search.** The pattern of `Grep`/`Glob` calls and of `Bash` commands running `grep`,
+  `egrep`, `rg`, `ag`, `ack`, `git grep` or `find -name` (the first search in a pipeline, so
+  `grep -r X dir | grep -v Y` is a search for `X`) is normalised (trimmed, whitespace collapsed,
+  quotes stripped) and counted per turn, whatever the paths, flags or trailing filters. It trips
+  when the same pattern was searched `search_repeat_count` times and the latest
+  `search_repeat_count / 2` searches added no new information. "No new information" means every
+  non-empty line of the result (first 2000 lines) was already returned by an earlier search for
+  that pattern; empty results and errors add nothing. A refinement that finds any new line never
+  trips it. The redundant later searches are dropped from the history; the first stays.
+- **Edit oscillation.** After each `Write`/`Edit` call the file's content hash is recorded (files
+  over 1 MB are skipped). For `Bash` commands (`sed -i`, `perl -pi`, formatters, ...) the files
+  `git status` reports as changed or untracked, plus the files already tracked this turn, are
+  hashed after each call; this needs a git repository and is skipped for the rest of the turn if
+  `git` takes over 5 s, reports over 256 KiB of status or more than 200 files, or the changed files
+  exceed 8 MB together. A file returning to a content it already had earlier in the turn is a
+  return; `oscillation_count` returns trip the detector (so a single deliberate revert does not).
+  Nothing is dropped (the file state matters); the model is nudged ("You are changing src/x.ts
+  back and forth between the same versions. Decide on one change, or answer.").
+
 On a trip the repeated calls and their results are dropped from the history (the first occurrence
 stays), a notice is shown (TUI, desktop app, ACP) and the model is nudged ("You are repeating the
 same tool call without progress. Take a different next step, or answer."). After `max_nudges` per
 turn the turn ends with stop reason `tool_loop` (ACP: `end_turn` with
-`_meta.ruckcode.stopReason = "tool_loop"`; headless `rc` exits 1); the session stays resumable.
+`_meta.ruckcode.stopReason = "tool_loop"` plus `_meta.ruckcode.loopKind` = `repeat`, `search` or
+`oscillation`; headless `rc` exits 1); the session stays resumable.
 Usage and cost of every request still count.
 
 ```toml
@@ -201,6 +223,10 @@ plan_noop_count = 3         # consecutive no-op plan updates
 window = 10                 # sliding window, in tool calls (0 = off)
 max_noprogress_ratio = 0.6  # share of the window that repeated earlier calls
 max_nudges = 2              # nudges per turn before stopping with `tool_loop`
+search_repeat_enabled = true  # repeated-search detector
+search_repeat_count = 6       # same pattern searched this often with nothing new (0 = off)
+oscillation_enabled = true    # edit-oscillation detector
+oscillation_count = 2         # returns of a file to an earlier content (0 = off)
 
 [profiles.local.tool_loop_guard]   # any key here overrides the global value for that profile
 repeat_count = 3
