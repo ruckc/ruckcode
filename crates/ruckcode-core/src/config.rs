@@ -95,6 +95,13 @@ pub struct Profile {
     /// Ollama sampling options (`[profiles.<name>.ollama]`); sent only when this section is set.
     #[serde(default)]
     pub ollama: Option<OllamaOptions>,
+    /// Sampling temperature (0.0 to 2.0); sent only when set. Not sent to Anthropic while
+    /// extended thinking is enabled.
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    /// Nucleus sampling `top_p` (0.0 to 1.0); sent only when set.
+    #[serde(default)]
+    pub top_p: Option<f64>,
 }
 
 impl Profile {
@@ -387,6 +394,24 @@ fn from_tables(layers: Vec<toml::Table>) -> Result<Config> {
             );
         }
     }
+    for p in cfg.profiles.values() {
+        if let Some(t) = p.temperature {
+            if !(0.0..=2.0).contains(&t) {
+                bail!(
+                    "profile `{}`: temperature must be between 0.0 and 2.0 (got {t})",
+                    p.name
+                );
+            }
+        }
+        if let Some(t) = p.top_p {
+            if !(0.0..=1.0).contains(&t) {
+                bail!(
+                    "profile `{}`: top_p must be between 0.0 and 1.0 (got {t})",
+                    p.name
+                );
+            }
+        }
+    }
     if !cfg.profiles.contains_key(&cfg.default_profile) {
         bail!("default_profile `{}` is not defined", cfg.default_profile);
     }
@@ -556,6 +581,30 @@ model = "gpt"
                 .with_override(cloud.tool_loop_guard.as_ref())
                 .enabled
         );
+    }
+
+    #[test]
+    fn sampling_parses_and_validates() {
+        let base = "[profiles.local]\nprovider = \"openai\"\nmodel = \"m\"\n";
+        let c = cfg(&format!(
+            "{base}temperature = 0.5\ntop_p = 0.95\n[profiles.local.ollama]\nrepeat_penalty = 1.1\n"
+        ))
+        .unwrap();
+        let p = &c.profiles["local"];
+        assert_eq!((p.temperature, p.top_p), (Some(0.5), Some(0.95)));
+        assert!(p.ollama.is_some());
+        let plain = cfg(base).unwrap();
+        assert_eq!(plain.profiles["local"].temperature, None);
+        for (k, v) in [
+            ("temperature", "2.5"),
+            ("temperature", "-0.1"),
+            ("top_p", "1.5"),
+            ("top_p", "-1"),
+        ] {
+            let e = cfg(&format!("{base}{k} = {v}\n")).unwrap_err().to_string();
+            assert!(e.contains(k) && e.contains("between"), "{e}");
+        }
+        assert!(cfg(&format!("{base}temperature = 2.0\ntop_p = 0.0\n")).is_ok());
     }
 
     #[test]

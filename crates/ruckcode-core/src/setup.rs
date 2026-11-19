@@ -543,6 +543,8 @@ mod tests {
             thinking_guard: None,
             tool_loop_guard: None,
             ollama: None,
+            temperature: None,
+            top_p: None,
         }
     }
 

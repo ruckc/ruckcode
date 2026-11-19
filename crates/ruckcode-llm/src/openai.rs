@@ -53,6 +53,16 @@ pub(crate) fn merge_extra(body: &mut Value, extra: &Value) {
     }
 }
 
+/// Set top-level `temperature` / `top_p` when the request carries them.
+fn apply_sampling(body: &mut Value, req: &Request) {
+    if let Some(t) = req.temperature {
+        body["temperature"] = json!(t);
+    }
+    if let Some(p) = req.top_p {
+        body["top_p"] = json!(p);
+    }
+}
+
 pub(crate) fn build_body(req: &Request) -> Value {
     let mut messages = vec![json!({"role": "system", "content": req.system})];
     for m in &req.messages {
@@ -68,6 +78,7 @@ pub(crate) fn build_body(req: &Request) -> Value {
     if let Some(effort) = &req.thinking {
         body["reasoning_effort"] = effort.clone();
     }
+    apply_sampling(&mut body, req);
     if !req.tools.is_empty() {
         body["tools"] = req
             .tools
@@ -166,6 +177,8 @@ impl Provider for OpenAi {
         let mut body = build_body(&request);
         if let Some(extra) = &self.extra {
             merge_extra(&mut body, extra);
+            // The profile's `temperature` / `top_p` win over a duplicate in the extra body.
+            apply_sampling(&mut body, &request);
         }
         let mut rb = self
             .client
@@ -347,6 +360,8 @@ mod tests {
             tools: vec![],
             max_tokens: 10,
             thinking: None,
+            temperature: None,
+            top_p: None,
         };
         let b = build_body(&req);
         let msgs = b["messages"].as_array().unwrap();

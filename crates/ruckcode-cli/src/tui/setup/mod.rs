@@ -1090,6 +1090,8 @@ impl SetupWizard {
                 thinking_guard: None,
                 tool_loop_guard: None,
                 ollama: None,
+                temperature: None,
+                top_p: None,
             },
             set_default: self.set_default,
             new_key,
