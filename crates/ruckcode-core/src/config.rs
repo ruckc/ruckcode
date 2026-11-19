@@ -531,6 +531,7 @@ default_profile = "local"
 [tool_loop_guard]
 repeat_count = 6
 window = 12
+search_repeat_count = 9
 [profiles.local]
 provider = "openai"
 model = "gemma4:26b"
@@ -544,6 +545,9 @@ model = "gpt"
         .unwrap();
         assert_eq!(c.tool_loop_guard.repeat_count, 6);
         assert_eq!(c.tool_loop_guard.plan_noop_count, 3);
+        assert_eq!(c.tool_loop_guard.search_repeat_count, 9);
+        assert_eq!(c.tool_loop_guard.oscillation_count, 2);
+        assert!(c.tool_loop_guard.search_repeat_enabled && c.tool_loop_guard.oscillation_enabled);
         let local = c.profile("local").unwrap();
         let g = c
             .tool_loop_guard

@@ -786,6 +786,11 @@ impl Handler for AcpAgent {
                 )?;
                 if let Some(reason) = custom {
                     resp["_meta"] = json!({"ruckcode": {"stopReason": reason}});
+                    if stop == CoreStop::ToolLoop {
+                        if let Some(kind) = self.agent().last_loop_kind(&session_id.0).await {
+                            resp["_meta"]["ruckcode"]["loopKind"] = json!(kind);
+                        }
+                    }
                 }
                 Ok(resp)
             }

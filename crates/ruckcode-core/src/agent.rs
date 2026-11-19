@@ -40,9 +40,6 @@ const THINKING_LOOP_NOTE: &str =
     "[Turn stopped: the model kept repeating itself in its reasoning without acting.]";
 const TOOL_LOOP_NOTE: &str =
     "[Turn stopped: the model kept repeating the same tool call without making progress.]";
-/// Sent to a model whose repeated tool calls were dropped from the history.
-const TOOL_LOOP_NUDGE: &str =
-    "You are repeating the same tool call without progress. Take a different next step, or answer.";
 /// Sent to a model whose request was aborted for looping in its reasoning.
 const THINKING_NUDGE: &str = "You were repeating yourself without acting. Take the next concrete step now with a tool call, or answer.";
 const FAILED_NOTE: &str = "[Turn stopped: the model request failed.]";
@@ -266,6 +263,9 @@ struct SessionState {
     sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
     /// Project sandbox policy messages, sent once at the first prompt.
     policy_notices: Vec<String>,
+    /// `loopKind` of the tool-loop trip that ended the last turn (`repeat`, `search` or
+    /// `oscillation`); cleared when a turn starts.
+    last_loop_kind: Option<&'static str>,
 }
 
 impl SessionState {
@@ -501,6 +501,7 @@ impl Agent {
             turn_usage: Usage::default(),
             sandbox: None,
             policy_notices,
+            last_loop_kind: None,
         })
     }
 
@@ -973,6 +974,14 @@ impl Agent {
         notify_blocked(s, client, &out);
     }
 
+    /// What kind of loop ended the last turn of the session with [`StopReason::ToolLoop`]:
+    /// `"repeat"`, `"search"` or `"oscillation"`. `None` for any other outcome.
+    pub async fn last_loop_kind(&self, session_id: &str) -> Option<&'static str> {
+        let session = self.session(session_id).ok()?;
+        let s = session.lock().await;
+        s.last_loop_kind
+    }
+
     pub async fn prompt(
         &self,
         session_id: &str,
@@ -1000,6 +1009,7 @@ impl Agent {
             .insert(session_id.to_string(), cancel.clone());
         let mut s = session.lock().await;
         s.turn_usage = Usage::default();
+        s.last_loop_kind = None;
         if let Some(cmd) = Command::parse(&text) {
             let r = self.run_command(&mut s, cmd, &client, &cancel).await;
             self.cancels.lock().unwrap().remove(session_id);
@@ -1304,16 +1314,49 @@ impl Agent {
             {
                 tool_guard.note_text();
             }
+            let track_files =
+                loop_cfg.enabled && loop_cfg.oscillation_enabled && loop_cfg.oscillation_count > 0;
+            let root = s.cwd.canonicalize().unwrap_or_else(|_| s.cwd.clone());
             for (id, name, input) in &uses {
                 if cancelled {
                     results.push(self.skip_tool_use(s, id, name, input));
                     continue;
                 }
                 stats.tool_calls += 1;
+                // File states for the oscillation detector: the target of an edit tool is
+                // hashed before and after; a Bash command is covered by the git working-tree
+                // snapshot (the first one of the turn is the baseline).
+                let target = track_files
+                    .then(|| tool_loop_guard::edit_target(name, input))
+                    .flatten()
+                    .map(|p| root.join(p));
+                if let Some(t) = &target {
+                    if let Some(h) = tool_loop_guard::file_hash(t) {
+                        tool_guard.baseline_file(&t.to_string_lossy(), h);
+                    }
+                }
+                let bash = track_files && name == "Bash" && !tool_guard.bash_snapshots_off;
+                if bash && !tool_guard.bash_baseline_done {
+                    tool_guard.bash_baseline_done = true;
+                    snapshot_tree(&root, &mut tool_guard, &loop_cfg, true).await;
+                }
                 let (block, c) = self
                     .execute_tool_use(s, client, cancel, &tools, id, name, input)
                     .await;
                 cancelled = c;
+                if let ContentBlock::ToolResult {
+                    is_error: false, ..
+                } = &block
+                {
+                    if let Some(t) = &target {
+                        if let Some(h) = tool_loop_guard::file_hash(t) {
+                            tool_guard.observe_file(&loop_cfg, &t.to_string_lossy(), h);
+                        }
+                    }
+                    if bash {
+                        snapshot_tree(&root, &mut tool_guard, &loop_cfg, false).await;
+                    }
+                }
                 if let ContentBlock::ToolResult {
                     content, is_error, ..
                 } = &block
@@ -1338,9 +1381,13 @@ impl Agent {
                 // Keep the first occurrence; the repeats and their results leave the history
                 // so they stop inflating every following request.
                 let ids: Vec<String> = trip.drop_ids.iter().cloned().collect();
-                tool_loop_guard::drop_tool_calls(&mut s.messages, &trip.drop_ids);
-                s.rec(Record::ToolCallsDropped { tool_use_ids: ids });
+                let dropped = !ids.is_empty();
+                if dropped {
+                    tool_loop_guard::drop_tool_calls(&mut s.messages, &trip.drop_ids);
+                    s.rec(Record::ToolCallsDropped { tool_use_ids: ids });
+                }
                 if tool_nudges >= loop_cfg.max_nudges {
+                    s.last_loop_kind = Some(trip.kind.loop_kind());
                     client.send_event(
                         &s.id,
                         SessionEvent::Notice(format!(
@@ -1356,13 +1403,18 @@ impl Agent {
                 client.send_event(
                     &s.id,
                     SessionEvent::Notice(format!(
-                        "The model {}; the repeated calls were dropped from the history. \
-                         Nudging it to take a different step (nudge {tool_nudges}/{}).",
+                        "The model {}; {}Nudging it to take a different step (nudge \
+                         {tool_nudges}/{}).",
                         trip.describe(),
+                        if dropped {
+                            "the repeated calls were dropped from the history. "
+                        } else {
+                            ""
+                        },
                         loop_cfg.max_nudges
                     )),
                 );
-                s.push(Message::user_text(TOOL_LOOP_NUDGE), UserSource::Nudge);
+                s.push(Message::user_text(trip.nudge()), UserSource::Nudge);
             }
         }
         // Never leave this turn's edits unformatted; a failing hook cannot start a fix turn here.
@@ -2547,6 +2599,36 @@ fn replay(cwd: &Path, session_id: &str, records: &[transcript::Stamped], client:
                 }),
             ),
             _ => {}
+        }
+    }
+}
+
+/// Hash the files git reports as changed (plus the ones tracked this turn) into the detector.
+/// `baseline` only records states; otherwise returns to earlier states are counted. A tree that
+/// is not a git repository, or is too big or dirty (see [`tool_loop_guard::git_changed_files`]),
+/// turns the Bash snapshots off for the rest of the turn.
+async fn snapshot_tree(
+    root: &Path,
+    guard: &mut ToolLoopDetector,
+    cfg: &tool_loop_guard::ToolLoopGuardConfig,
+    baseline: bool,
+) {
+    let Some(mut files) = tool_loop_guard::git_changed_files(root).await else {
+        guard.bash_snapshots_off = true;
+        return;
+    };
+    files.extend(guard.tracked_paths().into_iter().map(PathBuf::from));
+    files.sort();
+    files.dedup();
+    let Some(hashes) = tool_loop_guard::hash_files(&files) else {
+        guard.bash_snapshots_off = true;
+        return;
+    };
+    for (path, hash) in hashes {
+        if baseline {
+            guard.baseline_file(&path, hash);
+        } else {
+            guard.observe_file(cfg, &path, hash);
         }
     }
 }

@@ -11,6 +11,19 @@
 //!   `max_noprogress_ratio` of the calls were redundant, i.e. same tool, same normalised
 //!   arguments and same result as an earlier call in the turn.
 //!
+//! Two further detectors catch loops whose arguments keep changing:
+//!
+//! * **Repeated search**: the search pattern of `Grep`/`Glob` calls and of `Bash` commands running
+//!   grep, rg, ag, ack, `git grep` or `find -name` (see [`crate::search_pattern`]) is counted per
+//!   turn, whatever the paths, flags or trailing filters. It trips when the pattern has been
+//!   searched `search_repeat_count` times and the latest `search_repeat_count / 2` searches added
+//!   no new information. "No new information" means: every non-empty (trimmed) line of the result
+//!   (at most [`MAX_RESULT_LINES`]) was already returned by an earlier search for that pattern
+//!   (errors and empty results add nothing). A refinement that finds any new line resets it.
+//! * **Edit oscillation**: after each file-changing call the content hash of the affected file is
+//!   recorded (see [`file_hash`], [`git_changed_files`]). A file returning to a content state it had
+//!   earlier in the turn counts as one return; `oscillation_count` returns trip the detector.
+//!
 //! Plan updates that change nothing (`plan_noop_count` in a row) trip it as well; the plan tool
 //! answers those locally (see [`plan_items`]).
 
@@ -18,8 +31,24 @@ use ruckcode_llm::{ContentBlock, Message};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// At most this many result lines per search are compared.
+pub const MAX_RESULT_LINES: usize = 2000;
+/// Files larger than this are not hashed by the oscillation detector.
+pub const MAX_HASH_FILE_BYTES: u64 = 1024 * 1024;
+/// `git status` output larger than this (a huge or very dirty tree) disables the Bash snapshot.
+const MAX_STATUS_BYTES: usize = 256 * 1024;
+/// At most this many changed files are hashed per Bash call; more disables the snapshot.
+const MAX_SNAPSHOT_FILES: usize = 200;
+/// Total bytes hashed per Bash snapshot; more disables the snapshot.
+const MAX_SNAPSHOT_BYTES: u64 = 8 * 1024 * 1024;
+const GIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Hash of a file that does not exist.
+pub const ABSENT: u64 = 0;
 
 /// Result of a plan update that changed nothing; the tool is not executed.
 pub const PLAN_UNCHANGED: &str = "Plan unchanged (no items or statuses changed).";
@@ -45,6 +74,16 @@ pub struct ToolLoopGuardConfig {
     /// How many times per turn a loop is dropped and nudged before the turn ends with stop
     /// reason `tool_loop`. Default 2.
     pub max_nudges: u32,
+    /// Detect searches repeating the same pattern without new results. Default true.
+    pub search_repeat_enabled: bool,
+    /// Trip when a pattern was searched this many times in a turn (and the latest searches found
+    /// nothing new). Default 6; 0 disables the detector.
+    pub search_repeat_count: u32,
+    /// Detect files being changed back to an earlier content. Default true.
+    pub oscillation_enabled: bool,
+    /// Trip after a file returned to an earlier content this many times in a turn. Default 2;
+    /// 0 disables the detector.
+    pub oscillation_count: u32,
 }
 
 impl Default for ToolLoopGuardConfig {
@@ -56,6 +95,10 @@ impl Default for ToolLoopGuardConfig {
             window: 10,
             max_noprogress_ratio: 0.6,
             max_nudges: 2,
+            search_repeat_enabled: true,
+            search_repeat_count: 6,
+            oscillation_enabled: true,
+            oscillation_count: 2,
         }
     }
 }
@@ -70,6 +113,10 @@ pub struct ToolLoopGuardOverride {
     pub window: Option<usize>,
     pub max_noprogress_ratio: Option<f64>,
     pub max_nudges: Option<u32>,
+    pub search_repeat_enabled: Option<bool>,
+    pub search_repeat_count: Option<u32>,
+    pub oscillation_enabled: Option<bool>,
+    pub oscillation_count: Option<u32>,
 }
 
 impl ToolLoopGuardConfig {
@@ -83,6 +130,10 @@ impl ToolLoopGuardConfig {
             c.window = o.window.unwrap_or(c.window);
             c.max_noprogress_ratio = o.max_noprogress_ratio.unwrap_or(c.max_noprogress_ratio);
             c.max_nudges = o.max_nudges.unwrap_or(c.max_nudges);
+            c.search_repeat_enabled = o.search_repeat_enabled.unwrap_or(c.search_repeat_enabled);
+            c.search_repeat_count = o.search_repeat_count.unwrap_or(c.search_repeat_count);
+            c.oscillation_enabled = o.oscillation_enabled.unwrap_or(c.oscillation_enabled);
+            c.oscillation_count = o.oscillation_count.unwrap_or(c.oscillation_count);
         }
         c
     }
@@ -94,6 +145,21 @@ pub enum TripKind {
     Repeat { tool: String, count: usize },
     PlanNoop { count: usize },
     NoProgress { redundant: usize, window: usize },
+    Search { pattern: String, count: usize },
+    Oscillation { path: String, returns: usize },
+}
+
+impl TripKind {
+    /// `_meta.ruckcode.loopKind`: `repeat`, `search` or `oscillation`.
+    pub fn loop_kind(&self) -> &'static str {
+        match self {
+            TripKind::Repeat { .. } | TripKind::PlanNoop { .. } | TripKind::NoProgress { .. } => {
+                "repeat"
+            }
+            TripKind::Search { .. } => "search",
+            TripKind::Oscillation { .. } => "oscillation",
+        }
+    }
 }
 
 /// A tripped guard: what was seen and which tool calls to drop from the history.
@@ -115,6 +181,56 @@ impl ToolTrip {
             TripKind::NoProgress { redundant, window } => {
                 format!("made {redundant} of its last {window} tool calls with no new result")
             }
+            TripKind::Search { pattern, count } => {
+                format!("searched for `{pattern}` {count} times with no new results")
+            }
+            TripKind::Oscillation { path, .. } => {
+                format!("changed `{path}` back and forth between the same versions")
+            }
+        }
+    }
+
+    /// The message sent to the model for this trip.
+    pub fn nudge(&self) -> String {
+        match &self.kind {
+            TripKind::Search { pattern, count } => format!(
+                "You have searched for `{pattern}` {count} times with no new results. Use what \
+                 you found, or take a different approach."
+            ),
+            TripKind::Oscillation { path, .. } => format!(
+                "You are changing {path} back and forth between the same versions. Decide on one \
+                 change, or answer."
+            ),
+            _ => "You are repeating the same tool call without progress. Take a different next \
+                  step, or answer."
+                .to_string(),
+        }
+    }
+}
+
+/// Per-pattern state of the repeated-search detector.
+#[derive(Default)]
+struct SearchState {
+    count: usize,
+    /// Consecutive latest searches that added nothing new.
+    stale_streak: usize,
+    seen_lines: HashSet<u64>,
+    stale_ids: Vec<String>,
+}
+
+/// Per-file state of the oscillation detector.
+struct FileHistory {
+    current: u64,
+    seen: HashSet<u64>,
+    returns: usize,
+}
+
+impl FileHistory {
+    fn new(hash: u64) -> Self {
+        Self {
+            current: hash,
+            seen: HashSet::from([hash]),
+            returns: 0,
         }
     }
 }
@@ -136,6 +252,12 @@ pub struct ToolLoopDetector {
     window: VecDeque<bool>,
     redundant_ids: Vec<String>,
     trip: Option<ToolTrip>,
+    searches: HashMap<String, SearchState>,
+    files: HashMap<String, FileHistory>,
+    /// Whether the working-tree baseline for Bash was taken this turn.
+    pub bash_baseline_done: bool,
+    /// Set when the git snapshot is unavailable or too costly; Bash is not tracked afterwards.
+    pub bash_snapshots_off: bool,
 }
 
 impl ToolLoopDetector {
@@ -161,6 +283,7 @@ impl ToolLoopDetector {
         if !cfg.enabled {
             return;
         }
+        let result_text = result;
         let args = canonical(input);
         let result = hash_of(&(result, is_error));
         let key = hash_of(&(tool, args.to_string(), result));
@@ -196,6 +319,7 @@ impl ToolLoopDetector {
         }
         self.run.push((id.to_string(), call));
 
+        self.observe_search(cfg, id, tool, input, result_text, is_error);
         if self.trip.is_some() {
             return;
         }
@@ -228,6 +352,95 @@ impl ToolLoopDetector {
         }
     }
 
+    fn observe_search(
+        &mut self,
+        cfg: &ToolLoopGuardConfig,
+        id: &str,
+        tool: &str,
+        input: &Value,
+        result: &str,
+        is_error: bool,
+    ) {
+        if !cfg.search_repeat_enabled || cfg.search_repeat_count == 0 || self.trip.is_some() {
+            return;
+        }
+        let Some(pattern) = crate::search_pattern::search_pattern(tool, input) else {
+            return;
+        };
+        let lines: Vec<u64> = if is_error {
+            vec![]
+        } else {
+            result
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .take(MAX_RESULT_LINES)
+                .map(|l| hash_of(&l))
+                .collect()
+        };
+        let st = self.searches.entry(pattern.clone()).or_default();
+        st.count += 1;
+        let before = st.seen_lines.len();
+        st.seen_lines.extend(lines);
+        if st.count > 1 && st.seen_lines.len() == before {
+            st.stale_streak += 1;
+            st.stale_ids.push(id.to_string());
+        } else {
+            st.stale_streak = 0;
+        }
+        let need = (cfg.search_repeat_count as usize / 2).max(1);
+        if st.count >= cfg.search_repeat_count as usize && st.stale_streak >= need {
+            let drop_ids = st.stale_ids.iter().cloned().collect();
+            let count = st.count;
+            self.searches.remove(&pattern);
+            self.trip = Some(ToolTrip {
+                kind: TripKind::Search { pattern, count },
+                drop_ids,
+            });
+        }
+    }
+
+    /// Paths with a recorded content history this turn.
+    pub fn tracked_paths(&self) -> Vec<String> {
+        self.files.keys().cloned().collect()
+    }
+
+    /// Record the content hash of a file that is about to change (the baseline), unless the
+    /// file already has a history this turn.
+    pub fn baseline_file(&mut self, path: &str, hash: u64) {
+        self.files
+            .entry(path.to_string())
+            .or_insert_with(|| FileHistory::new(hash));
+    }
+
+    /// Record the content hash of a file after a changing call. A return to an earlier state
+    /// counts; the history is kept for the rest of the turn.
+    pub fn observe_file(&mut self, cfg: &ToolLoopGuardConfig, path: &str, hash: u64) {
+        if !cfg.enabled || !cfg.oscillation_enabled || cfg.oscillation_count == 0 {
+            return;
+        }
+        let h = self
+            .files
+            .entry(path.to_string())
+            .or_insert_with(|| FileHistory::new(hash));
+        if h.current == hash {
+            return;
+        }
+        h.current = hash;
+        if !h.seen.insert(hash) {
+            h.returns += 1;
+        }
+        if h.returns >= cfg.oscillation_count as usize && self.trip.is_none() {
+            self.trip = Some(ToolTrip {
+                kind: TripKind::Oscillation {
+                    path: path.to_string(),
+                    returns: h.returns,
+                },
+                drop_ids: HashSet::new(),
+            });
+        }
+    }
+
     /// The trip recorded since the last call, if any; the run state restarts afterwards.
     pub fn take_trip(&mut self) -> Option<ToolTrip> {
         let trip = self.trip.take()?;
@@ -235,8 +448,93 @@ impl ToolLoopDetector {
         self.noop_ids.clear();
         self.window.clear();
         self.redundant_ids.clear();
+        for h in self.files.values_mut() {
+            h.returns = 0;
+        }
         Some(trip)
     }
+}
+
+/// Tools that change one file, and the argument holding its path.
+pub fn edit_target(tool: &str, input: &Value) -> Option<String> {
+    if !matches!(tool, "Write" | "Edit" | "MultiEdit" | "NotebookEdit") {
+        return None;
+    }
+    ["file_path", "path", "notebook_path"]
+        .iter()
+        .find_map(|k| input[*k].as_str())
+        .map(str::to_string)
+}
+
+/// Content hash of a file: [`ABSENT`] if it does not exist, `None` if unreadable or larger than
+/// [`MAX_HASH_FILE_BYTES`].
+pub fn file_hash(path: &Path) -> Option<u64> {
+    match std::fs::metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(ABSENT),
+        Err(_) => None,
+        Ok(m) if !m.is_file() || m.len() > MAX_HASH_FILE_BYTES => None,
+        Ok(_) => Some(hash_of(&std::fs::read(path).ok()?).max(1)),
+    }
+}
+
+async fn git(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let out = tokio::time::timeout(
+        GIT_TIMEOUT,
+        tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    (out.status.success() && out.stdout.len() <= MAX_STATUS_BYTES).then_some(out.stdout)
+}
+
+/// Absolute paths that git reports as modified or untracked in the repository containing `cwd`,
+/// or `None` if `cwd` is not in a git repository, git is slow or missing, or the tree is too
+/// dirty to look at cheaply (status output over 256 KiB, or more than 200 files).
+pub async fn git_changed_files(cwd: &Path) -> Option<Vec<PathBuf>> {
+    let root = git(cwd, &["rev-parse", "--show-toplevel"]).await?;
+    let root = PathBuf::from(String::from_utf8_lossy(&root).trim_end());
+    let status = git(
+        cwd,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
+    )
+    .await?;
+    let files: Vec<PathBuf> = status
+        .split(|b| *b == 0)
+        .filter(|e| e.len() > 3)
+        .map(|e| root.join(String::from_utf8_lossy(&e[3..]).as_ref()))
+        .collect();
+    (files.len() <= MAX_SNAPSHOT_FILES).then_some(files)
+}
+
+/// Content hashes of `paths` that can be hashed cheaply; `None` if together they exceed 8 MiB.
+pub fn hash_files(paths: &[PathBuf]) -> Option<Vec<(String, u64)>> {
+    let mut total = 0u64;
+    let mut out = Vec::new();
+    for p in paths {
+        if let Ok(m) = std::fs::metadata(p) {
+            total += m.len().min(MAX_HASH_FILE_BYTES);
+            if total > MAX_SNAPSHOT_BYTES {
+                return None;
+            }
+        }
+        if let Some(h) = file_hash(p) {
+            out.push((p.to_string_lossy().into_owned(), h));
+        }
+    }
+    Some(out)
 }
 
 fn hash_of<T: Hash>(v: &T) -> u64 {
@@ -375,6 +673,78 @@ mod tests {
             &json!({"q": format!("{long}b")})
         ));
         assert!(!similar(&json!({"q": "abc"}), &json!({"q": "abd"})));
+    }
+
+    #[test]
+    fn search_trips_only_when_recent_results_add_nothing() {
+        let cfg = ToolLoopGuardConfig::default();
+        let grep =
+            |i: usize| json!({"command": format!("grep -r \"foo bar\" dir{i}/ | head -{i}")});
+        let mut d = ToolLoopDetector::default();
+        // Every search finds something new: never trips.
+        for i in 0..10 {
+            d.observe(
+                &cfg,
+                &format!("n{i}"),
+                "Bash",
+                &grep(i),
+                &format!("hit {i}"),
+                false,
+                false,
+            );
+        }
+        assert!(d.take_trip().is_none());
+        // Same pattern, results a subset of what was seen: trips at 6 and drops the stale ones.
+        let mut d = ToolLoopDetector::default();
+        d.observe(&cfg, "s0", "Bash", &grep(0), "a\nb\nc", false, false);
+        for i in 1..6 {
+            assert!(d.take_trip().is_none());
+            d.observe(
+                &cfg,
+                &format!("s{i}"),
+                "Bash",
+                &grep(i),
+                "b\nc",
+                false,
+                false,
+            );
+        }
+        let t = d.take_trip().expect("trips");
+        assert_eq!(
+            t.kind,
+            TripKind::Search {
+                pattern: "foo bar".into(),
+                count: 6
+            }
+        );
+        assert_eq!(t.kind.loop_kind(), "search");
+        assert!(!t.drop_ids.contains("s0") && t.drop_ids.contains("s5"));
+        assert!(t.nudge().contains("`foo bar` 6 times with no new results"));
+    }
+
+    #[test]
+    fn oscillation_counts_returns_to_earlier_states() {
+        let cfg = ToolLoopGuardConfig::default();
+        let mut d = ToolLoopDetector::default();
+        d.baseline_file("f", 1);
+        for h in [2, 3, 1] {
+            d.observe_file(&cfg, "f", h);
+        }
+        assert!(d.take_trip().is_none(), "one revert is fine");
+        d.observe_file(&cfg, "f", 2);
+        let t = d.take_trip().expect("second return trips");
+        assert_eq!(
+            t.kind,
+            TripKind::Oscillation {
+                path: "f".into(),
+                returns: 2
+            }
+        );
+        assert!(t.drop_ids.is_empty() && t.kind.loop_kind() == "oscillation");
+        // Same content again is not a change; a fresh state is progress.
+        d.observe_file(&cfg, "f", 2);
+        d.observe_file(&cfg, "f", 9);
+        assert!(d.take_trip().is_none());
     }
 
     #[test]
