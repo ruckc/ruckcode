@@ -126,6 +126,8 @@ fn request() -> Request {
         }],
         max_tokens: 1024,
         thinking: None,
+        temperature: None,
+        top_p: None,
     }
 }
 
@@ -718,4 +720,106 @@ async fn openai_extra_body_is_sent_only_when_configured() {
     ] {
         assert!(c.body.get(k).is_none(), "{k} must not be sent by default");
     }
+}
+
+async fn openai_body(req: Request, extra: Option<Value>) -> Value {
+    let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut p = OpenAi::new(None, Some(url));
+    if let Some(e) = extra {
+        p = p.with_extra_body(e);
+    }
+    p.complete(req, tx).await.unwrap();
+    cap.await.unwrap().body
+}
+
+async fn anthropic_body(req: Request) -> Value {
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"type":"message_start","message":{"usage":{"input_tokens":1}}}),
+        ),
+        (
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        ),
+    ]);
+    let (url, cap) = serve("200 OK", "text/event-stream", body).await;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    Anthropic::new("k", Some(url))
+        .complete(req, tx)
+        .await
+        .unwrap();
+    cap.await.unwrap().body
+}
+
+#[tokio::test]
+async fn openai_sampling_is_sent_only_when_set() {
+    let plain = openai_body(request(), None).await;
+    assert!(plain.get("temperature").is_none() && plain.get("top_p").is_none());
+
+    let mut req = request();
+    req.temperature = Some(0.5);
+    req.top_p = Some(0.95);
+    let b = openai_body(req, None).await;
+    assert_eq!(b["temperature"], 0.5);
+    assert_eq!(b["top_p"], 0.95);
+
+    // Setting only one leaves the other absent, and the rest of the body is unchanged.
+    let mut req = request();
+    req.temperature = Some(0.5);
+    let mut b = openai_body(req, None).await;
+    assert!(b.get("top_p").is_none());
+    b.as_object_mut().unwrap().remove("temperature");
+    assert_eq!(b, plain);
+}
+
+#[tokio::test]
+async fn openai_sampling_combines_with_extra_body_and_wins_duplicates() {
+    let extra = json!({"presence_penalty": 0.5, "temperature": 1.0,
+                       "options": {"repeat_penalty": 1.1}});
+    let mut req = request();
+    req.temperature = Some(0.5);
+    let b = openai_body(req, Some(extra.clone())).await;
+    assert_eq!(b["temperature"], 0.5, "profile temperature wins");
+    assert_eq!(b["presence_penalty"], 0.5);
+    assert_eq!(b["options"]["repeat_penalty"], 1.1);
+    // Without a profile temperature the extra body's value is left alone.
+    let b = openai_body(request(), Some(extra)).await;
+    assert_eq!(b["temperature"], 1.0);
+}
+
+#[tokio::test]
+async fn anthropic_sampling_rules() {
+    let plain = anthropic_body(request()).await;
+    assert!(plain.get("temperature").is_none() && plain.get("top_p").is_none());
+
+    let mut req = request();
+    req.temperature = Some(0.5);
+    let b = anthropic_body(req).await;
+    assert_eq!(b["temperature"], 0.5);
+    assert!(b.get("top_p").is_none());
+
+    let mut req = request();
+    req.top_p = Some(0.9);
+    let b = anthropic_body(req).await;
+    assert_eq!(b["top_p"], 0.9);
+    assert!(b.get("temperature").is_none());
+
+    // Both set: only temperature is sent.
+    let mut req = request();
+    req.temperature = Some(0.5);
+    req.top_p = Some(0.9);
+    let b = anthropic_body(req).await;
+    assert_eq!(b["temperature"], 0.5);
+    assert!(b.get("top_p").is_none());
+
+    // Thinking enabled: neither is sent.
+    let mut req = request();
+    req.temperature = Some(0.5);
+    req.top_p = Some(0.9);
+    req.thinking = Some(json!({"type": "enabled", "budget_tokens": 2000}));
+    let b = anthropic_body(req).await;
+    assert!(b.get("temperature").is_none() && b.get("top_p").is_none());
+    assert_eq!(b["thinking"]["type"], "enabled");
 }

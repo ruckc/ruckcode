@@ -1186,6 +1186,8 @@ impl Agent {
                 tools: tools.iter().map(|t| t.spec()).collect(),
                 max_tokens: profile.max_tokens,
                 thinking: profile.thinking.clone(),
+                temperature: profile.temperature,
+                top_p: profile.top_p,
             };
             let (response, metrics) = match self
                 .call_model(
@@ -2039,6 +2041,9 @@ impl Agent {
             tools: vec![],
             max_tokens: profile.max_tokens,
             thinking: None,
+            // Same model as the conversation, so the same sampling settings apply.
+            temperature: profile.temperature,
+            top_p: profile.top_p,
         };
         let response = match self
             .call_model(

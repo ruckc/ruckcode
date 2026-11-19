@@ -215,6 +215,8 @@ pub fn build_plan(args: &SetupArgs, stdin: impl FnOnce() -> Result<String>) -> R
             thinking_guard: None,
             tool_loop_guard: None,
             ollama: None,
+            temperature: None,
+            top_p: None,
         },
         set_default: !args.no_default,
         new_key,

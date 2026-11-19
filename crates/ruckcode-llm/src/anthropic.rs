@@ -57,7 +57,46 @@ pub(crate) fn build_body(req: &Request) -> Value {
     if let Some(t) = &req.thinking {
         body["thinking"] = t.clone();
     }
+    apply_sampling(&mut body, req);
     body
+}
+
+/// Add `temperature` / `top_p`, working around what the API rejects: extended thinking needs the
+/// default temperature, so neither is sent while thinking is enabled; and some models reject
+/// both at once, so only `temperature` is sent when both are set. Each case warns once.
+fn apply_sampling(body: &mut Value, req: &Request) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED_THINKING: AtomicBool = AtomicBool::new(false);
+    static WARNED_BOTH: AtomicBool = AtomicBool::new(false);
+    if req.temperature.is_none() && req.top_p.is_none() {
+        return;
+    }
+    let thinking_on = req
+        .thinking
+        .as_ref()
+        .is_some_and(|t| t.get("type").and_then(Value::as_str) != Some("disabled"));
+    if thinking_on {
+        if !WARNED_THINKING.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "temperature/top_p are not sent: Anthropic rejects them with extended thinking enabled"
+            );
+        }
+        return;
+    }
+    if let Some(t) = req.temperature {
+        body["temperature"] = json!(t);
+        if req.top_p.is_some() {
+            if !WARNED_BOTH.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "both temperature and top_p are set; sending only temperature (Anthropic rejects both)"
+                );
+            }
+            return;
+        }
+    }
+    if let Some(p) = req.top_p {
+        body["top_p"] = json!(p);
+    }
 }
 
 /// Serialise one message. Anthropic rejects empty text blocks and empty `content` arrays, so
@@ -325,6 +364,8 @@ mod tests {
             }],
             max_tokens: 10,
             thinking: None,
+            temperature: None,
+            top_p: None,
         };
         let b = build_body(&req);
         assert_eq!(

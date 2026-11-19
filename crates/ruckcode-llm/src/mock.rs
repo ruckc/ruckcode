@@ -434,6 +434,8 @@ mod tests {
             tools: tools.iter().map(|t| spec(t)).collect(),
             max_tokens: 100,
             thinking: None,
+            temperature: None,
+            top_p: None,
         }
     }
 

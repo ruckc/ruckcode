@@ -108,6 +108,10 @@ pub struct Request {
     /// Provider-specific reasoning configuration, passed through as-is
     /// (Anthropic: the `thinking` object; OpenAI-compatible: `reasoning_effort` string).
     pub thinking: Option<Value>,
+    /// Sampling temperature; sent only when set.
+    pub temperature: Option<f64>,
+    /// Nucleus sampling `top_p`; sent only when set.
+    pub top_p: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

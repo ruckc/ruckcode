@@ -130,6 +130,28 @@ budget_tokens = 8000
 
 The guard stands down for a request as soon as it produces text or a tool call.
 
+### Sampling: `temperature` and `top_p`
+
+A profile can set the sampling temperature (0.0 to 2.0) and `top_p` (0.0 to 1.0). They are sent
+only when set, so a profile without them sends the request exactly as before; out-of-range values
+are rejected when the config loads. They apply to every model call on the profile, including
+`/compact` summaries.
+
+```toml
+[profiles.local]
+provider = "openai"
+base_url = "http://localhost:11434/v1"
+model = "gemma4:26b"
+temperature = 0.5
+top_p = 0.95
+```
+
+- OpenAI-compatible: sent as top-level `temperature` / `top_p`. If `[profiles.<name>.ollama]`
+  also supplies one of these keys, the profile-level value wins.
+- Anthropic: sent as `temperature` / `top_p`, except that neither is sent while extended
+  `thinking` is enabled (the API requires the default temperature), and when both are set only
+  `temperature` is sent. Each case logs a warning once.
+
 ### Ollama sampling options
 
 A profile that sets `[profiles.<name>.ollama]` sends extra sampling fields to its endpoint; other
