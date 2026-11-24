@@ -152,6 +152,27 @@ top_p = 0.95
   `thinking` is enabled (the API requires the default temperature), and when both are set only
   `temperature` is sent. Each case logs a warning once.
 
+### Lean tool set for local models
+
+Some local models (seen with `gemma4:26b` on Ollama) sometimes finish their reasoning and then
+emit nothing: no text and no tool call, so the turn ends. The server never sends a tool call, so
+it is not a client parsing problem. It tracks the tool list: the built-in `TodoWrite` and
+`AskUserQuestion` tools take arrays of objects, and the system prompt tells the model to start with
+`TodoWrite`. A profile can leave them out:
+
+```toml
+[profiles.local]
+provider = "openai"
+base_url = "http://localhost:11434/v1"
+model = "gemma4:26b"
+lean_tools = true                      # drop TodoWrite and AskUserQuestion, and the prompt lines about them
+# tools = ["Read", "Edit", "Bash"]     # or: allowlist of built-in tools (MCP and mise tools unaffected)
+```
+
+Both keys are off by default, so other profiles send exactly the same tools and prompt as before.
+Set `RUCKCODE_TRACE_HTTP=/path/to/file` to append each OpenAI-compatible request body and raw SSE
+chunk to a file when debugging what a server received and sent.
+
 ### Ollama sampling options
 
 A profile that sets `[profiles.<name>.ollama]` sends extra sampling fields to its endpoint; other

@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::config::Profile;
 use crate::modes::ModeSet;
 
 const BASE: &str = "\
@@ -14,12 +15,29 @@ provided.
 - Read code before changing it and match the style of the surrounding code.
 - Tools named `mise__*` (or MiseRun) run the project's own mise tasks; prefer them for builds, \
 tests, linting and other project workflows.
-- Use TodoWrite to plan and track multi-step work. When the last item is completed, tell the user \
-the plan is finished and summarise what was done, then stop unless they ask for more.
-- Use AskUserQuestion when you are blocked on a decision only the user can make.
-- Work happens in lifecycle modes. When the current phase's work is done, use SwitchMode to \
+{TODO}{ASK}- Work happens in lifecycle modes. When the current phase's work is done, use SwitchMode to \
 propose moving to the next phase; the user may need to approve.
 - Do not commit, push or publish unless explicitly asked.";
+
+const TODO_LINE: &str = "- Use TodoWrite to plan and track multi-step work. When the last item is completed, \
+tell the user the plan is finished and summarise what was done, then stop unless they ask for more.\n";
+const ASK_LINE: &str =
+    "- Use AskUserQuestion when you are blocked on a decision only the user can make.\n";
+
+/// The built-in guidance, leaving out the lines about built-in tools the profile does not offer
+/// (a model must not be told to use a tool it cannot call).
+fn base_prompt(profile: Option<&Profile>) -> String {
+    let offers = |name: &str| profile.is_none_or(|p| p.allows_builtin(name));
+    BASE.replace("{TODO}", if offers("TodoWrite") { TODO_LINE } else { "" })
+        .replace(
+            "{ASK}",
+            if offers("AskUserQuestion") {
+                ASK_LINE
+            } else {
+                ""
+            },
+        )
+}
 
 const INSTRUCTION_FILES: [&str; 3] = ["AGENTS.md", "CLAUDE.md", ".ruckcode/INSTRUCTIONS.md"];
 
@@ -46,8 +64,9 @@ pub async fn system_prompt(
     modes: &ModeSet,
     mode_id: &str,
     client_instructions: Option<&str>,
+    profile: Option<&Profile>,
 ) -> String {
-    let mut s = String::from(BASE);
+    let mut s = base_prompt(profile);
     s.push_str("\n\n## Environment\n");
     s.push_str(&format!("- Working directory: {}\n", cwd.display()));
     s.push_str(&format!("- Platform: {}\n", std::env::consts::OS));
@@ -87,4 +106,26 @@ instructions. They add to, and never override, the guidance above.\n\n{c}\n"
         ));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_prompt_keeps_the_todo_and_ask_lines() {
+        let s = base_prompt(None);
+        assert!(s.contains("Use TodoWrite") && s.contains("Use AskUserQuestion"));
+        assert!(!s.contains('{'));
+        assert!(s.contains("workflows.\n- Use TodoWrite"));
+    }
+
+    #[test]
+    fn lean_profile_drops_the_lines_about_dropped_tools() {
+        let p: Profile =
+            toml::from_str("provider = \"openai\"\nmodel = \"m\"\nlean_tools = true\n").unwrap();
+        let s = base_prompt(Some(&p));
+        assert!(!s.contains("TodoWrite") && !s.contains("AskUserQuestion"));
+        assert!(s.contains("workflows.\n- Work happens in lifecycle modes"));
+    }
 }

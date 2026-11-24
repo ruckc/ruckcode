@@ -102,9 +102,31 @@ pub struct Profile {
     /// Nucleus sampling `top_p` (0.0 to 1.0); sent only when set.
     #[serde(default)]
     pub top_p: Option<f64>,
+    /// Allowlist of built-in tool names offered to the model with this profile (MCP and mise
+    /// tools are unaffected). Unset offers every built-in tool the mode allows.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
+    /// Lean tool set for small local models: leave out the built-in tools whose nested
+    /// array-of-object arguments some servers fail to parse (`TodoWrite`, `AskUserQuestion`), and
+    /// the prompt lines about them. Off by default.
+    #[serde(default)]
+    pub lean_tools: bool,
 }
 
+/// Built-in tools that `lean_tools` leaves out.
+pub const LEAN_DROPPED_TOOLS: [&str; 2] = ["TodoWrite", "AskUserQuestion"];
+
 impl Profile {
+    /// Whether the built-in tool `name` is offered with this profile.
+    pub fn allows_builtin(&self, name: &str) -> bool {
+        if self.lean_tools && LEAN_DROPPED_TOOLS.contains(&name) {
+            return false;
+        }
+        self.tools
+            .as_ref()
+            .is_none_or(|l| l.iter().any(|n| n.eq_ignore_ascii_case(name)))
+    }
+
     /// The prices for `model`, if any are configured.
     pub fn pricing_for(&self, model: &str) -> Option<&Pricing> {
         self.model_pricing.get(model).or(self.pricing.as_ref())
@@ -585,6 +607,36 @@ model = "gpt"
                 .with_override(cloud.tool_loop_guard.as_ref())
                 .enabled
         );
+    }
+
+    #[test]
+    fn lean_tools_and_tool_allowlist_filter_builtins() {
+        let c = cfg(r#"
+[profiles.lean]
+provider = "openai"
+model = "m"
+lean_tools = true
+[profiles.pick]
+provider = "openai"
+model = "m"
+tools = ["bash", "Read"]
+[profiles.plain]
+provider = "openai"
+model = "m"
+"#)
+        .unwrap();
+        let (lean, pick, plain) = (
+            &c.profiles["lean"],
+            &c.profiles["pick"],
+            &c.profiles["plain"],
+        );
+        for t in ["Bash", "Read", "Edit", "TodoWrite", "AskUserQuestion"] {
+            assert!(plain.allows_builtin(t), "{t}");
+        }
+        assert!(lean.allows_builtin("Bash") && lean.allows_builtin("Edit"));
+        assert!(!lean.allows_builtin("TodoWrite") && !lean.allows_builtin("AskUserQuestion"));
+        assert!(pick.allows_builtin("Bash") && pick.allows_builtin("Read"));
+        assert!(!pick.allows_builtin("Edit") && !pick.allows_builtin("TodoWrite"));
     }
 
     #[test]
