@@ -50,6 +50,8 @@ pub struct MockProvider {
     failures: Mutex<VecDeque<anyhow::Error>>,
     /// Usage reported by successive successful responses (none reported once it runs out).
     usages: Mutex<VecDeque<Usage>>,
+    /// Stop reasons forced onto successive successful responses (default: derived).
+    stops: Mutex<VecDeque<StopReason>>,
     /// Rate-limit headers attached to every successful response.
     rate_limit: Mutex<Option<crate::RateLimitInfo>>,
     limited: Mutex<std::collections::HashSet<String>>,
@@ -82,6 +84,12 @@ impl MockProvider {
     /// responses beyond the queue report no usage, like an endpoint without a usage block).
     pub fn push_usage(&self, u: Usage) {
         self.usages.lock().unwrap().push_back(u);
+    }
+
+    /// Force the stop reason of the next successful response (one entry per response, in order),
+    /// e.g. `MaxTokens` for a response cut off by a full context.
+    pub fn push_stop(&self, r: StopReason) {
+        self.stops.lock().unwrap().push_back(r);
     }
 
     /// Attach rate-limit headers to every successful response (proactive pacing tests).
@@ -400,11 +408,12 @@ impl Provider for MockProvider {
                 let _ = events.send(StreamEvent::TextDelta(text));
             }
         }
-        let stop_reason = if message.tool_uses().next().is_some() {
+        let derived = if message.tool_uses().next().is_some() {
             StopReason::ToolUse
         } else {
             StopReason::EndTurn
         };
+        let stop_reason = self.stops.lock().unwrap().pop_front().unwrap_or(derived);
         Ok(Response {
             message,
             stop_reason,

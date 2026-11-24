@@ -239,6 +239,12 @@ so a client can keep a first-prompt fallback for older `rc` versions.
   persisted); if it is omitted the stored text stays in effect. An empty or whitespace-only `append`
   clears it. Compaction (`/compact`, automatic compaction) keeps them: they are part of the system
   prompt, not of the history that gets summarized.
+  Automatic compaction also runs mid-turn, before any model request whose prompt nears the context
+  window (`[context]`, see the README); the instructions, the plan and the latest tool calls and
+  results are kept. Compaction and tool-result truncation are reported as `Notice` events (agent
+  message chunks), for example `conversation compacted (N messages summarized; the latest tool
+  results were kept)` and `Bash output truncated by ruckcode ...`. A turn that ends because the
+  context stayed full after a compact-and-retry returns `max_tokens`.
 - **Validation.** `append` must be a string of at most 65536 bytes and `systemPrompt` must be an
   object; otherwise the request fails with JSON-RPC `-32602` (invalid params) and no session is
   created or changed.

@@ -214,6 +214,7 @@ pub fn build_plan(args: &SetupArgs, stdin: impl FnOnce() -> Result<String>) -> R
             model_pricing: Default::default(),
             thinking_guard: None,
             tool_loop_guard: None,
+            context: None,
             ollama: None,
             temperature: None,
             top_p: None,

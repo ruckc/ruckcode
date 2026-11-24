@@ -75,7 +75,7 @@ base_url = "http://localhost:11434/v1"
 # cache_write = 3.75                 # optional, default: the input rate
 ```
 
-Other top-level keys: `compaction_threshold` (default 0.8), `max_turn_requests` (default 100),
+Other top-level keys: `compaction_threshold` (default 0.8; see [Context management](#context-management)), `max_turn_requests` (default 100),
 `[update] auto` / `check` (both default true: background self-update and the daily check, see [Updates](#updates); the older `check_updates` still works),
 `[mise] lazy_threshold` (default 12), `[permissions]` (tool name or glob such as `"mise__*"` to
 `allow` / `ask` / `deny`), and global `[[hooks.<event>]]` tables. `RUCKCODE_PROFILE` overrides
@@ -166,6 +166,42 @@ frequency_penalty = 0.3
 presence_penalty = 0.3
 repeat_penalty = 1.15
 repeat_last_n = 256
+```
+
+## Context management
+
+A request must never reach the model's context window: a local model that fills it stops with
+`max_tokens` mid-answer, often just as it was about to finish. Three safeguards keep that from
+happening:
+
+- **Compaction before every request.** Before each model request, including those inside a turn
+  after tool results were appended, the prompt (system prompt, tool definitions, history) is
+  estimated (3 bytes per token, deliberately pessimistic). Over the threshold, the history is
+  summarized first. The exchange in flight (the latest tool calls and their results), the plan,
+  and the client instructions (`_meta.ruckcode.systemPrompt`, part of the system prompt) survive;
+  tool calls and results stay paired. Notice: `conversation compacted (N messages summarized; the
+  latest tool results were kept)`.
+- **Per-result cap.** Every tool result, MCP tools included, is cut to its head and tail with a
+  marker (`[... N lines (M bytes) truncated by ruckcode; re-run with a narrower command or read a
+  range ...]`) before it enters the history. The cap is the smaller of `max_tool_result_tokens`
+  and `max_tool_result_fraction` of the window. Notice: `Bash output truncated by ruckcode ...`.
+- **Hard ceiling.** Prompt estimate plus the output reserve never exceeds the window. If compaction
+  was not enough, the largest tool results of the current turn are halved (head and tail kept)
+  until the request fits. Notice: `Context nearly full: truncated tool results ...`.
+
+If a request still ends with `max_tokens` on a full context and produced no text or tool call, the
+agent compacts and retries once; if that fails too, the turn ends with a notice saying so.
+
+```toml
+[context]
+compact_threshold = 0.8          # share of the window; default: the top-level compaction_threshold
+max_tool_result_tokens = 12000   # per-result cap in tokens (default 12000; 0 disables the cap)
+max_tool_result_fraction = 0.10  # ... and at most this share of the window (default 0.10)
+output_reserve_tokens = 8000     # kept free for the answer (default: min(max_tokens, window / 4))
+
+# Per profile, any key replaces the global value:
+# [profiles.ollama.context]
+# max_tool_result_tokens = 4000
 ```
 
 ## Tool-loop guard

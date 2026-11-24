@@ -181,7 +181,7 @@ pub(crate) fn str_arg<'a>(input: &'a Value, key: &str) -> anyhow::Result<&'a str
         .ok_or_else(|| anyhow::anyhow!("missing required string parameter `{key}`"))
 }
 
-/// Truncate long output, keeping the head and tail.
+/// Truncate long output, keeping the head and tail, with a marker naming what was cut.
 pub fn truncate_middle(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
@@ -195,10 +195,13 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
     while !s.is_char_boundary(tail_start) {
         tail_start += 1;
     }
+    let cut = &s[head_end..tail_start];
     format!(
-        "{}\n\n... [{} bytes truncated] ...\n\n{}",
+        "{}\n\n[... {} lines ({} bytes) truncated by ruckcode; re-run with a narrower command \
+         or read a range ...]\n\n{}",
         &s[..head_end],
-        tail_start - head_end,
+        cut.matches('\n').count() + 1,
+        cut.len(),
         &s[tail_start..]
     )
 }

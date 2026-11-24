@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::context::{ContextConfig, ContextOverride};
 use crate::permissions::Permission;
 use crate::retry::RateLimitConfig;
 use crate::thinking_guard::{OllamaOptions, ThinkingGuardConfig, ThinkingGuardOverride};
@@ -89,6 +90,9 @@ pub struct Profile {
     /// Overrides of the global `[thinking_guard]` for this profile.
     #[serde(default)]
     pub thinking_guard: Option<ThinkingGuardOverride>,
+    /// Overrides of the global `[context]` for this profile.
+    #[serde(default)]
+    pub context: Option<ContextOverride>,
     /// Overrides of the global `[tool_loop_guard]` for this profile.
     #[serde(default)]
     pub tool_loop_guard: Option<ToolLoopGuardOverride>,
@@ -259,6 +263,9 @@ pub struct Config {
     /// Detection of repeated no-progress tool calls (`[tool_loop_guard]`).
     #[serde(default)]
     pub tool_loop_guard: ToolLoopGuardConfig,
+    /// Context-window management: compaction, tool result caps, output reserve (`[context]`).
+    #[serde(default)]
+    pub context: ContextConfig,
     /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
     #[serde(default)]
     pub sandbox: ruckcode_sandbox::SandboxConfig,
