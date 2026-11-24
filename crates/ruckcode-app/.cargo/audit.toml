@@ -9,4 +9,8 @@ ignore = [
   "RUSTSEC-2024-0429",
   # proc-macro-error: unmaintained (build-time proc macro via the GTK 3 stack); not a vulnerability.
   "RUSTSEC-2024-0370",
+  # chrono 0.4.45: unmaintained (RUSTSEC-2026-0543); not a vulnerability. Pulled in transitively by
+  # rmcp (MCP client in ruckcode-mcp), so removing our own direct use (ruckcode-core, ruckcode-llm)
+  # would not clear it. Revisit when rmcp drops or replaces chrono, or when chrono is maintained again.
+  "RUSTSEC-2026-0543",
 ]
