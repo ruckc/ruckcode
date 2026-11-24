@@ -305,6 +305,98 @@ async fn anthropic_stream_error_event() {
     assert!(e.contains("Overloaded"), "{e}");
 }
 
+/// Chunk shapes recorded from Ollama 0.40 (`/v1/chat/completions`, gemma4:26b, streaming):
+/// `reasoning` deltas, then each tool call complete in one chunk (with an empty `content`),
+/// every call at `index` 0, then an empty delta carrying `finish_reason`.
+#[tokio::test]
+async fn openai_stream_ollama_complete_tool_calls_after_reasoning() {
+    let chunk = |delta: Value, fr: Value| json!({"id":"chatcmpl-174","object":"chat.completion.chunk","system_fingerprint":"fp_ollama","model":"gemma4:26b","choices":[{"index":0,"delta":delta,"finish_reason":fr}]});
+    let mut body = sse(&[
+        (
+            "",
+            chunk(
+                json!({"role":"assistant","content":"","reasoning":"The"}),
+                Value::Null,
+            ),
+        ),
+        (
+            "",
+            chunk(json!({"content":"","reasoning":" user"}), Value::Null),
+        ),
+        (
+            "",
+            chunk(
+                json!({"content":"","tool_calls":[{"id":"call_ky12ndoi","index":0,"type":"function","function":{"name":"TodoWrite","arguments":"{\"todos\":[{\"content\":\"look\",\"status\":\"in_progress\"}]}"}}]}),
+                Value::Null,
+            ),
+        ),
+        (
+            "",
+            chunk(
+                json!({"tool_calls":[{"id":"call_zz","index":0,"type":"function","function":{"name":"Bash","arguments":"{\"command\":\"ls\"}"}}]}),
+                Value::Null,
+            ),
+        ),
+        ("", chunk(json!({}), json!("tool_calls"))),
+    ]);
+    body.push_str("data: [DONE]\n\n");
+    let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
+    let p = OpenAi::new(None, Some(format!("{url}/v1")));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let r = p.complete(request(), tx).await.unwrap();
+    assert_eq!(r.stop_reason, StopReason::ToolUse);
+    assert_eq!(
+        r.message.content,
+        vec![
+            ContentBlock::Thinking {
+                thinking: "The user".into(),
+                signature: None
+            },
+            ContentBlock::ToolUse {
+                id: "call_ky12ndoi".into(),
+                name: "TodoWrite".into(),
+                input: json!({"todos":[{"content":"look","status":"in_progress"}]})
+            },
+            ContentBlock::ToolUse {
+                id: "call_zz".into(),
+                name: "Bash".into(),
+                input: json!({"command":"ls"})
+            },
+        ]
+    );
+}
+
+/// The failure mode behind the report: the model finishes its reasoning and Ollama closes the
+/// stream with `finish_reason: "stop"`, no content and no tool call. That is a real end of turn,
+/// not something the parser dropped.
+#[tokio::test]
+async fn openai_stream_reasoning_only_stop_is_end_turn() {
+    let chunk = |delta: Value, fr: Value| json!({"id":"c","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":delta,"finish_reason":fr}]});
+    let mut body = sse(&[
+        (
+            "",
+            chunk(
+                json!({"role":"assistant","content":"","reasoning":"Let's start."}),
+                Value::Null,
+            ),
+        ),
+        ("", chunk(json!({}), json!("stop"))),
+    ]);
+    body.push_str("data: [DONE]\n\n");
+    let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
+    let p = OpenAi::new(None, Some(format!("{url}/v1")));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let r = p.complete(request(), tx).await.unwrap();
+    assert_eq!(r.stop_reason, StopReason::EndTurn);
+    assert_eq!(
+        r.message.content,
+        vec![ContentBlock::Thinking {
+            thinking: "Let's start.".into(),
+            signature: None
+        }]
+    );
+}
+
 #[tokio::test]
 async fn openai_stream_reasoning_text_and_tool_calls() {
     let chunk = |delta: Value, fr: Value| json!({"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":delta,"finish_reason":fr}]});
