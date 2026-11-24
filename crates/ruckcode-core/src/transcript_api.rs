@@ -872,6 +872,7 @@ mod tests {
                 cost_usd: None,
                 summary: "Summary of work".into(),
                 replaced_messages: 4,
+                kept_messages: 0,
             },
             Record::TurnEnd {
                 stop_reason: "end_turn".into(),

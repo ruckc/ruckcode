@@ -129,6 +129,9 @@ pub enum Record {
     Compaction {
         summary: String,
         replaced_messages: usize,
+        /// How many of the latest messages (the exchange in flight) were kept after the summary.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        kept_messages: usize,
         /// The summarizing request's usage and cost (it is a model request like any other).
         #[serde(default)]
         usage: Usage,
@@ -194,6 +197,10 @@ pub fn sessions_dir(project: &Path) -> PathBuf {
 
 pub fn session_path(project: &Path, id: &str) -> PathBuf {
     sessions_dir(project).join(format!("{id}.jsonl"))
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// The user message that replaces history after compaction.
@@ -317,7 +324,15 @@ impl TranscriptReader {
                 Record::UserMessage { message, .. } | Record::AssistantMessage { message, .. } => {
                     messages.push(message.clone())
                 }
-                Record::Compaction { summary, .. } => messages = vec![compaction_message(summary)],
+                Record::Compaction {
+                    summary,
+                    kept_messages,
+                    ..
+                } => {
+                    let keep = messages.split_off(messages.len().saturating_sub(*kept_messages));
+                    messages = vec![compaction_message(summary)];
+                    messages.extend(keep);
+                }
                 Record::HistoryCleared { .. } => messages.clear(),
                 Record::ToolCallsDropped { tool_use_ids } => {
                     let ids = tool_use_ids.iter().cloned().collect();
@@ -667,6 +682,7 @@ mod tests {
         w.append(&Record::Compaction {
             summary: "S".into(),
             replaced_messages: 3,
+            kept_messages: 0,
             usage: Usage::default(),
             cost_usd: None,
         })

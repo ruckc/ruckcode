@@ -542,6 +542,7 @@ mod tests {
             model_pricing: Default::default(),
             thinking_guard: None,
             tool_loop_guard: None,
+            context: None,
             ollama: None,
             temperature: None,
             top_p: None,

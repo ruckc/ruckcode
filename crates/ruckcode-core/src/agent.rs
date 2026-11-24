@@ -19,6 +19,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{make_provider_with, Config, Profile};
+use crate::context::{self, Limits};
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::{system_prompt, MAX_CLIENT_INSTRUCTIONS};
@@ -1174,8 +1175,10 @@ impl Agent {
         let mut fix_turns = 0u32;
         let mut nudges = 0u32;
         let mut tool_nudges = 0u32;
+        let mut overflow_retried = false;
+        let mut last_estimate;
         let mut tool_guard = ToolLoopDetector::default();
-        for iteration in 0..s.config.max_turn_requests {
+        for _ in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
             let (model, profile) = self.model_for(s)?;
             let system = system_prompt(
@@ -1186,13 +1189,16 @@ impl Agent {
                 Some(&profile),
             )
             .await;
-            if iteration > 0 {
-                self.compact_if_needed(s, client, cancel, &system).await;
-            }
+            let tools = build_tools(s, &profile);
+            let specs: Vec<_> = tools.iter().map(|t| t.spec()).collect();
+            // Before every request, mid-turn included: compact when the prompt is near the
+            // window (keeping the exchange in flight), then enforce the hard ceiling.
+            last_estimate = self
+                .prepare_request(s, client, cancel, &system, &specs, &profile)
+                .await;
             if cancel.is_cancelled() {
                 return Ok(StopReason::Cancelled);
             }
-            let tools = build_tools(s, &profile);
             let provider = self.provider_for(s, &profile)?;
             let guard_cfg = s
                 .config
@@ -1204,9 +1210,9 @@ impl Agent {
                 .with_override(profile.tool_loop_guard.as_ref());
             let request = Request {
                 model: model.clone(),
-                system,
+                system: system.clone(),
                 messages: normalize_messages(&s.messages),
-                tools: tools.iter().map(|t| t.spec()).collect(),
+                tools: specs,
                 max_tokens: profile.max_tokens,
                 thinking: profile.thinking.clone(),
                 temperature: profile.temperature,
@@ -1301,6 +1307,46 @@ impl Agent {
                 .map(|(i, n, v)| (i.to_string(), n.to_string(), v.clone()))
                 .collect();
             if uses.is_empty() {
+                // Out of context: the request filled the window and nothing usable came back.
+                // Compact and retry once instead of ending the turn on an empty answer.
+                if response.stop_reason == LlmStop::MaxTokens
+                    && response.message.text().trim().is_empty()
+                {
+                    let out_est = (serde_json::to_string(&response.message).map_or(0, |j| j.len())
+                        / context::BYTES_PER_TOKEN) as u64;
+                    let near = profile.context_window / 100 * 95;
+                    let used = response
+                        .usage
+                        .is_reported()
+                        .then(|| response.usage.input_tokens + response.usage.output_tokens);
+                    let full = used.is_some_and(|u| u >= near) || last_estimate + out_est >= near;
+                    if full && !overflow_retried {
+                        overflow_retried = true;
+                        s.messages.pop();
+                        client.send_event(
+                            &s.id,
+                            SessionEvent::Notice(
+                                "The model ran out of context before answering; compacting and \
+                                 retrying once."
+                                    .into(),
+                            ),
+                        );
+                        self.compact_in_flight(s, client, cancel, &system).await;
+                        continue;
+                    }
+                    if full {
+                        client.send_event(
+                            &s.id,
+                            SessionEvent::Notice(
+                                "The context window is still full after compaction, so the \
+                                 model could not answer. Use /compact or /clear, raise \
+                                 `context_window` if the model supports more, or lower the \
+                                 tool output limits in `[context]`."
+                                    .into(),
+                            ),
+                        );
+                    }
+                }
                 if let Some(fix) = self.finish_edits(s, client, &mut fix_turns).await {
                     s.push(Message::user_text(fix), UserSource::FixTurn);
                     continue;
@@ -1670,6 +1716,23 @@ impl Agent {
             }
         };
 
+        if let Some(cap) = self
+            .model_for(s)
+            .ok()
+            .and_then(|(_, p)| self.limits(s, &p).result_cap_bytes)
+        {
+            if content.len() > cap {
+                let before = content.len();
+                content = context::truncate_head_tail(&content, cap);
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Notice(format!(
+                        "{name} output truncated by ruckcode ({before} bytes, over the \
+                         per-result limit of {cap}); head and tail kept."
+                    )),
+                );
+            }
+        }
         client.send_event(
             &s.id,
             SessionEvent::ToolCallUpdate {
@@ -2049,6 +2112,16 @@ impl Agent {
         message
     }
 
+    /// The context limits of `profile` under this session's config.
+    fn limits(&self, s: &SessionState, profile: &Profile) -> Limits {
+        Limits::new(
+            &s.config.context.with_override(profile.context.as_ref()),
+            s.config.compaction_threshold,
+            profile.context_window,
+            profile.max_tokens,
+        )
+    }
+
     /// Summarize and replace history when the estimated context exceeds the threshold.
     /// Must only be called when the history is valid (no dangling tool uses).
     async fn compact_if_needed(
@@ -2061,14 +2134,11 @@ impl Agent {
         let Ok((_, profile)) = self.model_for(s) else {
             return;
         };
-        let chars = serde_json::to_string(&s.messages).map_or(0, |j| j.len()) + system.len();
-        let estimate = (chars / 4) as f64;
-        if s.messages.len() < 4
-            || estimate <= s.config.compaction_threshold * profile.context_window as f64
-        {
+        let estimate = context::estimate_tokens(system, &[], &s.messages);
+        if s.messages.len() < 4 || estimate <= self.limits(s, &profile).compact_at {
             return;
         }
-        if let Err(e) = self.compact(s, client, cancel, system, None).await {
+        if let Err(e) = self.compact(s, client, cancel, system, None, 0).await {
             client.send_event(
                 &s.id,
                 SessionEvent::Notice(format!("context compaction failed: {e:#}")),
@@ -2076,8 +2146,75 @@ impl Agent {
         }
     }
 
+    /// Compact now, keeping the exchange in flight (the latest tool calls and their results, or
+    /// the last user message) so the turn continues with a valid history.
+    async fn compact_in_flight(
+        &self,
+        s: &mut SessionState,
+        client: &Arc<dyn Client>,
+        cancel: &CancellationToken,
+        system: &str,
+    ) {
+        let keep = s.messages.len() - context::in_flight_start(&s.messages);
+        if let Err(e) = self.compact(s, client, cancel, system, None, keep).await {
+            client.send_event(
+                &s.id,
+                SessionEvent::Notice(format!("context compaction failed: {e:#}")),
+            );
+        }
+    }
+
+    /// Run before every model request: compact when the prompt estimate is over the threshold,
+    /// then truncate the largest tool results of the turn until prompt plus output reserve fit
+    /// the window. Returns the final prompt estimate in tokens.
+    async fn prepare_request(
+        &self,
+        s: &mut SessionState,
+        client: &Arc<dyn Client>,
+        cancel: &CancellationToken,
+        system: &str,
+        tools: &[ruckcode_llm::ToolSpec],
+        profile: &Profile,
+    ) -> u64 {
+        let limits = self.limits(s, profile);
+        let mut estimate = context::estimate_tokens(system, tools, &s.messages);
+        if estimate > limits.compact_at && s.messages.len() >= 4 {
+            self.compact_in_flight(s, client, cancel, system).await;
+            estimate = context::estimate_tokens(system, tools, &s.messages);
+        }
+        if !limits.fits(estimate) {
+            let from = context::turn_start(&s.messages);
+            let (steps, fits) = context::fit_to_ceiling(&mut s.messages, &limits, from, |m| {
+                context::estimate_tokens(system, tools, m)
+            });
+            if steps > 0 {
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Notice(format!(
+                        "Context nearly full: truncated tool results (head and tail kept) so \
+                         the request fits the {}-token window.",
+                        limits.window
+                    )),
+                );
+            }
+            if !fits {
+                client.send_event(
+                    &s.id,
+                    SessionEvent::Notice(
+                        "The request may still exceed the context window; use /compact or \
+                         /clear."
+                            .into(),
+                    ),
+                );
+            }
+            estimate = context::estimate_tokens(system, tools, &s.messages);
+        }
+        estimate
+    }
+
     /// Replace the history with a model-written summary (`/compact`, or automatically near the
-    /// context limit). `instructions` steer what the summary keeps. Returns how many messages
+    /// context limit). `instructions` steer what the summary keeps; the last `keep` messages
+    /// (the exchange in flight) are kept verbatim after the summary. Returns how many messages
     /// were replaced, or `None` when cancelled or the model returned nothing.
     async fn compact(
         &self,
@@ -2086,7 +2223,12 @@ impl Agent {
         cancel: &CancellationToken,
         system: &str,
         instructions: Option<&str>,
+        keep: usize,
     ) -> Result<Option<usize>> {
+        let head_len = s.messages.len().saturating_sub(keep);
+        if keep > 0 && head_len == 0 {
+            return Ok(None);
+        }
         let (model, profile) = self.model_for(s)?;
         let model_id = model.clone();
         let provider = self.provider_for(s, &profile)?;
@@ -2094,11 +2236,16 @@ impl Agent {
             Some(i) => format!("{SUMMARY_PROMPT}\n\nAdditional instructions from the user: {i}"),
             None => SUMMARY_PROMPT.to_string(),
         };
-        let mut messages = normalize_messages(&s.messages);
+        let mut messages = normalize_messages(&s.messages[..head_len]);
         match messages.last_mut() {
             Some(m) if m.role == Role::User => m.content.push(ContentBlock::Text { text: prompt }),
             _ => messages.push(Message::user_text(prompt)),
         }
+        // The summarizing request must fit the window too.
+        let limits = self.limits(s, &profile);
+        context::fit_to_ceiling(&mut messages, &limits, 0, |m| {
+            context::estimate_tokens(system, &[], m)
+        });
         let request = Request {
             model,
             system: system.to_string(),
@@ -2133,25 +2280,38 @@ impl Agent {
             .pricing_for(&model_id)
             .and_then(|p| p.cost(&response.usage));
         s.account(&response.usage, cost);
-        let summary = response.message.text();
+        let mut summary = response.message.text();
         if summary.trim().is_empty() {
             return Ok(None);
         }
-        let replaced = s.messages.len();
+        if let Some(plan) = s.last_plan.as_ref().filter(|p| !p.is_empty()) {
+            summary.push_str("\n\nCurrent plan:");
+            for (content, status) in plan {
+                summary.push_str(&format!("\n- [{status}] {content}"));
+            }
+        }
+        let tail = s.messages.split_off(head_len);
         s.messages = vec![compaction_message(&summary)];
+        s.messages.extend(tail);
         s.rec(Record::Compaction {
             summary,
-            replaced_messages: replaced,
+            replaced_messages: head_len,
+            kept_messages: keep,
             usage: response.usage,
             cost_usd: cost,
         });
         client.send_event(
             &s.id,
-            SessionEvent::Notice(format!(
-                "conversation compacted ({replaced} messages summarized)"
-            )),
+            SessionEvent::Notice(if keep > 0 {
+                format!(
+                    "conversation compacted ({head_len} messages summarized; the latest tool \
+                     results were kept)"
+                )
+            } else {
+                format!("conversation compacted ({head_len} messages summarized)")
+            }),
         );
-        Ok(Some(replaced))
+        Ok(Some(head_len))
     }
 
     /// `/clear` and `/compact [instructions]`, handled by the agent instead of the model.
@@ -2189,7 +2349,7 @@ impl Agent {
                     )
                     .await;
                     match self
-                        .compact(s, client, cancel, &system, instructions.as_deref())
+                        .compact(s, client, cancel, &system, instructions.as_deref(), 0)
                         .await
                     {
                         Ok(Some(_)) => {}
