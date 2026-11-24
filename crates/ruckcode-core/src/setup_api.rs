@@ -337,6 +337,8 @@ impl PlanInput {
                 ollama: None,
                 temperature: None,
                 top_p: None,
+                tools: None,
+                lean_tools: false,
             },
             set_default: self.set_default,
             new_key,

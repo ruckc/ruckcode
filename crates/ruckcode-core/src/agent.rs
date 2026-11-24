@@ -1160,8 +1160,15 @@ impl Agent {
             return Ok(StopReason::EndTurn);
         }
         self.start_mcp(s, client).await;
-        let system =
-            system_prompt(&s.cwd, &s.modes, &s.mode, s.client_instructions.as_deref()).await;
+        let profile = self.model_for(s).ok().map(|(_, p)| p);
+        let system = system_prompt(
+            &s.cwd,
+            &s.modes,
+            &s.mode,
+            s.client_instructions.as_deref(),
+            profile.as_ref(),
+        )
+        .await;
         self.compact_if_needed(s, client, cancel, &system).await;
         s.push(Message::user_text(text), UserSource::User);
 
@@ -1173,10 +1180,16 @@ impl Agent {
         let mut tool_guard = ToolLoopDetector::default();
         for _ in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
-            let system =
-                system_prompt(&s.cwd, &s.modes, &s.mode, s.client_instructions.as_deref()).await;
-            let tools = build_tools(s);
             let (model, profile) = self.model_for(s)?;
+            let system = system_prompt(
+                &s.cwd,
+                &s.modes,
+                &s.mode,
+                s.client_instructions.as_deref(),
+                Some(&profile),
+            )
+            .await;
+            let tools = build_tools(s, &profile);
             let specs: Vec<_> = tools.iter().map(|t| t.spec()).collect();
             // Before every request, mid-turn included: compact when the prompt is near the
             // window (keeping the exchange in flight), then enforce the hard ceiling.
@@ -2326,9 +2339,15 @@ impl Agent {
                 if s.messages.is_empty() {
                     client.send_event(&s.id, SessionEvent::Notice("nothing to compact yet".into()));
                 } else {
-                    let system =
-                        system_prompt(&s.cwd, &s.modes, &s.mode, s.client_instructions.as_deref())
-                            .await;
+                    let profile = self.model_for(s).ok().map(|(_, p)| p);
+                    let system = system_prompt(
+                        &s.cwd,
+                        &s.modes,
+                        &s.mode,
+                        s.client_instructions.as_deref(),
+                        profile.as_ref(),
+                    )
+                    .await;
                     match self
                         .compact(s, client, cancel, &system, instructions.as_deref(), 0)
                         .await
@@ -2445,7 +2464,7 @@ fn notify_blocked(s: &SessionState, client: &Arc<dyn Client>, outcomes: &[HookOu
 }
 
 /// Tools for the session's current mode.
-fn build_tools(s: &SessionState) -> Vec<Arc<dyn Tool>> {
+fn build_tools(s: &SessionState, profile: &Profile) -> Vec<Arc<dyn Tool>> {
     let mode = s.mode_def();
     let mut tools: Vec<Arc<dyn Tool>> = ruckcode_tools::builtin_tools()
         .into_iter()
@@ -2453,6 +2472,7 @@ fn build_tools(s: &SessionState) -> Vec<Arc<dyn Tool>> {
             mode.tools
                 .as_ref()
                 .is_none_or(|l| l.iter().any(|n| n == t.name()))
+                && profile.allows_builtin(t.name())
         })
         .collect();
     let targets: Vec<(String, String, String)> = s

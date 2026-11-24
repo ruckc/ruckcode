@@ -53,6 +53,22 @@ pub(crate) fn merge_extra(body: &mut Value, extra: &Value) {
     }
 }
 
+/// Append one line to the file named by `RUCKCODE_TRACE_HTTP` (request bodies and raw SSE
+/// payloads), for debugging what a server receives and sends. A no-op when unset.
+pub(crate) fn trace_http(kind: &str, payload: &str) {
+    let Some(path) = std::env::var_os("RUCKCODE_TRACE_HTTP").filter(|v| !v.is_empty()) else {
+        return;
+    };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{kind}\t{payload}");
+    }
+}
+
 /// Set top-level `temperature` / `top_p` when the request carries them.
 fn apply_sampling(body: &mut Value, req: &Request) {
     if let Some(t) = req.temperature {
@@ -91,6 +107,20 @@ pub(crate) fn build_body(req: &Request) -> Value {
             .collect();
     }
     body
+}
+
+/// The slot a streamed tool-call fragment belongs to. Normally its `index`; but Ollama numbers
+/// calls within a chunk, so complete calls arriving in separate chunks all carry index 0 (or none)
+/// with distinct ids. A fragment whose `id` differs from the one already in its slot starts a new
+/// call rather than being merged into the old one.
+fn tool_slot(tools: &BTreeMap<u64, PartialToolUse>, c: &Value) -> u64 {
+    let idx = c["index"].as_u64().unwrap_or(0);
+    match (tools.get(&idx), c["id"].as_str()) {
+        (Some(p), Some(id)) if !id.is_empty() && !p.id.is_empty() && p.id != id => {
+            tools.keys().next_back().map_or(0, |k| k + 1).max(idx + 1)
+        }
+        _ => idx,
+    }
 }
 
 /// Map an OpenAI `usage` object. `prompt_tokens` already includes the cached tokens
@@ -180,6 +210,7 @@ impl Provider for OpenAi {
             // The profile's `temperature` / `top_p` win over a duplicate in the extra body.
             apply_sampling(&mut body, &request);
         }
+        trace_http("request", &body.to_string());
         let mut rb = self
             .client
             .post(format!(
@@ -213,6 +244,7 @@ impl Provider for OpenAi {
             if ev.data.is_empty() {
                 continue;
             }
+            trace_http("chunk", &ev.data);
             let v: Value = serde_json::from_str(&ev.data)
                 .with_context(|| format!("invalid SSE payload: {}", ev.data))?;
             if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
@@ -240,7 +272,7 @@ impl Provider for OpenAi {
             }
             if let Some(calls) = delta["tool_calls"].as_array() {
                 for c in calls {
-                    let idx = c["index"].as_u64().unwrap_or(0);
+                    let idx = tool_slot(&tools, c);
                     let p = tools.entry(idx).or_default();
                     if let Some(id) = c["id"].as_str() {
                         p.id = id.to_string();
@@ -305,6 +337,27 @@ impl Provider for OpenAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_calls_in_separate_chunks_with_the_same_index_stay_apart() {
+        let mut tools = BTreeMap::new();
+        let a = json!({"index": 0, "id": "call_a", "function": {"name": "Bash"}});
+        assert_eq!(tool_slot(&tools, &a), 0);
+        tools.entry(0).or_default().id = "call_a".into();
+        // Continuation fragment (no id): same slot.
+        assert_eq!(
+            tool_slot(
+                &tools,
+                &json!({"index": 0, "function": {"arguments": "{}"}})
+            ),
+            0
+        );
+        // Same id again: same slot.
+        assert_eq!(tool_slot(&tools, &a), 0);
+        // A different id at index 0 (or no index at all) is a new call.
+        let b = json!({"id": "call_b", "function": {"name": "Read"}});
+        assert_eq!(tool_slot(&tools, &b), 1);
+    }
 
     #[test]
     fn usage_maps_cached_tokens() {

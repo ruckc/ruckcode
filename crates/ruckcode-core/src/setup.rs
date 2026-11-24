@@ -546,6 +546,8 @@ mod tests {
             ollama: None,
             temperature: None,
             top_p: None,
+            tools: None,
+            lean_tools: false,
         }
     }
 
