@@ -12,7 +12,7 @@ on:
 
 permissions:
   contents: write
-  actions: write # to redeploy the Pages download page when the latest release's notes change
+  actions: write   # to redeploy the Pages download page when the latest release's notes change
 
 jobs:
   edit:

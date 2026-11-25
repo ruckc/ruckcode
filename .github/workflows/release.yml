@@ -97,7 +97,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
-      group: release # shared with ci.yml's release-publish / release-pages
+      group: release   # shared with ci.yml's release-publish / release-pages
       cancel-in-progress: false
     permissions:
       pages: write
