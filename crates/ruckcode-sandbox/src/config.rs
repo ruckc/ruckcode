@@ -117,6 +117,9 @@ pub struct SandboxConfig {
     pub mask_env_files: bool,
     /// In namespace mode, give the command a private `/tmp` that lives as long as the session.
     pub private_tmp: bool,
+    /// Create missing `cache_paths` entries under `$HOME` (owner-only, never through a symlink
+    /// leaving `$HOME`) so tools such as npm can populate them inside the sandbox.
+    pub create_cache_dirs: bool,
 }
 
 impl Default for SandboxConfig {
@@ -135,6 +138,7 @@ impl Default for SandboxConfig {
             allowed_ports: vec![],
             mask_env_files: t(),
             private_tmp: t(),
+            create_cache_dirs: t(),
         }
     }
 }

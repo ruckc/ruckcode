@@ -173,6 +173,52 @@ async fn fs_checks(ns: NamespaceMode) {
     assert_eq!(run(&sb, &c, &e.proj, "exit 7").await.code, 7);
 }
 
+/// A tool cache missing from $HOME is created outside the sandbox and writable inside it.
+async fn cache_dir_checks(ns: NamespaceMode) {
+    let e = env();
+    let sb = sandbox(&e).await;
+    let c = cfg(ns, NetworkMode::Full);
+    if !enforcing(&sb, &c) {
+        return;
+    }
+    if ns == NamespaceMode::Required && !sb.plan(&c).layers.namespaces {
+        skip("user namespaces unavailable here");
+        return;
+    }
+    let h = e.home.display();
+    assert!(!e.home.join(".npm").exists());
+    let r = run(
+        &sb,
+        &c,
+        &e.proj,
+        &format!("mkdir -p {h}/.npm/x && touch {h}/.npm/x/f && echo cache-ok"),
+    )
+    .await;
+    assert_eq!(r.code, 0, "{} {}", r.text, r.notes);
+    assert!(r.text.contains("cache-ok"));
+    assert!(e.home.join(".npm/x/f").exists());
+    assert!(
+        r.notes.contains("created missing tool cache"),
+        "{}",
+        r.notes
+    );
+}
+
+#[tokio::test]
+async fn missing_cache_dir_is_created_and_writable_auto() {
+    cache_dir_checks(NamespaceMode::Auto).await;
+}
+
+#[tokio::test]
+async fn missing_cache_dir_is_created_and_writable_namespaces() {
+    cache_dir_checks(NamespaceMode::Required).await;
+}
+
+#[tokio::test]
+async fn missing_cache_dir_is_created_and_writable_landlock_only() {
+    cache_dir_checks(NamespaceMode::Off).await;
+}
+
 #[tokio::test]
 async fn filesystem_confinement_auto() {
     fs_checks(NamespaceMode::Auto).await;

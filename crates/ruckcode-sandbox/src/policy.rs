@@ -2,7 +2,7 @@
 
 use crate::config::{NetworkMode, SandboxConfig, DEFAULT_DENY_READ};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Which enforcement layers the launcher must apply.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,7 +202,259 @@ pub fn deny_list(
     denies
 }
 
+/// What happened to one configured writable path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathState {
+    /// Exists and is writable inside the sandbox.
+    Active,
+    /// Did not exist; was created (cache dirs only) and is writable.
+    Created,
+    /// Does not exist and is not writable.
+    Missing,
+    /// Deliberately not used (unsafe, irrelevant on this platform, or could not be created).
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathStatus {
+    /// `"cache"` or `"extra_write"`.
+    pub kind: String,
+    /// The entry as configured.
+    pub entry: String,
+    pub path: PathBuf,
+    pub state: PathState,
+    pub reason: Option<String>,
+}
+
+impl PathStatus {
+    pub fn writable(&self) -> bool {
+        matches!(self.state, PathState::Active | PathState::Created)
+    }
+
+    /// A note for the model/user when something needs attention (or was done on their behalf).
+    pub fn note(&self) -> Option<String> {
+        let why = self.reason.as_deref().unwrap_or("");
+        match (self.kind.as_str(), self.state) {
+            (_, PathState::Created) => Some(format!(
+                "[sandbox] created missing tool cache directory {} (sandbox.create_cache_dirs).",
+                self.path.display()
+            )),
+            ("extra_write", PathState::Missing | PathState::Skipped) => Some(format!(
+                "[sandbox] extra_write_paths entry {} does not exist; it is not writable ({why}).",
+                self.entry
+            )),
+            ("cache", PathState::Skipped) => Some(format!(
+                "[sandbox] cache path {} is not writable: {why}.",
+                self.entry
+            )),
+            _ => None,
+        }
+    }
+
+    /// Whether the note reports a problem (as opposed to a courtesy).
+    pub fn is_problem(&self) -> bool {
+        matches!(self.state, PathState::Missing | PathState::Skipped) && self.note().is_some()
+    }
+}
+
+#[cfg(unix)]
+fn owned_by_me(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: geteuid has no preconditions.
+    m.uid() == unsafe { libc::geteuid() }
+}
+#[cfg(not(unix))]
+fn owned_by_me(_: &std::fs::Metadata) -> bool {
+    true
+}
+
+fn make_private_dir(leaf: &Path) -> std::io::Result<()> {
+    if let Some(parent) = leaf.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    match b.create(leaf) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        r => r,
+    }
+}
+
+/// Resolve a cache entry that lives under `$HOME` (`rel` is relative to the canonical `home`),
+/// creating it when `create` is set and it is safe to.
+fn resolve_home_cache(
+    entry: &str,
+    rel: &Path,
+    home: &Path,
+    create: bool,
+) -> (PathBuf, PathState, Option<String>) {
+    let skip = |p: PathBuf, why: String| (p, PathState::Skipped, Some(why));
+    let mut cur = home.to_path_buf();
+    let comps: Vec<_> = rel.components().collect();
+    for (i, comp) in comps.iter().enumerate() {
+        let Component::Normal(name) = comp else {
+            return skip(cur, format!("unsupported path component in {entry}"));
+        };
+        let next = cur.join(name);
+        match std::fs::symlink_metadata(&next) {
+            Ok(m) if m.file_type().is_symlink() => match next.canonicalize() {
+                Ok(t) if t.starts_with(home) => cur = t,
+                Ok(t) => {
+                    return skip(
+                        next,
+                        format!(
+                            "it is a symlink leaving $HOME (to {}); list the target in sandbox.extra_write_paths if that is intended",
+                            t.display()
+                        ),
+                    )
+                }
+                Err(_) => return skip(next, "it is a dangling symlink".into()),
+            },
+            Ok(_) => cur = next,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let mut leaf = next;
+                for c in &comps[i + 1..] {
+                    leaf.push(c);
+                }
+                if !create {
+                    return (
+                        leaf,
+                        PathState::Missing,
+                        Some("does not exist; created on the first sandboxed command".into()),
+                    );
+                }
+                return match make_private_dir(&leaf) {
+                    Ok(()) => (leaf, PathState::Created, None),
+                    Err(e) => skip(leaf, format!("could not create it: {e}")),
+                };
+            }
+            Err(e) => return skip(next, format!("cannot inspect it: {e}")),
+        }
+    }
+    (cur, PathState::Active, None)
+}
+
+/// The state of every configured cache path and `extra_write_paths` entry. With `create`, missing
+/// cache directories under `$HOME` are created (owner-only); nothing else is ever created.
+pub fn path_report(
+    cfg: &SandboxConfig,
+    home: Option<&Path>,
+    project: &Path,
+    create: bool,
+) -> Vec<PathStatus> {
+    let canon_home = home
+        .map(canon)
+        .filter(|h| h.is_dir() && h != Path::new("/"));
+    let owned = canon_home
+        .as_ref()
+        .and_then(|h| std::fs::metadata(h).ok())
+        .is_some_and(|m| owned_by_me(&m));
+    let mut out = Vec::new();
+    for c in &cfg.cache_paths {
+        let p = expand_path(c, home, project);
+        let mk = |path: PathBuf, state, reason: Option<String>| PathStatus {
+            kind: "cache".into(),
+            entry: c.clone(),
+            path,
+            state,
+            reason,
+        };
+        let existing = |p: &Path, why: &str| {
+            if p.exists() {
+                mk(canon(p), PathState::Active, None)
+            } else {
+                mk(p.to_path_buf(), PathState::Missing, Some(why.to_string()))
+            }
+        };
+        if !cfg.create_cache_dirs {
+            out.push(existing(
+                &p,
+                "does not exist (sandbox.create_cache_dirs = false)",
+            ));
+            continue;
+        }
+        let rel = canon_home.as_ref().and_then(|ch| {
+            [Some(ch.as_path()), home]
+                .into_iter()
+                .flatten()
+                .find_map(|h| p.strip_prefix(h).ok())
+                .filter(|r| !r.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+        });
+        let Some(rel) = rel else {
+            out.push(existing(
+                &p,
+                "does not exist and is outside $HOME, so it is not created",
+            ));
+            continue;
+        };
+        let ch = canon_home.as_ref().unwrap();
+        if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+            out.push(mk(p, PathState::Skipped, Some("contains `..`".into())));
+            continue;
+        }
+        let target = ch.join(&rel);
+        if rel.starts_with("Library")
+            && !cfg!(target_os = "macos")
+            && std::fs::symlink_metadata(&target).is_err()
+        {
+            out.push(mk(
+                target,
+                PathState::Skipped,
+                Some("macOS-only location; not created on this platform".into()),
+            ));
+            continue;
+        }
+        let missing = std::fs::symlink_metadata(&target).is_err();
+        if create && missing && !owned {
+            out.push(mk(
+                target,
+                PathState::Skipped,
+                Some("does not exist and $HOME is not owned by the current user, so it is not created".into()),
+            ));
+            continue;
+        }
+        let (path, state, reason) = resolve_home_cache(c, &rel, ch, create);
+        out.push(mk(path, state, reason));
+    }
+    for s in &cfg.extra_write_paths {
+        let p = canon(&expand_path(s, home, project));
+        let (state, reason) = if p.exists() {
+            (PathState::Active, None)
+        } else {
+            (
+                PathState::Missing,
+                Some("create it, or remove the entry".to_string()),
+            )
+        };
+        out.push(PathStatus {
+            kind: "extra_write".into(),
+            entry: s.clone(),
+            path: p,
+            state,
+            reason,
+        });
+    }
+    out
+}
+
 pub fn build_policy(i: &BuildInput) -> Policy {
+    build_policy_report(i).0
+}
+
+/// Creates missing cache directories (in the calling, unsandboxed process) and builds the policy.
+pub fn build_policy_report(i: &BuildInput) -> (Policy, Vec<PathStatus>) {
+    let project = canon(i.project_root);
+    let report = path_report(i.cfg, i.home.as_deref(), &project, true);
+    (build_policy_with(i, &report), report)
+}
+
+fn build_policy_with(i: &BuildInput, report: &[PathStatus]) -> Policy {
     let home = i.home.as_deref();
     let project = canon(i.project_root);
     let cwd = canon(i.cwd);
@@ -254,18 +506,12 @@ pub fn build_policy(i: &BuildInput) -> Policy {
         }
     }
     write_roots.extend(temps.iter().map(|t| canon(t)));
-    for c in &i.cfg.cache_paths {
-        let p = exp(c);
-        if p.exists() {
-            write_roots.push(p);
-        }
-    }
-    for s in &i.cfg.extra_write_paths {
-        let p = exp(s);
-        if p.exists() {
-            write_roots.push(p);
-        }
-    }
+    write_roots.extend(
+        report
+            .iter()
+            .filter(|s| s.writable())
+            .map(|s| s.path.clone()),
+    );
     let mut write_paths: Vec<PathBuf> = Vec::new();
     for r in write_roots {
         if r.exists() {
@@ -451,5 +697,137 @@ mod tests {
         assert_eq!(expand_path("~/x", Some(home), proj), Path::new("/home/u/x"));
         assert_eq!(expand_path("rel", Some(home), proj), Path::new("/p/rel"));
         assert_eq!(expand_path("/abs", Some(home), proj), Path::new("/abs"));
+    }
+
+    fn cache_cfg(entries: &[&str]) -> SandboxConfig {
+        SandboxConfig {
+            cache_paths: entries.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn missing_cache_dir_is_created_private_and_writable() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let cfg = cache_cfg(&["~/.npm", "~/.local/share/pnpm"]);
+        let (p, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        let h = canon(home.path());
+        assert!(h.join(".npm").is_dir() && h.join(".local/share/pnpm").is_dir());
+        assert!(p.write_paths.contains(&h.join(".npm")));
+        assert!(p.write_paths.contains(&h.join(".local/share/pnpm")));
+        assert!(report.iter().all(|s| s.state == PathState::Created));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(h.join(".npm"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        // A second build sees them as active.
+        let (_, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        assert!(report.iter().all(|s| s.state == PathState::Active));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_cache_dir_leaving_home_is_skipped() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), home.path().join(".cache")).unwrap();
+        // A symlinked parent: ~/.local -> outside, entry ~/.local/share/pnpm must not be created.
+        std::os::unix::fs::symlink(outside.path(), home.path().join(".local")).unwrap();
+        let cfg = cache_cfg(&["~/.cache", "~/.local/share/pnpm"]);
+        let (p, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        assert!(
+            report.iter().all(|s| s.state == PathState::Skipped),
+            "{report:?}"
+        );
+        assert!(!p
+            .write_paths
+            .iter()
+            .any(|w| w.starts_with(canon(outside.path()))));
+        assert!(!outside.path().join("share").exists());
+        assert!(report[0].note().unwrap().contains("not writable"));
+    }
+
+    #[test]
+    fn entries_outside_home_are_never_created() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let target = other.path().join("cache");
+        let cfg = cache_cfg(&[&target.display().to_string(), "~/../escape"]);
+        let (p, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        assert!(!target.exists());
+        assert!(!home.path().parent().unwrap().join("escape").exists());
+        assert!(report.iter().all(|s| !s.writable()));
+        assert!(!p.write_paths.contains(&target));
+    }
+
+    #[test]
+    fn create_cache_dirs_off_keeps_old_behaviour() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".cargo")).unwrap();
+        let mut cfg = cache_cfg(&["~/.npm", "~/.cargo"]);
+        cfg.create_cache_dirs = false;
+        let (p, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        let h = canon(home.path());
+        assert!(!h.join(".npm").exists());
+        assert_eq!(report[0].state, PathState::Missing);
+        assert!(p.write_paths.contains(&h.join(".cargo")));
+        assert!(!p.write_paths.contains(&h.join(".npm")));
+    }
+
+    #[test]
+    fn platform_irrelevant_cache_dirs_are_skipped() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let cfg = cache_cfg(&["~/Library/Caches"]);
+        let (_, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        if cfg!(target_os = "macos") {
+            assert_eq!(report[0].state, PathState::Created);
+        } else {
+            assert_eq!(report[0].state, PathState::Skipped);
+            assert!(!home.path().join("Library").exists());
+        }
+    }
+
+    #[test]
+    fn missing_extra_write_path_is_reported_not_created() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let cfg = SandboxConfig {
+            cache_paths: vec![],
+            extra_write_paths: vec!["~/.config/mytool".into(), "/nonexistent-rc-x".into()],
+            ..Default::default()
+        };
+        let (p, report) = build_policy_report(&input(&cfg, proj.path(), home.path()));
+        assert!(!home.path().join(".config/mytool").exists());
+        assert_eq!(report.len(), 2);
+        for s in &report {
+            assert_eq!(s.state, PathState::Missing);
+            assert!(s.is_problem());
+            assert!(s
+                .note()
+                .unwrap()
+                .contains("does not exist; it is not writable"));
+        }
+        assert!(report[1].note().unwrap().contains("/nonexistent-rc-x"));
+        assert!(!p.write_paths.iter().any(|w| w.ends_with("mytool")));
+    }
+
+    #[test]
+    fn dry_run_reports_without_creating() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let cfg = cache_cfg(&["~/.npm"]);
+        let r = path_report(&cfg, Some(home.path()), proj.path(), false);
+        assert_eq!(r[0].state, PathState::Missing);
+        assert!(!home.path().join(".npm").exists());
     }
 }
