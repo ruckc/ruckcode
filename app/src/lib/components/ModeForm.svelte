@@ -131,8 +131,10 @@
             <Button
               variant="outlined"
               disabled={idDraft.trim() === m.id || !!idProblem}
-              onclick={() => editor.rename(m.id, idDraft.trim())}>Rename</Button
+              onclick={() => editor.rename(m.id, idDraft.trim())}
             >
+              Rename
+            </Button>
           </div>
         </div>
       </div>
@@ -172,20 +174,25 @@
             intent="neutral"
             onclick={() =>
               (m.tools = [...builtin.filter((t) => t.readOnly).map((t) => t.name), ...extraTools])}
-            >Read-only only</Button
           >
+            Read-only only
+          </Button>
           <Button
             size="sm"
             variant="outlined"
             intent="neutral"
-            onclick={() => (m.tools = [...builtinNames, ...extraTools])}>Select all</Button
+            onclick={() => (m.tools = [...builtinNames, ...extraTools])}
           >
+            Select all
+          </Button>
           <Button
             size="sm"
             variant="outlined"
             intent="neutral"
-            onclick={() => (m.tools = [...extraTools])}>Select none</Button
+            onclick={() => (m.tools = [...extraTools])}
           >
+            Select none
+          </Button>
         </div>
         <ul class="tools" aria-label="Built-in tools">
           {#each builtin as t (t.name)}
@@ -350,17 +357,19 @@
             onclick={() => {
               editor.remove(m.id);
               confirmDelete = false;
-            }}>Delete mode</Button
+            }}
           >
-          <Button variant="outlined" intent="neutral" onclick={() => (confirmDelete = false)}
-            >Cancel</Button
-          >
+            Delete mode
+          </Button>
+          <Button variant="outlined" intent="neutral" onclick={() => (confirmDelete = false)}>
+            Cancel
+          </Button>
         </div>
       {:else}
         <div class="row">
-          <Button variant="outlined" intent="danger" onclick={() => (confirmDelete = true)}
-            >Delete mode...</Button
-          >
+          <Button variant="outlined" intent="danger" onclick={() => (confirmDelete = true)}>
+            Delete mode...
+          </Button>
         </div>
       {/if}
     </section>

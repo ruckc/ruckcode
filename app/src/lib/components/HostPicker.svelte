@@ -235,9 +235,9 @@
           {:else if rc && !rc.installed}
             <span class="warn">rc is not installed in {distro}.</span>
           {:else if rc && !matches}
-            <span class="warn"
-              >rc {rc.version ?? '(unknown version)'} is installed, but this app is {rc.expected}.</span
-            >
+            <span class="warn">
+              rc {rc.version ?? '(unknown version)'} is installed, but this app is {rc.expected}.
+            </span>
           {/if}
           {#if !checking && !installing && (checkError || installError || (rc && !(rc.installed && matches)))}
             <Button type="button" size="sm" variant="outlined" onclick={reinstall}>

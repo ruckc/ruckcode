@@ -83,15 +83,18 @@
               onclick={() => {
                 confirmForce = false;
                 void updates.restartNow(true);
-              }}>Interrupt the agent and restart</Button
+              }}
             >
+              Interrupt the agent and restart
+            </Button>
             <Button variant="outlined" onclick={() => (confirmForce = false)}>Cancel</Button>
           {:else}
             <Button
               disabled={updates.phase === 'installing'}
               onclick={() => void updates.restartNow()}
-              >{updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}</Button
             >
+              {updates.phase === 'installing' ? 'Restarting…' : 'Restart now'}
+            </Button>
           {/if}
           <Button variant="outlined" onclick={() => updates.later()}>Later</Button>
         {:else if updates.phase === 'available'}

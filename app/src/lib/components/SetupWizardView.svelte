@@ -250,8 +250,10 @@
                     variant="minimal"
                     intent="neutral"
                     aria-label={`Remove ${m}`}
-                    onclick={() => w.toggleModel(m)}>Remove</Button
+                    onclick={() => w.toggleModel(m)}
                   >
+                    Remove
+                  </Button>
                 </li>
               {/each}
             </ul>
@@ -344,8 +346,10 @@
           type="button"
           variant="outlined"
           disabled={w.stepIndex === 0 || w.busy}
-          onclick={() => w.back()}>Back</Button
+          onclick={() => w.back()}
         >
+          Back
+        </Button>
         <span class="spacer"></span>
         <Button type="submit" disabled={!w.canNext}>{nextLabel}</Button>
       </div>
