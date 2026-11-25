@@ -147,7 +147,7 @@ jobs:
           cargo test -p ruckcode-sandbox --test enforcement --locked -- --nocapture --test-threads=1
           cargo test -p ruckcode-cli --test sandbox_cli --locked -- --nocapture
 
-  # Portability smoke test for the other release platforms.
+      # Portability smoke test for the other release platforms.
       - name: Save cargo cache
         if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -514,14 +514,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-24.04 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
           # Apple Silicon runner; the x86_64 build is cross-compiled (Apple clang
           # targets both) so it does not depend on scarce Intel runners.
-          - { target: aarch64-apple-darwin,      os: macos-15 }
-          - { target: x86_64-apple-darwin,       os: macos-15 }
-          - { target: x86_64-pc-windows-msvc,    os: windows-2022 }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15 }
+          - { target: x86_64-pc-windows-msvc, os: windows-2022 }
     env:
       VERSION: ${{ needs.release-version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -631,7 +631,7 @@ jobs:
           # - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, bundles: "appimage,deb" }
           # - { target: aarch64-apple-darwin,     os: macos-15,     bundles: "app,dmg" }
           # - { target: x86_64-apple-darwin,      os: macos-15,     bundles: "app,dmg" }
-          - { target: x86_64-pc-windows-msvc,   os: windows-2022, bundles: "msi" }
+          - { target: x86_64-pc-windows-msvc, os: windows-2022, bundles: "msi" }
     env:
       VERSION: ${{ needs.release-version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -1111,7 +1111,19 @@ jobs:
   # release so CLI and app versions stay consistent.
   release-publish:
     needs:
-      [fmt, clippy, test, check, audit, site, app, release-version, release-rc, release-app, release-site]
+      [
+        fmt,
+        clippy,
+        test,
+        check,
+        audit,
+        site,
+        app,
+        release-version,
+        release-rc,
+        release-app,
+        release-site,
+      ]
     if: ${{
       !cancelled() &&
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&

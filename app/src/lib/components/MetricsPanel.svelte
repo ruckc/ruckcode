@@ -96,11 +96,11 @@
           {@const h = (r.durationMs / maxDur) * ph}
           {@const th = r.ttftMs === null ? 0 : (Math.min(r.ttftMs, r.durationMs) / maxDur) * ph}
           <g>
-            <title
-              >Request {r.requestId}: {formatDuration(r.durationMs)}{r.ttftMs !== null
+            <title>
+              Request {r.requestId}: {formatDuration(r.durationMs)}{r.ttftMs !== null
                 ? `, TTFT ${formatDuration(r.ttftMs)}`
-                : ''}</title
-            >
+                : ''}
+            </title>
             <rect
               class="bar"
               x={L + i * barW}
@@ -137,9 +137,9 @@
             <text class="tick" x={L - 6} y={T + 4} text-anchor="end">{formatTokens(s.max)}</text>
             <text class="tick" x={L - 6} y={T + ph} text-anchor="end">0</text>
             <text class="tick" x={L} y={H - 6}>request 1</text>
-            <text class="tick" x={W - R} y={H - 6} text-anchor="end"
-              >request {m.requests.length}</text
-            >
+            <text class="tick" x={W - R} y={H - 6} text-anchor="end">
+              request {m.requests.length}
+            </text>
             <polyline class="series {s.cls}" points={line(s.key, s.max)} />
           </svg>
         </figure>

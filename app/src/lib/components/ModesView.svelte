@@ -158,8 +158,9 @@
         </p>
       {/if}
       {#if editor.problem}<Callout intent="danger">{editor.problem}</Callout>{/if}
-      {#if editor.initialized}<Callout intent="success" role="status">{editor.initialized}</Callout
-        >{/if}
+      {#if editor.initialized}<Callout intent="success" role="status">
+          {editor.initialized}
+        </Callout>{/if}
       <RadioGroup label="Template" options={initOptions} bind:value={initKind} />
       {#if initKind === 'subset'}
         <CheckboxGroup
@@ -178,26 +179,29 @@
             <Button
               intent="danger"
               disabled={editor.busy || (initKind === 'subset' && !subset.length)}
-              onclick={() => create(true)}>Overwrite modes.toml</Button
+              onclick={() => create(true)}
             >
-            <Button variant="outlined" intent="neutral" onclick={() => (confirmOverwrite = false)}
-              >Cancel</Button
-            >
+              Overwrite modes.toml
+            </Button>
+            <Button variant="outlined" intent="neutral" onclick={() => (confirmOverwrite = false)}>
+              Cancel
+            </Button>
           {:else}
-            <Button variant="outlined" intent="danger" onclick={() => (confirmOverwrite = true)}
-              >Recreate from template...</Button
-            >
+            <Button variant="outlined" intent="danger" onclick={() => (confirmOverwrite = true)}>
+              Recreate from template...
+            </Button>
           {/if}
           <Button variant="outlined" intent="neutral" onclick={() => editor.load()}>Reload</Button>
         {:else}
           <Button
             disabled={editor.busy || (initKind === 'subset' && !subset.length)}
             onclick={() => create(false)}
-            >{editor.busy ? 'Creating...' : 'Create modes.toml'}</Button
           >
-          <Button variant="outlined" intent="neutral" onclick={() => editor.startBlank()}
-            >Start from a blank file</Button
-          >
+            {editor.busy ? 'Creating...' : 'Create modes.toml'}
+          </Button>
+          <Button variant="outlined" intent="neutral" onclick={() => editor.startBlank()}>
+            Start from a blank file
+          </Button>
         {/if}
       </div>
     </div>
@@ -209,28 +213,32 @@
       </div>
       <div class="status" aria-live="polite">
         {#if editor.dirty}<Badge intent="warning">Unsaved changes</Badge>{/if}
-        {#if editor.errors}<Badge intent="danger" data-testid="error-count"
-            >{editor.errors} error{editor.errors === 1 ? '' : 's'}</Badge
-          >{/if}
-        {#if editor.warnings}<Badge intent="warning" data-testid="warning-count"
-            >{editor.warnings} warning{editor.warnings === 1 ? '' : 's'}</Badge
-          >{/if}
-        {#if !editor.errors && !editor.warnings && !editor.dirty}<Badge intent="success"
-            >No problems</Badge
-          >{/if}
+        {#if editor.errors}<Badge intent="danger" data-testid="error-count">
+            {editor.errors} error{editor.errors === 1 ? '' : 's'}
+          </Badge>{/if}
+        {#if editor.warnings}<Badge intent="warning" data-testid="warning-count">
+            {editor.warnings} warning{editor.warnings === 1 ? '' : 's'}
+          </Badge>{/if}
+        {#if !editor.errors && !editor.warnings && !editor.dirty}<Badge intent="success">
+            No problems
+          </Badge>{/if}
       </div>
       <div class="actions">
         <Button
           variant="outlined"
           intent="neutral"
           disabled={!editor.dirty || editor.busy}
-          onclick={() => editor.discard()}>Discard changes</Button
+          onclick={() => editor.discard()}
         >
+          Discard changes
+        </Button>
         <Button
           disabled={!editor.canReview}
           title={editor.errors ? 'Fix the errors first' : ''}
-          onclick={() => editor.review()}>Review &amp; save</Button
+          onclick={() => editor.review()}
         >
+          Review &amp; save
+        </Button>
       </div>
     </header>
 
@@ -244,9 +252,9 @@
           Mode changes apply to new sessions; running sessions keep the modes they started with.
           {#snippet actions()}
             {#if canReconnect}
-              <Button size="sm" variant="outlined" onclick={() => onreconnect?.()}
-                >Reconnect the agent now</Button
-              >
+              <Button size="sm" variant="outlined" onclick={() => onreconnect?.()}>
+                Reconnect the agent now
+              </Button>
             {/if}
           {/snippet}
         </Callout>
@@ -259,8 +267,9 @@
         {#if editor.problem}<Callout intent="danger">{editor.problem}</Callout>{/if}
         {#if editor.diff}
           <p class="muted">
-            Only the lines below change; comments and formatting elsewhere in <code>modes.toml</code
-            > stay as they are.
+            Only the lines below change; comments and formatting elsewhere in <code>
+              modes.toml
+            </code> stay as they are.
           </p>
           <PatchText text={editor.diff} label="Changes to modes.toml" maxHeight="62vh" />
         {:else}
@@ -278,11 +287,13 @@
             variant="outlined"
             intent="neutral"
             disabled={editor.busy}
-            onclick={() => editor.backToEdit()}>Back to editing</Button
+            onclick={() => editor.backToEdit()}
           >
-          <Button disabled={editor.busy} onclick={() => editor.save()}
-            >{editor.busy ? 'Saving...' : 'Save modes.toml'}</Button
-          >
+            Back to editing
+          </Button>
+          <Button disabled={editor.busy} onclick={() => editor.save()}>
+            {editor.busy ? 'Saving...' : 'Save modes.toml'}
+          </Button>
         </div>
       </div>
     {:else}
@@ -292,8 +303,10 @@
             variant={editor.selected === null ? 'tonal' : 'outlined'}
             intent="neutral"
             aria-current={editor.selected === null ? 'true' : undefined}
-            onclick={() => editor.select(null)}>Overview &amp; flow</Button
+            onclick={() => editor.select(null)}
           >
+            Overview &amp; flow
+          </Button>
           <ReorderList
             label="Modes list"
             items={editor.doc.modes}
@@ -337,16 +350,18 @@
                 variant="outlined"
                 intent="neutral"
                 onclick={() => editor.selected && editor.duplicate(editor.selected)}
-                >Duplicate</Button
               >
+                Duplicate
+              </Button>
               <Button
                 size="sm"
                 variant="outlined"
                 intent="neutral"
                 disabled={editor.selectedMode.id === editor.doc.defaultMode}
                 onclick={() => editor.selected && editor.setDefault(editor.selected)}
-                >Make default</Button
               >
+                Make default
+              </Button>
             </div>
             <ModeForm {editor} />
           {:else}
@@ -379,9 +394,9 @@
                   {@const id = issueMode(i.path)}
                   <li>
                     <Badge intent={sevIntent(i.severity)} dot={false}>{i.severity}</Badge>
-                    {#if id}<Button size="sm" variant="minimal" onclick={() => editor.select(id)}
-                        >{id}</Button
-                      >{/if}
+                    {#if id}<Button size="sm" variant="minimal" onclick={() => editor.select(id)}>
+                        {id}
+                      </Button>{/if}
                     {i.message}
                   </li>
                 {/each}

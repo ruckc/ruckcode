@@ -71,16 +71,18 @@
 <nav class="sidebar" aria-label="Projects and sessions">
   <section class="project">
     <div class="phead">
-      <strong class="pname" title={current?.path ?? cwd}
-        >{(current?.path ?? cwd) ? baseName(current?.path ?? cwd) : 'No project'}</strong
-      >
+      <strong class="pname" title={current?.path ?? cwd}>
+        {(current?.path ?? cwd) ? baseName(current?.path ?? cwd) : 'No project'}
+      </strong>
       {#if connected}
         <Button
           size="sm"
           variant="outlined"
           aria-expanded={picking}
-          onclick={() => (picking = !picking)}>Switch project</Button
+          onclick={() => (picking = !picking)}
         >
+          Switch project
+        </Button>
       {/if}
     </div>
     {#if current && connected}
@@ -153,10 +155,10 @@
                   rcPath = r.rcPath ?? '';
                   onconnect(r);
                 }}
-                >{baseName(r.path)}
-                <span class="muted">{hostLabel(r) ? `${hostLabel(r)} · ` : ''}{r.path}</span
-                ></button
               >
+                {baseName(r.path)}
+                <span class="muted">{hostLabel(r) ? `${hostLabel(r)} · ` : ''}{r.path}</span>
+              </button>
               <Button
                 variant="minimal"
                 intent="neutral"

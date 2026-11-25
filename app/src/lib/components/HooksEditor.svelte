@@ -114,9 +114,9 @@
                   style="font-family: var(--tr-font-mono)"
                 />
               </div>
-              {#each notesAt(info.name, i, 'run') as m (m.message)}<span class="msg {m.severity}"
-                  >{m.message}</span
-                >{/each}
+              {#each notesAt(info.name, i, 'run') as m (m.message)}<span class="msg {m.severity}">
+                  {m.message}
+                </span>{/each}
               {#if info.glob || h.glob}
                 <Input
                   size="sm"
@@ -130,9 +130,11 @@
                   placeholder="*.rs"
                   style="font-family: var(--tr-font-mono)"
                 />
-                {#each notesAt(info.name, i, 'glob') as m (m.message)}<span class="msg {m.severity}"
-                    >{m.message}</span
-                  >{/each}
+                {#each notesAt(info.name, i, 'glob') as m (m.message)}<span
+                    class="msg {m.severity}"
+                  >
+                    {m.message}
+                  </span>{/each}
               {/if}
               {#if info.matcher || h.matcher}
                 <Input
@@ -148,8 +150,10 @@
                   style="font-family: var(--tr-font-mono)"
                 />
                 {#each notesAt(info.name, i, 'matcher') as m (m.message)}<span
-                    class="msg {m.severity}">{m.message}</span
-                  >{/each}
+                    class="msg {m.severity}"
+                  >
+                    {m.message}
+                  </span>{/each}
               {/if}
               <div>
                 <!-- The visible text is separate from the accessible name ("On failure for <event> hook N"),
@@ -179,8 +183,10 @@
                   oninput={(e) => (h.maxFixTurns = e.currentTarget.valueAsNumber || 0)}
                 />
                 {#each notesAt(info.name, i, 'maxFixTurns') as m (m.message)}<span
-                    class="msg {m.severity}">{m.message}</span
-                  >{/each}
+                    class="msg {m.severity}"
+                  >
+                    {m.message}
+                  </span>{/each}
               {/if}
               <Input
                 size="sm"
@@ -194,8 +200,10 @@
                 oninput={(e) => (h.timeoutSecs = e.currentTarget.valueAsNumber || 0)}
               />
               {#each notesAt(info.name, i, 'timeoutSecs') as m (m.message)}<span
-                  class="msg {m.severity}">{m.message}</span
-                >{/each}
+                  class="msg {m.severity}"
+                >
+                  {m.message}
+                </span>{/each}
             </div>
             {#if !readonly}
               <div class="ctl">
@@ -223,8 +231,10 @@
                   intent="danger"
                   icon="trash"
                   aria-label={`Remove ${info.name} hook ${i + 1}`}
-                  onclick={() => remove(info.name, i)}>Remove</Button
+                  onclick={() => remove(info.name, i)}
                 >
+                  Remove
+                </Button>
               </div>
             {/if}
           </li>
@@ -232,9 +242,9 @@
       </ol>
     {/if}
     {#if !readonly}
-      <Button size="sm" variant="outlined" icon="plus" onclick={() => add(info.name)}
-        >Add {info.name} hook</Button
-      >
+      <Button size="sm" variant="outlined" icon="plus" onclick={() => add(info.name)}>
+        Add {info.name} hook
+      </Button>
     {/if}
   </details>
 {/each}

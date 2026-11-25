@@ -110,15 +110,17 @@
               Use for profile
             </Button>
             {#if confirmRemove === k.name}
-              <Button size="sm" intent="danger" disabled={busy} onclick={() => remove(k.name)}
-                >Confirm remove</Button
-              >
+              <Button size="sm" intent="danger" disabled={busy} onclick={() => remove(k.name)}>
+                Confirm remove
+              </Button>
               <Button
                 size="sm"
                 variant="minimal"
                 intent="neutral"
-                onclick={() => (confirmRemove = null)}>Cancel</Button
+                onclick={() => (confirmRemove = null)}
               >
+                Cancel
+              </Button>
             {:else}
               <Button
                 size="sm"
@@ -126,8 +128,10 @@
                 intent="danger"
                 aria-label={`Remove ${k.name}`}
                 disabled={busy}
-                onclick={() => (confirmRemove = k.name)}>Remove</Button
+                onclick={() => (confirmRemove = k.name)}
               >
+                Remove
+              </Button>
             {/if}
           </td>
         </tr>

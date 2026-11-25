@@ -86,27 +86,29 @@
             x={NODE_W / 2}
             y={n.isDefault || n.anyTarget ? 19 : 28}
             text-anchor="middle"
-            class="name">{n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label}</text
+            class="name"
           >
+            {n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label}
+          </text>
           {#if n.isDefault || n.anyTarget}
-            <text x={NODE_W / 2} y="35" text-anchor="middle" class="sub"
-              >{[n.isDefault ? 'default' : '', n.anyTarget ? 'any next' : '']
+            <text x={NODE_W / 2} y="35" text-anchor="middle" class="sub">
+              {[n.isDefault ? 'default' : '', n.anyTarget ? 'any next' : '']
                 .filter(Boolean)
-                .join(' · ')}</text
-            >
+                .join(' · ')}
+            </text>
           {/if}
         </g>
       {/each}
     </svg>
     <div class="legend" aria-hidden="true">
-      <span
-        ><svg width="34" height="10"><line x1="1" y1="5" x2="33" y2="5" class="edge" /></svg> proposes
-        (asks you first)</span
-      >
-      <span
-        ><svg width="34" height="10"><line x1="1" y1="5" x2="33" y2="5" class="edge auto" /></svg> auto-advance
-        (no confirmation)</span
-      >
+      <span>
+        <svg width="34" height="10"><line x1="1" y1="5" x2="33" y2="5" class="edge" /></svg> proposes
+        (asks you first)
+      </span>
+      <span>
+        <svg width="34" height="10"><line x1="1" y1="5" x2="33" y2="5" class="edge auto" /></svg> auto-advance
+        (no confirmation)
+      </span>
     </div>
     <ul class="tr-visually-hidden" aria-label="Transitions">
       {#each flow.edges as e (`${e.from}>${e.to}`)}
