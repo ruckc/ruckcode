@@ -108,6 +108,41 @@ fn policy_lines(cfg: &SandboxConfig, res: Option<&Resolution>) -> Vec<String> {
     v
 }
 
+fn path_lines(cfg: &SandboxConfig, paths: &[ruckcode_sandbox::PathStatus]) -> Vec<String> {
+    use ruckcode_sandbox::PathState;
+    let mut v = Vec::new();
+    for (kind, title) in [
+        ("cache", "cache paths"),
+        ("extra_write", "extra_write_paths"),
+    ] {
+        let rows: Vec<_> = paths.iter().filter(|p| p.kind == kind).collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let extra = if kind == "cache" {
+            format!(" (create_cache_dirs = {})", cfg.create_cache_dirs)
+        } else {
+            String::new()
+        };
+        v.push(format!("{title}{extra}:"));
+        for p in rows {
+            let state = match p.state {
+                PathState::Active => "active",
+                PathState::Created => "created",
+                PathState::Missing => "missing",
+                PathState::Skipped => "skipped",
+            };
+            let why = p
+                .reason
+                .as_deref()
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default();
+            v.push(format!("  {state:<8} {}{why}", p.entry));
+        }
+    }
+    v
+}
+
 fn fmt_ts(secs: u64) -> String {
     project_policy::fmt_time(secs)
 }
@@ -161,6 +196,8 @@ fn trust_remote(cli: &Cli, yes: bool) -> Result<()> {
 fn status(cli: &Cli, json: bool) -> Result<()> {
     let Effective { cfg, mode, policy } = effective_config(cli)?;
     let caps = ruckcode_sandbox::detect(&LauncherExe::SelfExe);
+    let project = cli.project_dir()?;
+    let paths = ruckcode_sandbox::path_report(&cfg, dirs::home_dir().as_deref(), &project, false);
     if json {
         let plan = ruckcode_sandbox::plan(&caps, &cfg);
         let pol = policy.as_ref().map(|r| {
@@ -178,6 +215,7 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
                 "capabilities": caps,
                 "plan": plan,
                 "config": cfg,
+                "paths": paths,
                 "project_policy": pol,
             }))?
         );
@@ -185,6 +223,9 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
     }
     println!("mode: {mode}");
     print!("{}", ruckcode_sandbox::report(&caps, &cfg));
+    for l in path_lines(&cfg, &paths) {
+        println!("{l}");
+    }
     for l in policy_lines(&cfg, policy.as_ref()) {
         println!("{l}");
     }
@@ -194,4 +235,45 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod path_status_tests {
+    use super::*;
+    use ruckcode_sandbox::{PathState, PathStatus};
+
+    #[test]
+    fn status_lists_cache_and_extra_path_states() {
+        let row = |kind: &str, entry: &str, state, reason: Option<&str>| PathStatus {
+            kind: kind.into(),
+            entry: entry.into(),
+            path: entry.into(),
+            state,
+            reason: reason.map(String::from),
+        };
+        let paths = vec![
+            row("cache", "~/.cargo", PathState::Active, None),
+            row(
+                "cache",
+                "~/.npm",
+                PathState::Missing,
+                Some("does not exist"),
+            ),
+            row("cache", "~/.cache", PathState::Skipped, Some("symlink")),
+            row("cache", "~/.m2", PathState::Created, None),
+            row("extra_write", "/x", PathState::Missing, Some("create it")),
+        ];
+        let out = path_lines(&SandboxConfig::default(), &paths).join("\n");
+        for want in [
+            "create_cache_dirs = true",
+            "active   ~/.cargo",
+            "missing  ~/.npm (does not exist)",
+            "skipped  ~/.cache (symlink)",
+            "created  ~/.m2",
+            "extra_write_paths:",
+            "missing  /x (create it)",
+        ] {
+            assert!(out.contains(want), "{want} not in {out}");
+        }
+    }
 }

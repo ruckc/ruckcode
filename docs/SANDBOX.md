@@ -92,7 +92,33 @@ cache_paths = ["~/.cargo", "~/.rustup", "~/.npm", "~/.cache", "~/.local/share/pn
 allowed_ports = []        # extra local TCP ports commands may connect to
 mask_env_files = true     # mask project .env* files (kernel-enforced with namespaces/Seatbelt)
 private_tmp = true        # namespaces: /tmp is a session-private directory
+create_cache_dirs = true  # create missing cache_paths entries under $HOME (see below)
 ```
+
+### Tool caches and missing directories
+
+`$HOME` itself is not writable inside the sandbox, so a cache directory that does not exist yet
+(a fresh `~/.npm`, say) could never be created by the command and npm failed with
+`ENOENT mkdir ~/.npm`. With `create_cache_dirs = true` (the default) ruckcode creates missing
+`cache_paths` entries *before* each command, in its own unsandboxed process, and then makes them
+writable like the existing ones (every layer — namespaces, Landlock, Seatbelt — uses the same
+write list). Rules:
+
+- only entries that resolve under `$HOME`, and only if `$HOME` exists and belongs to the current user;
+- missing parents are created with the default umask, the entry itself with mode `0700`;
+- an entry whose path passes through a symlink that leaves `$HOME` is skipped (and is not made
+  writable); list the symlink target in `extra_write_paths` if you want it. Entries with `..` are skipped;
+- entries outside `$HOME` are never created (they are writable only if they already exist);
+- `~/Library/Caches` is macOS-only and is not created elsewhere;
+- a failure to create a directory is not fatal: it is reported in the sandbox notes and `rc sandbox status`.
+
+Set `create_cache_dirs = false` for the previous behaviour (only existing directories are writable).
+`extra_write_paths` entries are never created automatically, even under `$HOME` (they may be files,
+and they are an explicit grant); a missing entry is reported in the notes shown to the model and in
+`rc sandbox status`, and is not writable until it exists.
+
+`rc sandbox status` (and `--json`, key `paths`) lists every cache path and `extra_write_paths` entry as
+`active`, `created`, `missing` or `skipped`, with the reason.
 
 Per mode in `modes.toml` (the same keys except `enabled`; lists replace, they do not merge):
 

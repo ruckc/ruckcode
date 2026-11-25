@@ -2,7 +2,7 @@
 
 use crate::caps::{self, Capabilities, Plan};
 use crate::config::{NetworkMode, SandboxConfig};
-use crate::policy::{build_policy, BuildInput, Policy};
+use crate::policy::{build_policy_report, BuildInput, PathStatus, Policy};
 use crate::proxy::{self, DomainPrompter, DomainStore, Gate, Proxy};
 use crate::spawn::{launcher_command, Fd, LauncherExe};
 #[cfg(unix)]
@@ -36,6 +36,8 @@ pub struct Sandbox {
     config_dir: Option<PathBuf>,
     home: Option<PathBuf>,
     warned: AtomicBool,
+    /// Path notes already shown this session.
+    noted: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Drop for Sandbox {
@@ -57,6 +59,10 @@ pub struct Prepared {
     cfg: SandboxConfig,
     layers_note: String,
     roots: Vec<PathBuf>,
+    /// Path notes not yet shown this session (created cache dirs, missing write paths).
+    fresh_notes: Vec<String>,
+    /// Every outstanding path problem, repeated when a command fails.
+    path_problems: Vec<String>,
 }
 
 pub enum Prep {
@@ -76,7 +82,14 @@ impl Prepared {
 
     /// After the command finished: restore tampered ruckcode config and explain any blocking.
     pub fn finish(&self, output: &str, success: bool) -> String {
-        let mut notes: Vec<String> = Vec::new();
+        let mut notes: Vec<String> = self.fresh_notes.clone();
+        if !success {
+            for p in &self.path_problems {
+                if !notes.contains(p) {
+                    notes.push(p.clone());
+                }
+            }
+        }
         for p in self.snapshot.restore() {
             notes.push(format!(
                 "[sandbox] The command modified ruckcode configuration ({}); the change was reverted. Sandboxed commands cannot change ruckcode's config or modes.",
@@ -413,6 +426,7 @@ impl Sandbox {
             config_dir,
             home,
             warned: AtomicBool::new(false),
+            noted: Default::default(),
         })
     }
 
@@ -443,7 +457,18 @@ impl Sandbox {
 
     /// The policy that would be applied for `cfg` in `cwd`.
     pub fn policy_for(&self, cfg: &SandboxConfig, cwd: &Path, plan: &Plan) -> Policy {
-        build_policy(&BuildInput {
+        self.policy_report_for(cfg, cwd, plan).0
+    }
+
+    /// Like `policy_for`, plus the state of every cache / `extra_write_paths` entry. Creates
+    /// missing cache directories under `$HOME` first (here, outside the sandbox).
+    pub fn policy_report_for(
+        &self,
+        cfg: &SandboxConfig,
+        cwd: &Path,
+        plan: &Plan,
+    ) -> (Policy, Vec<PathStatus>) {
+        build_policy_report(&BuildInput {
             cfg,
             cwd,
             project_root: &self.project_root,
@@ -486,7 +511,23 @@ impl Sandbox {
                 "the command was not run: the sandbox is unavailable ({e}). The user can fix the temp directory or disable the sandbox with `sandbox.enabled = false` in their config.toml."
             ));
         }
-        let policy = self.policy_for(cfg, cwd, &plan);
+        let (policy, path_report) = self.policy_report_for(cfg, cwd, &plan);
+        let mut fresh_notes = Vec::new();
+        let mut path_problems = Vec::new();
+        {
+            let mut seen = self.noted.lock().unwrap_or_else(|e| e.into_inner());
+            for n in path_report
+                .iter()
+                .filter_map(|s| s.note().map(|n| (s.is_problem(), n)))
+            {
+                if n.0 {
+                    path_problems.push(n.1.clone());
+                }
+                if seen.insert(n.1.clone()) {
+                    fresh_notes.push(n.1);
+                }
+            }
+        }
         let (mut std_cmd, fds) = launcher_command(&self.exe, &policy, argv).map_err(|e| {
             format!("the command was not run: cannot start the sandbox launcher: {e}")
         })?;
@@ -530,6 +571,8 @@ impl Sandbox {
             gate: self.gate.clone(),
             cfg: cfg.clone(),
             layers_note,
+            fresh_notes,
+            path_problems,
             roots: policy
                 .read_paths
                 .iter()
