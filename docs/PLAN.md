@@ -20,7 +20,7 @@ crates/
   ruck-harness-tools    Tool trait, sandboxed launcher, plan (TodoWrite) and AskUserQuestion tools
   ruck-harness-web      WebFetch and WebSearch (SSRF protection, sandbox network gate)
   ruckcode-mise         mise task discovery, schema mapping, execution
-  ruck-harness-mcp          MCP client (rmcp): connections, tool wrapping, lazy meta-tools
+  ruck-harness-mcp      MCP client (rmcp): connections, tool wrapping, lazy meta-tools
   ruck-harness-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp          ACP JSON-RPC (stdio) agent server + client plumbing
   ruckcode-cli          `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
