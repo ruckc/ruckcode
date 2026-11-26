@@ -103,7 +103,7 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
             }
         }
         None if args.unfinished => {
-            let list = transcript_api::find_unfinished(&project, None);
+            let list = ruckcode_core::extension::find_unfinished(&project, None);
             if args.json {
                 println!("{}", serde_json::to_string(&list)?);
             } else if list.is_empty() {

@@ -336,7 +336,11 @@ pub struct UnfinishedSession {
 /// The project's most recent unfinished sessions, newest first (at most `limit`, default
 /// [`UNFINISHED_LIMIT`]). Only transcripts modified in the last [`UNFINISHED_MAX_AGE_DAYS`] days
 /// are looked at, and only sessions with some real user prompt qualify.
-pub fn find_unfinished(project: &Path, limit: Option<usize>) -> Vec<UnfinishedSession> {
+pub fn find_unfinished_with(
+    project: &Path,
+    limit: Option<usize>,
+    decode_plan: crate::transcript::PlanDecoder<'_>,
+) -> Vec<UnfinishedSession> {
     let limit = limit.unwrap_or(UNFINISHED_LIMIT);
     let max_age = std::time::Duration::from_secs(UNFINISHED_MAX_AGE_DAYS * 86_400);
     let mut out = vec![];
@@ -372,7 +376,7 @@ pub fn find_unfinished(project: &Path, limit: Option<usize>) -> Vec<UnfinishedSe
         let Some(first_prompt) = first_prompt else {
             continue;
         };
-        let u = crate::transcript::assess_unfinished(&records);
+        let u = crate::transcript::assess_unfinished_with(&records, decode_plan);
         if !u.is_unfinished() {
             continue;
         }

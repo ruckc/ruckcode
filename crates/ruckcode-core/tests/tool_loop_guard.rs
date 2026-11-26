@@ -149,7 +149,7 @@ async fn run_with(steps: Vec<Message>, config: &str, git: bool) -> Run {
         }
     }
     let mock = Arc::new(MockProvider::new(steps));
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(mock.clone()),
         user_config_dir: Some(user.path().to_path_buf()),
         ..Default::default()

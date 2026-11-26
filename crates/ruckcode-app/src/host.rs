@@ -89,7 +89,7 @@ impl Hosts {
         let spawned = match params.kind {
             HostKind::Local => {
                 check_dir(&params.cwd)?;
-                let agent = Arc::new(Agent::new(AgentOptions::default()));
+                let agent = Arc::new(Agent::ruckcode(AgentOptions::default()));
                 let (tx, rx) = ruckcode_acp::spawn_in_process_raw(agent);
                 Spawned {
                     to_agent: tx,

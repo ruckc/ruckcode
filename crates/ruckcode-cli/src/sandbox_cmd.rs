@@ -41,7 +41,7 @@ pub fn effective_config(cli: &Cli) -> Result<Effective> {
     let mut modes = ModeSet::load(&cwd, None)?;
     let mut policy = None;
     if config.sandbox.project_policy == ProjectPolicy::Remote {
-        if let Some(data) = project_policy::data_dir() {
+        if let Some(data) = ruckcode_core::extension::data_dir() {
             let res = project_policy::resolve(&cwd, &data, config.sandbox.project_policy);
             project_policy::apply(&res, &mut config.sandbox, &mut modes);
             policy = Some(res);
@@ -165,7 +165,7 @@ fn trust_remote(cli: &Cli, yes: bool) -> Result<()> {
     let Some(url) = project_policy::origin_url(&root) else {
         bail!("no `origin` remote is configured");
     };
-    let Some(data) = project_policy::data_dir() else {
+    let Some(data) = ruckcode_core::extension::data_dir() else {
         bail!("cannot locate the user data directory");
     };
     if let Some(old) = project_policy::pinned_url(&cwd, &data) {

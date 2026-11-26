@@ -5,7 +5,7 @@ use ruck_harness_tools::Tool;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::config::Config;
+use crate::config::HarnessConfig;
 use crate::modes::ModeDef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ fn lookup(map: &BTreeMap<String, Permission>, tool: &str) -> Option<Permission> 
 
 /// Mode rules, then config rules (exact names before globs), then the default for the tool: its
 /// kind, or the tool opting in with [`Tool::auto_allow`].
-pub fn resolve(tool: &dyn Tool, mode: &ModeDef, config: &Config) -> Permission {
+pub fn resolve(tool: &dyn Tool, mode: &ModeDef, config: &HarnessConfig) -> Permission {
     let name = tool.name();
     lookup(&mode.permissions, name)
         .or_else(|| lookup(&config.permissions, name))
@@ -46,6 +46,7 @@ pub fn resolve(tool: &dyn Tool, mode: &ModeDef, config: &Config) -> Permission {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use async_trait::async_trait;
     use ruck_harness_tools::{ToolContext, ToolKind, ToolOutput};
     use serde_json::{json, Value};

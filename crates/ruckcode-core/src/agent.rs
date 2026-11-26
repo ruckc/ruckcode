@@ -11,7 +11,6 @@ use ruck_harness_llm::{
 };
 use ruck_harness_mcp::{McpManager, McpServerConfig};
 use ruck_harness_tools::{FileEdit, PlanItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
-use ruckcode_mise::{MiseTask, TaskSelector};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,17 +19,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{make_provider_with, Config, Profile};
+use crate::agent_ext::{AgentExtension, SessionExt};
+use crate::config::{ConfigLoader, HarnessConfig, Profile};
 use crate::context::{self, Limits};
-use crate::guard_ext::ruckcode_guard_hints;
-use crate::identity::RUCKCODE;
-use crate::mode_ext::RuckcodeModeExt;
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::{system_prompt, PromptProvider, MAX_CLIENT_INSTRUCTIONS};
-use crate::prompt_ext::RuckcodePrompt;
 use crate::retry::{self, Decision, Pacer, RateLimitConfig};
-use crate::session_policy::{RemoteSandboxPolicy, SessionPolicy};
+use crate::session_policy::SessionPolicy;
 use crate::thinking_guard::{LoopDetector, ThinkingGuardConfig, Trip};
 use crate::tool_loop_guard::{self, GuardHints, ToolLoopDetector};
 use crate::transcript::{
@@ -219,13 +215,6 @@ pub struct AgentOptions {
     /// The binary that acts as the sandbox launcher (`__sandbox-exec`); `None` re-executes the
     /// running binary. Tests whose binary does not embed the launcher set this.
     pub sandbox_exe: Option<ruck_harness_sandbox::LauncherExe>,
-    /// The product's part of the system prompt (default: ruckcode's).
-    pub prompt: Arc<dyn PromptProvider>,
-    /// How the tool-loop guard recognises the product's tools (default: ruckcode's; use
-    /// `GuardHints::default()` for none, which turns off the search and oscillation detectors).
-    pub guard_hints: GuardHints,
-    /// Adjusts the loaded config and modes at session start (default: the remote sandbox policy).
-    pub session_policy: Option<Arc<dyn SessionPolicy>>,
 }
 
 impl Default for AgentOptions {
@@ -237,9 +226,6 @@ impl Default for AgentOptions {
             persist: true,
             user_config_dir: None,
             sandbox_exe: None,
-            prompt: Arc::new(RuckcodePrompt),
-            guard_hints: ruckcode_guard_hints(),
-            session_policy: Some(Arc::new(RemoteSandboxPolicy::new(RUCKCODE))),
         }
     }
 }
@@ -247,9 +233,10 @@ impl Default for AgentOptions {
 struct SessionState {
     id: String,
     cwd: PathBuf,
-    config: Config,
+    config: HarnessConfig,
     modes: ModeSet,
-    mise_tasks: Vec<MiseTask>,
+    /// The product's per-session state (for ruckcode: the mise tasks).
+    ext: Box<dyn SessionExt>,
     /// MCP servers passed by the client (ACP `mcpServers`); override same-named config entries.
     extra_mcp: BTreeMap<String, McpServerConfig>,
     /// Connected lazily on the first prompt.
@@ -444,6 +431,11 @@ impl Tool for SwitchModeTool {
 
 pub struct Agent {
     options: AgentOptions,
+    ext: Arc<dyn AgentExtension>,
+    /// Cached from the extension.
+    prompt: Arc<dyn PromptProvider>,
+    guard_hints: GuardHints,
+    session_policy: Option<Arc<dyn SessionPolicy>>,
     sessions: Mutex<HashMap<String, Arc<tokio::sync::Mutex<SessionState>>>>,
     cancels: Mutex<HashMap<String, CancellationToken>>,
     shared: Mutex<HashMap<String, Arc<Shared>>>,
@@ -461,9 +453,13 @@ struct Shared {
 }
 
 impl Agent {
-    pub fn new(options: AgentOptions) -> Self {
+    pub fn new(options: AgentOptions, ext: Arc<dyn AgentExtension>) -> Self {
         Self {
             options,
+            prompt: ext.prompt(),
+            guard_hints: ext.guard_hints(),
+            session_policy: ext.session_policy(),
+            ext,
             sessions: Mutex::default(),
             cancels: Mutex::default(),
             shared: Mutex::default(),
@@ -479,10 +475,12 @@ impl Agent {
         extra_mcp: BTreeMap<String, McpServerConfig>,
     ) -> Result<SessionState> {
         let user_dir = self.options.user_config_dir.as_deref();
-        let mut config = Config::load(&cwd, user_dir)?;
-        let mut modes = ModeSet::load(&cwd, user_dir)?;
-        let policy_notices = match &self.options.session_policy {
-            Some(p) => p.apply(&cwd, &mut config.harness, &mut modes).await,
+        let identity = *self.ext.identity();
+        let raw = ConfigLoader::new(identity).load_table(&cwd, user_dir)?;
+        let mut config = HarnessConfig::deserialize_table(&raw)?;
+        let mut modes = ModeSet::load_with(&cwd, user_dir, &identity, self.ext.mode_schema())?;
+        let policy_notices = match &self.session_policy {
+            Some(p) => p.apply(&cwd, &mut config, &mut modes).await,
             None => vec![],
         };
         let profile = self
@@ -495,13 +493,14 @@ impl Agent {
         if modes.get(&mode).is_none() {
             bail!("unknown mode `{mode}`");
         }
-        let mise_tasks = ruckcode_mise::discover(&cwd).await;
+        let ext = self.ext.session_init(&cwd, &config, &raw, &modes).await?;
+        config.validate()?;
         Ok(SessionState {
             id,
             cwd,
             config,
             modes,
-            mise_tasks,
+            ext,
             extra_mcp,
             mcp: None,
             mode,
@@ -673,7 +672,9 @@ impl Agent {
         if let Some(p) = s.providers.get(&key) {
             return Ok(p.clone());
         }
-        let p = make_provider_with(profile, self.options.user_config_dir.as_deref())?;
+        let p = self
+            .ext
+            .make_provider(profile, self.options.user_config_dir.as_deref())?;
         s.providers.insert(key, p.clone());
         Ok(p)
     }
@@ -852,7 +853,14 @@ impl Agent {
                 }
                 Err(_) => vec![],
             };
-            replay(&cwd, id, &loaded.records, &tools, client.as_ref());
+            replay(
+                &cwd,
+                id,
+                &loaded.records,
+                &tools,
+                &|n: &str, i: &Value| self.ext.decode_plan(n, i),
+                client.as_ref(),
+            );
         }
         Ok(self.register(s))
     }
@@ -942,7 +950,8 @@ impl Agent {
     ) {
         let old_model = self.model_for(s).ok().map(|(m, _)| m);
         let from = std::mem::replace(&mut s.mode, to.to_string());
-        s.mise_tasks = ruckcode_mise::discover(&s.cwd).await;
+        let cwd = s.cwd.clone();
+        s.ext.refresh(&cwd).await;
         if emit {
             client.send_event(&s.id, SessionEvent::ModeChanged(to.to_string()));
         }
@@ -1065,7 +1074,7 @@ impl Agent {
         if hooks.get(event).is_empty() {
             return vec![];
         }
-        let out = HookRunner::new(&s.cwd, crate::identity::RUCKCODE)
+        let out = HookRunner::new(&s.cwd, *self.ext.identity())
             .run(&hooks, event, tool, payload)
             .await;
         s.record_hooks(event, &out);
@@ -1082,7 +1091,7 @@ impl Agent {
         if configs.is_empty() {
             return;
         }
-        let manager = McpManager::start(configs, &s.cwd, &crate::identity::RUCKCODE).await;
+        let manager = McpManager::start(configs, &s.cwd, self.ext.identity()).await;
         let mut records = vec![];
         for (name, result) in manager.statuses() {
             match result {
@@ -1155,7 +1164,8 @@ impl Agent {
         self.start_mcp(s, client).await;
         let profile = self.model_for(s).ok().map(|(_, p)| p);
         let system = system_prompt(
-            self.options.prompt.as_ref(),
+            self.prompt.as_ref(),
+            &|n: &str| self.ext.builtin_tool(n),
             &s.cwd,
             &s.modes,
             &s.mode,
@@ -1171,12 +1181,13 @@ impl Agent {
         let mut tool_nudges = 0u32;
         let mut overflow_retried = false;
         let mut last_estimate;
-        let mut tool_guard = ToolLoopDetector::new(self.options.guard_hints.clone());
+        let mut tool_guard = ToolLoopDetector::new(self.guard_hints.clone());
         for _ in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
             let (model, profile) = self.model_for(s)?;
             let system = system_prompt(
-                self.options.prompt.as_ref(),
+                self.prompt.as_ref(),
+                &|n: &str| self.ext.builtin_tool(n),
                 &s.cwd,
                 &s.modes,
                 &s.mode,
@@ -1383,7 +1394,7 @@ impl Agent {
                 // hashed before and after; a Bash command is covered by the git working-tree
                 // snapshot (the first one of the turn is the baseline).
                 let target = track_files
-                    .then(|| self.options.guard_hints.edit_target(name, input))
+                    .then(|| self.guard_hints.edit_target(name, input))
                     .flatten()
                     .map(|p| root.join(p));
                 if let Some(t) = &target {
@@ -1391,12 +1402,10 @@ impl Agent {
                         tool_guard.baseline_file(&t.to_string_lossy(), h);
                     }
                 }
-                let probe = self
-                    .options
-                    .guard_hints
-                    .progress_probe
-                    .as_deref()
-                    .filter(|p| track_files && p.watches(name) && !tool_guard.probe_snapshots_off);
+                let probe =
+                    self.guard_hints.progress_probe.as_deref().filter(|p| {
+                        track_files && p.watches(name) && !tool_guard.probe_snapshots_off
+                    });
                 if let Some(probe) = probe.filter(|_| !tool_guard.probe_baseline_done) {
                     tool_guard.probe_baseline_done = true;
                     tool_loop_guard::snapshot_tree(probe, &root, &mut tool_guard, &loop_cfg, true)
@@ -1508,7 +1517,7 @@ impl Agent {
         if hooks.post_edit.is_empty() {
             return None;
         }
-        let out = HookRunner::new(&s.cwd, crate::identity::RUCKCODE)
+        let out = HookRunner::new(&s.cwd, *self.ext.identity())
             .run_post_edit(&hooks, &s.id, &files)
             .await;
         s.record_hooks(HookEvent::PostEdit, &out);
@@ -1711,7 +1720,7 @@ impl Agent {
                 cancel: cancel.clone(),
                 tool_call_id: id.to_string(),
                 sandbox,
-                identity: crate::identity::RUCKCODE,
+                identity: *self.ext.identity(),
             };
             match tool.call(input.clone(), &ctx).await {
                 Ok(out) => {
@@ -1738,12 +1747,13 @@ impl Agent {
         {
             if content.len() > cap {
                 let before = content.len();
-                content = context::truncate_head_tail(&content, cap);
+                content = context::truncate_head_tail(&content, cap, self.ext.identity());
                 client.send_event(
                     &s.id,
                     SessionEvent::Notice(format!(
-                        "{name} output truncated by ruckcode ({before} bytes, over the \
-                         per-result limit of {cap}); head and tail kept."
+                        "{name} output truncated by {} ({before} bytes, over the \
+                         per-result limit of {cap}); head and tail kept.",
+                        self.ext.identity().name
                     )),
                 );
             }
@@ -1816,7 +1826,10 @@ impl Agent {
             .config
             .sandbox
             .with_override(s.mode_def().sandbox.as_ref());
-        let config_dir = crate::config::user_config_dir(self.options.user_config_dir.as_deref());
+        let config_dir = crate::config::user_config_dir_for(
+            self.ext.identity(),
+            self.options.user_config_dir.as_deref(),
+        );
         // Process-spawning tools need the sandbox itself (and its proxy), and the in-process
         // network tools (WebFetch, WebSearch) its network gate; the others get the path guards
         // for ruckcode's config and secrets.
@@ -1827,7 +1840,7 @@ impl Agent {
                     let sb =
                         ruck_harness_sandbox::Sandbox::new(ruck_harness_sandbox::SandboxOptions {
                             project_root: s.cwd.clone(),
-                            identity: crate::identity::RUCKCODE,
+                            identity: *self.ext.identity(),
                             exe: self
                                 .options
                                 .sandbox_exe
@@ -1839,7 +1852,7 @@ impl Agent {
                             })),
                             store: ruck_harness_sandbox::DomainStore::for_project(
                                 &s.cwd,
-                                &crate::identity::RUCKCODE,
+                                self.ext.identity(),
                             ),
                             config_dir: config_dir.clone(),
                             home: None,
@@ -2205,9 +2218,10 @@ impl Agent {
         }
         if !limits.fits(estimate) {
             let from = context::turn_start(&s.messages);
-            let (steps, fits) = context::fit_to_ceiling(&mut s.messages, &limits, from, |m| {
-                context::estimate_tokens(system, tools, m)
-            });
+            let (steps, fits) =
+                context::fit_to_ceiling(&mut s.messages, &limits, from, self.ext.identity(), |m| {
+                    context::estimate_tokens(system, tools, m)
+                });
             if steps > 0 {
                 client.send_event(
                     &s.id,
@@ -2264,7 +2278,7 @@ impl Agent {
         }
         // The summarizing request must fit the window too.
         let limits = self.limits(s, &profile);
-        context::fit_to_ceiling(&mut messages, &limits, 0, |m| {
+        context::fit_to_ceiling(&mut messages, &limits, 0, self.ext.identity(), |m| {
             context::estimate_tokens(system, &[], m)
         });
         let request = Request {
@@ -2362,7 +2376,8 @@ impl Agent {
                 } else {
                     let profile = self.model_for(s).ok().map(|(_, p)| p);
                     let system = system_prompt(
-                        self.options.prompt.as_ref(),
+                        self.prompt.as_ref(),
+                        &|n: &str| self.ext.builtin_tool(n),
                         &s.cwd,
                         &s.modes,
                         &s.mode,
@@ -2485,11 +2500,13 @@ fn notify_blocked(s: &SessionState, client: &Arc<dyn Client>, outcomes: &[HookOu
     }
 }
 
-/// Tools for the session's current mode.
+/// Tools for the session's current mode: the product's built-ins the mode and profile allow,
+/// `SwitchMode`, the MCP tools, then the product's session tools.
 fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> Vec<Arc<dyn Tool>> {
     let mode = s.mode_def();
-    let web = s.config.web_resolved(user_dir);
-    let mut tools: Vec<Arc<dyn Tool>> = ruckcode_tools::builtin_tools_with(&web)
+    let mut tools: Vec<Arc<dyn Tool>> = s
+        .ext
+        .builtin_tools(mode, &s.config, user_dir)
         .into_iter()
         .filter(|t| {
             mode.tools
@@ -2517,16 +2534,7 @@ fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> 
     if let Some(mcp) = &s.mcp {
         tools.extend(mcp.tools_for(&mode.mcp_tools, s.config.mcp.lazy_threshold));
     }
-    match TaskSelector::new(&mode.mise_tasks()) {
-        Ok(sel) => {
-            let selected = sel.select(&s.mise_tasks).into_iter().cloned().collect();
-            tools.extend(ruckcode_mise::tools_for(
-                selected,
-                s.config.mise.lazy_threshold,
-            ));
-        }
-        Err(e) => tracing::warn!("invalid mise_tasks selector in mode `{}`: {e}", s.mode),
-    }
+    tools.extend(s.ext.dynamic_tools(&s.mode, mode, &s.config));
     tools
 }
 
@@ -2738,6 +2746,7 @@ fn replay(
     session_id: &str,
     records: &[transcript::Stamped],
     tools: &[Arc<dyn Tool>],
+    decode_plan: transcript::PlanDecoder<'_>,
     client: &dyn Client,
 ) {
     for r in records {
@@ -2782,7 +2791,7 @@ fn replay(
                 );
                 let plan = match tools.iter().find(|t| t.name() == name) {
                     Some(t) => t.plan(input),
-                    None => ruckcode_tools::decode_builtin_plan(name, input),
+                    None => decode_plan(name, input),
                 };
                 if let Some(items) = plan {
                     client.send_event(session_id, SessionEvent::Plan(items));

@@ -105,7 +105,7 @@ async fn capture(s: &Scenario) -> String {
         }
     }
     let mock = Arc::new(MockProvider::default());
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(mock.clone()),
         user_config_dir: Some(user.path().to_path_buf()),
         ..Default::default()

@@ -7,6 +7,9 @@
 use async_trait::async_trait;
 use std::path::Path;
 
+use ruck_harness_tools::Tool;
+use std::sync::Arc;
+
 use crate::config::Profile;
 use crate::modes::ModeSet;
 
@@ -46,13 +49,21 @@ pub const MAX_CLIENT_INSTRUCTIONS: usize = 64 * 1024;
 /// replace anything above).
 pub async fn system_prompt(
     provider: &dyn PromptProvider,
+    builtin_tool: &(dyn Fn(&str) -> Option<Arc<dyn Tool>> + Sync),
     cwd: &Path,
     modes: &ModeSet,
     mode_id: &str,
     client_instructions: Option<&str>,
     profile: Option<&Profile>,
 ) -> String {
-    let offers = |name: &str| profile.is_none_or(|p| p.allows_builtin(name));
+    let offers = |name: &str| {
+        profile.is_none_or(|p| {
+            let class = builtin_tool(name)
+                .map(|t| t.lean_class())
+                .unwrap_or_default();
+            p.allows_class(name, class)
+        })
+    };
     let ctx = PromptCtx {
         cwd,
         mode_id,
@@ -112,6 +123,7 @@ mod tests {
         let modes = ModeSet::implicit();
         let s = system_prompt(
             &Toy,
+            &|_| None,
             Path::new("/w"),
             &modes,
             &modes.default_mode,

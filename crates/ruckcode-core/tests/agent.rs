@@ -88,7 +88,7 @@ impl Env {
     }
 
     fn agent_with(&self, p: Arc<dyn Provider>) -> Agent {
-        Agent::new(AgentOptions {
+        Agent::ruckcode(AgentOptions {
             provider_override: Some(p),
             user_config_dir: Some(self.user_path.clone()),
             ..Default::default()
@@ -1017,7 +1017,7 @@ max_tokens = 77
 async fn model_used(modes: &str, cli_model: Option<&str>) -> (String, u32) {
     let env = Env::new(Some(modes), Some(MODEL_CFG));
     env.mock.push(Message::assistant_text("hi"));
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(env.mock.clone()),
         user_config_dir: Some(env.user_path.clone()),
         model_override: cli_model.map(String::from),

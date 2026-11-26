@@ -99,7 +99,7 @@ async fn mcp_tools_end_to_end() {
         tool_use("3", "mcp__extra__echo", json!({"text": "acp"})),
         Message::assistant_text("done"),
     ]));
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(mock.clone()),
         user_config_dir: Some(user.path().to_path_buf()),
         ..Default::default()
@@ -186,7 +186,7 @@ async fn mode_without_mcp_tools_sees_none_and_default_mode_sees_all() {
         ),
         Message::assistant_text("ok"),
     ]));
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(mock.clone()),
         user_config_dir: Some(user.path().to_path_buf()),
         ..Default::default()
@@ -212,7 +212,7 @@ async fn mode_without_mcp_tools_sees_none_and_default_mode_sees_all() {
     // A mode with no mcp_tools gets nothing.
     std::fs::write(proj.path().join(".ruckcode/modes.toml"), "[modes.b]\n").unwrap();
     let mock = Arc::new(MockProvider::new([Message::assistant_text("ok")]));
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(mock.clone()),
         user_config_dir: Some(user.path().to_path_buf()),
         ..Default::default()

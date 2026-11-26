@@ -16,6 +16,7 @@ use crate::identity::RUCKCODE;
 use crate::thinking_guard::OllamaOptions;
 
 mod harness;
+pub use harness::user_config_dir as user_config_dir_for;
 pub use harness::{ConfigLoader, HarnessConfig, McpConfig, Pricing, Profile, ProviderKind};
 
 impl Profile {
@@ -144,6 +145,14 @@ pub fn named_key(user_dir: Option<&Path>, name: &str) -> Option<String> {
 /// `api_key_env`, else none.
 pub fn resolve_api_key(profile: &Profile, user_dir: Option<&Path>) -> Result<Option<String>> {
     harness::resolve_api_key(&RUCKCODE, profile, user_dir)
+}
+
+/// The `[mise]` section of a merged config table (the product's half of [`Config::from_table`]).
+pub(crate) fn mise_from_table(table: &toml::Table) -> Result<MiseConfig> {
+    let p: ProductSections = toml::Value::Table(table.clone())
+        .try_into()
+        .context("invalid configuration")?;
+    Ok(p.mise)
 }
 
 impl Config {

@@ -12,7 +12,8 @@ use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, RateLimitEvent,
     SessionEvent, StopReason,
 };
-use ruckcode_core::transcript::{assess_unfinished, session_path, Record, TranscriptReader};
+use ruckcode_core::extension::assess_unfinished;
+use ruckcode_core::transcript::{session_path, Record, TranscriptReader};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -86,7 +87,7 @@ impl Env {
         Self { proj, user }
     }
     fn agent(&self, p: Arc<dyn Provider>) -> Agent {
-        Agent::new(AgentOptions {
+        Agent::ruckcode(AgentOptions {
             provider_override: Some(p),
             user_config_dir: Some(self.user.path().to_path_buf()),
             ..Default::default()
