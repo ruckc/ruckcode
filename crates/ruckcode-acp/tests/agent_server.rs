@@ -456,6 +456,68 @@ async fn load_session_replays() {
     assert!(user < agent);
 }
 
+#[tokio::test]
+async fn load_session_replays_the_plan_of_an_old_transcript() {
+    let env = Env::new();
+    let c = env.connect(mock([]));
+    init(&c, false).await;
+    let sid = new_session(&c, &env).await;
+    // An old transcript: plan updates, a repeat, a malformed update (skipped), completion.
+    let path = ruckcode_core::transcript::session_path(&env.cwd(), &sid);
+    let mut w = ruckcode_core::transcript::TranscriptWriter::open(&path).unwrap();
+    let plans = [
+        json!({"todos":[{"content":"a","status":"pending"},{"content":"b","status":"pending"}]}),
+        json!({"todos":[{"content":"a","status":"in_progress"},{"content":"b","status":"pending"}]}),
+        json!({"todos":[{"content":"a","status":"in_progress"},{"content":"b","status":"pending"}]}),
+        json!({"todos":"bogus"}),
+        json!({"todos":[{"content":"a","status":"completed"},{"content":"b","status":"completed"}]}),
+    ];
+    for (i, input) in plans.into_iter().enumerate() {
+        w.append(&ruckcode_core::transcript::Record::ToolCall {
+            tool_use_id: format!("p{i}"),
+            name: "TodoWrite".into(),
+            input,
+            title: "Update plan".into(),
+            kind: "think".into(),
+        })
+        .unwrap();
+    }
+    drop(w);
+
+    let env2 = Env {
+        proj: env.proj,
+        user: tempfile::tempdir().unwrap(),
+        client: Arc::new(TestClient::default()),
+    };
+    let c2 = env2.connect(mock([]));
+    init(&c2, false).await;
+    c2.request(
+        SESSION_LOAD,
+        json!({"sessionId":sid,"cwd":env2.cwd(),"mcpServers":[]}),
+    )
+    .await
+    .unwrap();
+    let got: Vec<Value> = env2
+        .client
+        .updates()
+        .iter()
+        .filter(|u| matches!(u, SessionUpdate::Plan(_)))
+        .map(|u| serde_json::to_value(u).unwrap())
+        .collect();
+    let entry = |c: &str, s: &str| json!({"content":c,"priority":"medium","status":s});
+    let plan =
+        |a: &str, b: &str| json!({"sessionUpdate":"plan","entries":[entry("a", a), entry("b", b)]});
+    assert_eq!(
+        got,
+        vec![
+            plan("pending", "pending"),
+            plan("in_progress", "pending"),
+            plan("in_progress", "pending"),
+            plan("completed", "completed"),
+        ]
+    );
+}
+
 struct Slow;
 #[async_trait]
 impl Provider for Slow {
