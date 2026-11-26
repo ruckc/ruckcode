@@ -11,18 +11,31 @@ use ruckcode_sandbox::{
 use std::path::PathBuf;
 use std::process::Stdio;
 
-/// Open descriptors until the next free one is `target`.
+/// Hold descriptors until `target` is the lowest free descriptor number, and prove it by probing.
 fn fill_fds_below(target: i32) -> Vec<std::fs::File> {
     use std::os::fd::AsRawFd;
     let mut held = Vec::new();
     loop {
         let f = std::fs::File::open("/dev/null").unwrap();
         let fd = f.as_raw_fd();
-        held.push(f);
-        if fd >= target - 1 {
-            return held;
+        assert!(
+            fd <= target,
+            "descriptor {target} was already in use (got {fd})"
+        );
+        if fd == target {
+            // Closing it again leaves `target` as the lowest free number.
+            drop(f);
+            break;
         }
+        held.push(f);
     }
+    let probe = std::fs::File::open("/dev/null").unwrap();
+    assert_eq!(
+        probe.as_raw_fd(),
+        target,
+        "precondition: next fd is {target}"
+    );
+    held
 }
 
 #[tokio::test]
