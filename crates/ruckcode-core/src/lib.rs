@@ -6,6 +6,7 @@ pub mod context;
 pub mod identity;
 pub mod init;
 pub mod keys;
+pub mod mode_ext;
 pub mod modes;
 pub mod modes_api;
 mod modes_edit;
@@ -28,7 +29,7 @@ pub use agent::{
     RateLimitEvent, SessionEvent, SessionInfo, StopReason, ToolStatus,
 };
 pub use config::{Config, Pricing, Profile, ProviderKind};
-pub use modes::{ModeDef, ModeSet};
+pub use modes::{ModeDef, ModeSchema, ModeSet};
 pub use permissions::Permission;
 pub use prompt::MAX_CLIENT_INSTRUCTIONS;
 pub use ruck_harness_llm::Usage as TokenUsage;

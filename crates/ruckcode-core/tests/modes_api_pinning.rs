@@ -1,6 +1,7 @@
 //! Pins the `modes_api` / `modes_edit` behaviour around `mise_tasks` and unknown keys, ahead of
 //! moving `mise_tasks` into `ModeDef.extra`. Output is compared byte for byte.
 
+use ruckcode_core::mode_ext::RuckcodeModeExt;
 use ruckcode_core::modes_api::{apply, catalog, parse_doc, preview};
 use ruckcode_core::ModeSet;
 
@@ -99,7 +100,10 @@ fn mode_dto_json_has_mise_tasks_and_never_unknown_keys() {
     let v = serde_json::to_value(&doc.modes[0]).unwrap();
     assert_eq!(v["miseTasks"], serde_json::json!(["build", "test*"]));
     let keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
-    assert!(!keys.contains(&"bogus") && !keys.contains(&"extra"), "{keys:?}");
+    assert!(
+        !keys.contains(&"bogus") && !keys.contains(&"extra"),
+        "{keys:?}"
+    );
     assert_eq!(
         serde_json::to_string(&doc.modes[1]).unwrap(),
         "{\"id\":\"docs\",\"name\":null,\"description\":\"Docs\",\"prompt\":\"\",\"tools\":null,\"miseTasks\":[],\"mcpTools\":[],\"next\":[],\"autoAdvanceTo\":[],\"profile\":null,\"model\":null,\"permissions\":{},\"hooks\":{}}"
@@ -137,9 +141,23 @@ async fn catalog_templates_carry_mise_tasks() {
 #[test]
 fn modeset_rejects_ill_typed_mise_tasks() {
     let s = ModeSet::from_toml_str(SRC).unwrap();
-    assert_eq!(s.get("build").unwrap().mise_tasks, ["build", "test*"]);
+    assert_eq!(s.get("build").unwrap().mise_tasks(), ["build", "test*"]);
     let e = ModeSet::from_toml_str("[modes.a]\nmise_tasks = \"x\"\n").unwrap_err();
     assert_eq!(e.to_string(), "invalid mode `a`");
     let e = ModeSet::from_toml_str("[modes.a]\nmise_tasks = [1]\n").unwrap_err();
     assert_eq!(e.to_string(), "invalid mode `a`");
+}
+
+#[test]
+fn only_mise_tasks_is_captured_in_extra() {
+    let s = ModeSet::from_toml_str(SRC).unwrap();
+    let keys: Vec<&str> = s
+        .get("build")
+        .unwrap()
+        .extra
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    assert_eq!(keys, ["mise_tasks"]);
+    assert!(s.get("docs").unwrap().extra.is_empty());
 }

@@ -22,6 +22,7 @@ use ruck_harness_hooks::{HookEvent, HookSpec, HooksConfig, OnFailure};
 use serde::{Deserialize, Serialize};
 
 use crate::init;
+use crate::mode_ext::RuckcodeModeExt;
 use crate::modes::ModeDef;
 use crate::permissions::Permission;
 use crate::Config;
@@ -158,7 +159,7 @@ impl ModeDto {
             description: d.description.clone(),
             prompt: d.prompt.clone(),
             tools: d.tools.clone(),
-            mise_tasks: d.mise_tasks.clone(),
+            mise_tasks: d.mise_tasks(),
             mcp_tools: d.mcp_tools.clone(),
             next: d.next.clone(),
             auto_advance_to: d.auto_advance_to.clone(),
@@ -246,9 +247,7 @@ pub fn parse_doc(text: &str) -> Result<ModesDoc> {
     if let Some(t) = table.get("modes") {
         let t = t.as_table().context("`modes` must be a table")?;
         for (id, v) in t {
-            let def: ModeDef = v
-                .clone()
-                .try_into()
+            let def = ModeDef::from_value(v, &crate::mode_ext::RUCKCODE_MODE_SCHEMA)
                 .with_context(|| format!("invalid mode `{id}`"))?;
             modes.push(ModeDto::from_def(id, &def));
         }
