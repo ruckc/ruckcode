@@ -363,8 +363,8 @@ mod tests {
     use crate::web::net::{BlockedFn, ResolveHook};
     use crate::SandboxHandle;
     use async_trait::async_trait;
-    use ruckcode_sandbox::proxy::{DomainAnswer, DomainPrompter, DomainStore, Gate};
-    use ruckcode_sandbox::{NetworkMode, SandboxConfig};
+    use ruck_harness_sandbox::proxy::{DomainAnswer, DomainPrompter, DomainStore, Gate};
+    use ruck_harness_sandbox::{NetworkMode, SandboxConfig};
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

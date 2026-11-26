@@ -996,16 +996,16 @@ release is deployed to the site). Everything is verified with the project's mini
 
 ```
 crates/
-  ruckcode-core     agent loop, sessions, context assembly, modes, permissions, config
-  ruckcode-llm      Provider trait + Anthropic and OpenAI-compatible clients
-  ruckcode-tools    Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, AskUserQuestion, TodoWrite, SwitchMode
-  ruckcode-mise     mise task discovery, schema mapping, execution
-  ruckcode-sandbox  command sandbox: launcher, namespaces, Landlock, seccomp, Seatbelt, allowlist proxy
-  ruckcode-mcp      MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
-  ruckcode-hooks    hook config, matching, runner, fix-turn feedback
-  ruckcode-acp      ACP agent server + client plumbing (official ACP SDK for JSON-RPC)
-  ruckcode-cli      `rc` binary: TUI, headless `-p`, `rc acp`, `rc init`
-  ruckcode-app      Tauri v2 desktop shell (separate Cargo workspace, see below)
+  ruckcode-core         agent loop, sessions, context assembly, modes, permissions, config
+  ruck-harness-llm      Provider trait + Anthropic and OpenAI-compatible clients
+  ruckcode-tools        Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, AskUserQuestion, TodoWrite, SwitchMode
+  ruckcode-mise         mise task discovery, schema mapping, execution
+  ruck-harness-sandbox  command sandbox: launcher, namespaces, Landlock, seccomp, Seatbelt, allowlist proxy
+  ruckcode-mcp          MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
+  ruck-harness-hooks    hook config, matching, runner, fix-turn feedback
+  ruckcode-acp          ACP agent server + client plumbing (official ACP SDK for JSON-RPC)
+  ruckcode-cli          `rc` binary: TUI, headless `-p`, `rc acp`, `rc init`
+  ruckcode-app          Tauri v2 desktop shell (separate Cargo workspace, see below)
 app/                SvelteKit UI for the desktop app (TypeScript, Svelte 5, pnpm)
 ```
 

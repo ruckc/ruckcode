@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use globset::Glob;
 use regex::Regex;
-use ruckcode_hooks::{HookEvent, HookSpec, HooksConfig, OnFailure};
+use ruck_harness_hooks::{HookEvent, HookSpec, HooksConfig, OnFailure};
 use serde::{Deserialize, Serialize};
 
 use crate::init;

@@ -27,7 +27,7 @@
 //! Plan updates that change nothing (`plan_noop_count` in a row) trip it as well; the plan tool
 //! answers those locally (see [`plan_items`]).
 
-use ruckcode_llm::{ContentBlock, Message};
+use ruck_harness_llm::{ContentBlock, Message};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
@@ -752,7 +752,7 @@ mod tests {
         let mut msgs = vec![
             Message::user_text("hi"),
             Message {
-                role: ruckcode_llm::Role::Assistant,
+                role: ruck_harness_llm::Role::Assistant,
                 content: vec![ContentBlock::ToolUse {
                     id: "c1".into(),
                     name: "Read".into(),

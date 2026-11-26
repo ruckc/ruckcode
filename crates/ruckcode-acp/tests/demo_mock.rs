@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use ruck_harness_llm::mock::MockProvider;
 use ruckcode_acp::schema::*;
 use ruckcode_acp::{spawn_in_process, Connection, Handler, RpcError};
 use ruckcode_core::{Agent, AgentOptions};
-use ruckcode_llm::mock::MockProvider;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 

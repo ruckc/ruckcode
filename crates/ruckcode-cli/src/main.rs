@@ -222,7 +222,7 @@ fn init_logging(to_file: bool) {
 fn main() -> ExitCode {
     // `rc __sandbox-exec ...`: the sandbox launcher. Must run before anything else (no runtime,
     // no threads); it never returns.
-    ruckcode_sandbox::launcher::maybe_run();
+    ruck_harness_sandbox::launcher::maybe_run();
     real_main()
 }
 

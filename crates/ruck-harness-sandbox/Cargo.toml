@@ -1,5 +1,5 @@
 [package]
-name = "ruckcode-sandbox"
+name = "ruck-harness-sandbox"
 description = "In-process command sandbox (namespaces, Landlock, seccomp, Seatbelt) and allowlist proxy for ruckcode"
 version.workspace = true
 edition.workspace = true

@@ -1,7 +1,7 @@
 //! Lifecycle modes loaded from `modes.toml`.
 
 use anyhow::{bail, Context, Result};
-use ruckcode_hooks::HooksConfig;
+use ruck_harness_hooks::HooksConfig;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -49,7 +49,7 @@ pub struct ModeDef {
     pub hooks: HooksConfig,
     /// Per-mode sandbox overrides (`[modes.<id>.sandbox]`); cannot turn the sandbox off.
     #[serde(default)]
-    pub sandbox: Option<ruckcode_sandbox::SandboxOverride>,
+    pub sandbox: Option<ruck_harness_sandbox::SandboxOverride>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

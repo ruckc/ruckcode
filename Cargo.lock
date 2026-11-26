@@ -2699,6 +2699,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruck-harness-hooks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "globset",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "ruck-harness-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ruck-harness-sandbox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs",
+ "landlock",
+ "libc",
+ "regex",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ruckcode-acp"
 version = "0.1.0"
 dependencies = [
@@ -2707,8 +2755,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "ruck-harness-llm",
  "ruckcode-core",
- "ruckcode-llm",
  "ruckcode-mcp",
  "ruckcode-tools",
  "serde",
@@ -2736,12 +2784,12 @@ dependencies = [
  "minisign-verify",
  "ratatui",
  "reqwest",
+ "ruck-harness-llm",
+ "ruck-harness-sandbox",
  "ruckcode-acp",
  "ruckcode-core",
- "ruckcode-llm",
  "ruckcode-mcp",
  "ruckcode-mise",
- "ruckcode-sandbox",
  "self-replace",
  "semver",
  "serde",
@@ -2767,11 +2815,11 @@ dependencies = [
  "dirs",
  "globset",
  "regex",
- "ruckcode-hooks",
- "ruckcode-llm",
+ "ruck-harness-hooks",
+ "ruck-harness-llm",
+ "ruck-harness-sandbox",
  "ruckcode-mcp",
  "ruckcode-mise",
- "ruckcode-sandbox",
  "ruckcode-tools",
  "serde",
  "serde_json",
@@ -2785,36 +2833,6 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
-]
-
-[[package]]
-name = "ruckcode-hooks"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "globset",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "ruckcode-llm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -2853,24 +2871,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruckcode-sandbox"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "dirs",
- "landlock",
- "libc",
- "regex",
- "seccompiler",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "ruckcode-tools"
 version = "0.1.0"
 dependencies = [
@@ -2883,8 +2883,8 @@ dependencies = [
  "libc",
  "regex",
  "reqwest",
- "ruckcode-llm",
- "ruckcode-sandbox",
+ "ruck-harness-llm",
+ "ruck-harness-sandbox",
  "serde",
  "serde_json",
  "tempfile",

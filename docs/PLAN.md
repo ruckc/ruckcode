@@ -13,14 +13,14 @@ A Rust agentic coding agent in the spirit of Claude Code, with:
 
 ```
 crates/
-  ruckcode-core     agent loop, sessions, context assembly, modes, permissions, config
-  ruckcode-llm      Provider trait + Anthropic + OpenAI-compatible clients (streaming, tool use)
-  ruckcode-tools    built-in tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
-  ruckcode-mise     mise task discovery, schema mapping, execution
-  ruckcode-mcp      MCP client (rmcp): connections, tool wrapping, lazy meta-tools
-  ruckcode-hooks    hook config, matching, runner, fix-turn feedback
-  ruckcode-acp      ACP JSON-RPC (stdio) agent server + client plumbing
-  ruckcode-cli      `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
+  ruckcode-core         agent loop, sessions, context assembly, modes, permissions, config
+  ruck-harness-llm      Provider trait + Anthropic + OpenAI-compatible clients (streaming, tool use)
+  ruckcode-tools        built-in tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
+  ruckcode-mise         mise task discovery, schema mapping, execution
+  ruckcode-mcp          MCP client (rmcp): connections, tool wrapping, lazy meta-tools
+  ruck-harness-hooks    hook config, matching, runner, fix-turn feedback
+  ruckcode-acp          ACP JSON-RPC (stdio) agent server + client plumbing
+  ruckcode-cli          `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
 ```
 
 ACP-first: the agent core is exposed only through ACP. `rc` launches the agent in-process over
@@ -37,7 +37,7 @@ Configured as profiles in `~/.config/ruckcode/config.toml`; each mode may set `p
 
 ### Onboarding and keys
 
-`ruckcode_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_core::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (no env-var keys; a legacy hand-written `api_key_env` is still read). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
+`ruck_harness_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_core::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (no env-var keys; a legacy hand-written `api_key_env` is still read). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
 
 ## Modes
 

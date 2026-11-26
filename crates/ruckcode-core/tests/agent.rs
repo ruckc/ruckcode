@@ -1,14 +1,14 @@
 use async_trait::async_trait;
+use ruck_harness_llm::mock::MockProvider;
+use ruck_harness_llm::{
+    ContentBlock, Message, Provider, Request, Response, Role, StopReason as LlmStop, StreamEvent,
+    Usage,
+};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
     ToolStatus,
 };
 use ruckcode_core::transcript::{PermissionOutcome, Record, TranscriptReader, UserSource};
-use ruckcode_llm::mock::MockProvider;
-use ruckcode_llm::{
-    ContentBlock, Message, Provider, Request, Response, Role, StopReason as LlmStop, StreamEvent,
-    Usage,
-};
 use ruckcode_tools::{Answer, Question, UserBridge};
 use serde_json::{json, Value};
 use std::collections::VecDeque;

@@ -10,12 +10,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ruck_harness_llm::ModelInfo;
 use ruckcode_core::config::Profile;
 use ruckcode_core::keys::{self, KeyInfo, KeyScope};
 use ruckcode_core::setup::{self, NewKey, SetupPlan, SetupReport};
 use ruckcode_core::setup_api;
 use ruckcode_core::{ModeSet, ProviderKind};
-use ruckcode_llm::ModelInfo;
 use zeroize::Zeroize;
 
 pub use self::input::TextInput;

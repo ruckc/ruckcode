@@ -466,8 +466,8 @@ pub async fn list_models(
 ) -> Result<Vec<ModelView>> {
     let kind_p = parse_kind(kind)?;
     let api = match kind_p {
-        ProviderKind::Anthropic => ruckcode_llm::ApiKind::Anthropic,
-        _ => ruckcode_llm::ApiKind::Openai,
+        ProviderKind::Anthropic => ruck_harness_llm::ApiKind::Anthropic,
+        _ => ruck_harness_llm::ApiKind::Openai,
     };
     let base = if base_url.trim().is_empty() {
         setup::default_base_url(kind_p).to_string()
@@ -475,7 +475,7 @@ pub async fn list_models(
         base_url.trim().to_string()
     };
     let mut key = resolve_models_auth(auth.as_ref(), user_dir)?;
-    let r = ruckcode_llm::list_models(api, &base, key.as_deref()).await;
+    let r = ruck_harness_llm::list_models(api, &base, key.as_deref()).await;
     if let Some(k) = key.as_mut() {
         k.zeroize();
     }
@@ -596,12 +596,12 @@ pub async fn probe(
         let ks = kind.as_str().to_string();
         let (api, url) = match kind {
             ProviderKind::Anthropic => (
-                ruckcode_llm::ApiKind::Anthropic,
+                ruck_harness_llm::ApiKind::Anthropic,
                 format!("{base}/v1/models"),
             ),
-            _ => (ruckcode_llm::ApiKind::Openai, format!("{base}/models")),
+            _ => (ruck_harness_llm::ApiKind::Openai, format!("{base}/models")),
         };
-        match ruckcode_llm::list_models(api, &base, key.as_deref()).await {
+        match ruck_harness_llm::list_models(api, &base, key.as_deref()).await {
             Ok(models) => {
                 attempts.push(ProbeAttempt {
                     kind: ks.clone(),

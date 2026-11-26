@@ -15,7 +15,7 @@
 //! 4. caches the commit and those two blobs; offline, the cached verified copy is used.
 
 use anyhow::{anyhow, bail, Context, Result};
-use ruckcode_sandbox::{ProjectPolicy, SandboxConfig, SandboxOverride};
+use ruck_harness_sandbox::{ProjectPolicy, SandboxConfig, SandboxOverride};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -81,7 +81,7 @@ struct Paths {
 }
 
 fn paths(data_dir: &Path, repo_root: &Path) -> Paths {
-    let key = ruckcode_sandbox::project_key(repo_root);
+    let key = ruck_harness_sandbox::project_key(repo_root);
     let base = data_dir.join("project-policy");
     Paths {
         state: base.join(format!("{key}.json")),
@@ -352,7 +352,7 @@ fn verified_fetch(url: &str, mirror: &Path, prefix: &str) -> Result<Fetched> {
 /// applying `insteadOf` rewrites.
 pub fn origin_url(root: &Path) -> Option<String> {
     // An explicit file: no includes, no `insteadOf`, no repository discovery.
-    let cfg = ruckcode_sandbox::git_common_dir(root)?.join("config");
+    let cfg = ruck_harness_sandbox::git_common_dir(root)?.join("config");
     let mut c = git_command(None, root);
     c.args(["config", "--no-includes", "--file"])
         .arg(&cfg)

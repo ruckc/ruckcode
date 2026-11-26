@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use ruck_harness_llm::mock::MockProvider;
+use ruck_harness_llm::{ContentBlock as LlmBlock, Message, Provider, Role};
 use ruckcode_acp::schema::*;
 use ruckcode_acp::{spawn_in_process, Connection, Handler, RpcError};
 use ruckcode_core::{Agent, AgentOptions};
-use ruckcode_llm::mock::MockProvider;
-use ruckcode_llm::{ContentBlock as LlmBlock, Message, Provider, Role};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
@@ -464,9 +464,9 @@ impl Provider for Slow {
     }
     async fn complete(
         &self,
-        _: ruckcode_llm::Request,
-        _: tokio::sync::mpsc::UnboundedSender<ruckcode_llm::StreamEvent>,
-    ) -> anyhow::Result<ruckcode_llm::Response> {
+        _: ruck_harness_llm::Request,
+        _: tokio::sync::mpsc::UnboundedSender<ruck_harness_llm::StreamEvent>,
+    ) -> anyhow::Result<ruck_harness_llm::Response> {
         tokio::time::sleep(Duration::from_secs(30)).await;
         unreachable!()
     }
@@ -760,13 +760,13 @@ impl Provider for UsageProvider {
     }
     async fn complete(
         &self,
-        _: ruckcode_llm::Request,
-        _: tokio::sync::mpsc::UnboundedSender<ruckcode_llm::StreamEvent>,
-    ) -> anyhow::Result<ruckcode_llm::Response> {
-        Ok(ruckcode_llm::Response {
+        _: ruck_harness_llm::Request,
+        _: tokio::sync::mpsc::UnboundedSender<ruck_harness_llm::StreamEvent>,
+    ) -> anyhow::Result<ruck_harness_llm::Response> {
+        Ok(ruck_harness_llm::Response {
             message: Message::assistant_text("counted"),
-            stop_reason: ruckcode_llm::StopReason::EndTurn,
-            usage: ruckcode_llm::Usage {
+            stop_reason: ruck_harness_llm::StopReason::EndTurn,
+            usage: ruck_harness_llm::Usage {
                 input_tokens: 1200,
                 output_tokens: 34,
                 ..Default::default()
@@ -1035,8 +1035,13 @@ async fn system_prompt_invalid_values_are_rejected() {
 
 // ---- token usage and cost ---------------------------------------------------------------------
 
-fn usage_of(input: u64, output: u64, read: Option<u64>, write: Option<u64>) -> ruckcode_llm::Usage {
-    ruckcode_llm::Usage {
+fn usage_of(
+    input: u64,
+    output: u64,
+    read: Option<u64>,
+    write: Option<u64>,
+) -> ruck_harness_llm::Usage {
+    ruck_harness_llm::Usage {
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: read,
@@ -1126,12 +1131,12 @@ async fn prompt_response_usage_without_cache_fields_or_without_usage() {
 async fn retry_after_429_does_not_double_count() {
     let env = Env::new();
     let m = mock([Message::assistant_text("ok")]);
-    let info = ruckcode_llm::RateLimitInfo::parse(
+    let info = ruck_harness_llm::RateLimitInfo::parse(
         &[("retry-after-ms".into(), "20".into())],
         "",
         std::time::SystemTime::now(),
     );
-    m.push_failure(ruckcode_llm::ApiError::new(
+    m.push_failure(ruck_harness_llm::ApiError::new(
         "test",
         429,
         "slow down".into(),
@@ -1157,7 +1162,7 @@ async fn retry_after_429_does_not_double_count() {
 async fn rate_limited_and_cancelled_turns_report_consumed_usage() {
     // Rate limited: request 1 succeeds (tool use), request 2 is told to wait an hour.
     let env = Env::new();
-    let info = ruckcode_llm::RateLimitInfo::parse(
+    let info = ruck_harness_llm::RateLimitInfo::parse(
         &[("retry-after".into(), "3600".into())],
         "",
         std::time::SystemTime::now(),
@@ -1167,7 +1172,7 @@ async fn rate_limited_and_cancelled_turns_report_consumed_usage() {
             tool_use("t1", "Bash", json!({"command": "true"})),
             usage_of(80, 20, None, None),
         )),
-        Err(ruckcode_llm::ApiError::new("test", 429, "x".into(), info).into()),
+        Err(ruck_harness_llm::ApiError::new("test", 429, "x".into(), info).into()),
     ]))));
     let c = env.connect(seq);
     init(&c, false).await;
@@ -1197,7 +1202,7 @@ async fn rate_limited_and_cancelled_turns_report_consumed_usage() {
 }
 
 /// Scripted `(message, usage)` results, one per request.
-struct Seq(Mutex<VecDeque<anyhow::Result<(Message, ruckcode_llm::Usage)>>>);
+struct Seq(Mutex<VecDeque<anyhow::Result<(Message, ruck_harness_llm::Usage)>>>);
 
 #[async_trait]
 impl Provider for Seq {
@@ -1206,16 +1211,16 @@ impl Provider for Seq {
     }
     async fn complete(
         &self,
-        _: ruckcode_llm::Request,
-        _: tokio::sync::mpsc::UnboundedSender<ruckcode_llm::StreamEvent>,
-    ) -> anyhow::Result<ruckcode_llm::Response> {
+        _: ruck_harness_llm::Request,
+        _: tokio::sync::mpsc::UnboundedSender<ruck_harness_llm::StreamEvent>,
+    ) -> anyhow::Result<ruck_harness_llm::Response> {
         let (message, usage) = self.0.lock().unwrap().pop_front().expect("scripted")?;
         let stop_reason = if message.tool_uses().next().is_some() {
-            ruckcode_llm::StopReason::ToolUse
+            ruck_harness_llm::StopReason::ToolUse
         } else {
-            ruckcode_llm::StopReason::EndTurn
+            ruck_harness_llm::StopReason::EndTurn
         };
-        Ok(ruckcode_llm::Response {
+        Ok(ruck_harness_llm::Response {
             message,
             stop_reason,
             usage,
