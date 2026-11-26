@@ -1,5 +1,6 @@
 [package]
-name = "ruckcode-acp"
+name = "ruck-harness-acp"
+description = "Agent Client Protocol (ACP) server for ruck-harness agents"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +12,9 @@ agent-client-protocol-schema.workspace = true
 futures.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-ruckcode-core.workspace = true
+ruck-harness-core.workspace = true
+ruck-harness-ident.workspace = true
+ruck-harness-llm.workspace = true
 ruck-harness-mcp.workspace = true
 ruck-harness-tools.workspace = true
 serde.workspace = true
@@ -22,5 +25,7 @@ tokio-util = { workspace = true, features = ["compat"] }
 tracing.workspace = true
 
 [dev-dependencies]
-ruck-harness-llm.workspace = true
+ruck-harness-ident = { workspace = true, features = ["testing"] }
+ruck-harness-tools = { workspace = true, features = ["test-util"] }
+toml.workspace = true
 tempfile.workspace = true

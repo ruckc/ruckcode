@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
-use ruckcode_acp::schema::{self, SessionMode, SessionModeState};
-use ruckcode_acp::Connection;
+use ruck_harness_acp::schema::{self, SessionMode, SessionModeState};
+use ruck_harness_acp::Connection;
+use ruckcode_core::identity::RUCKCODE;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -72,9 +73,20 @@ pub struct Started {
     pub modes: Option<SessionModeState>,
 }
 
+/// The ruckcode ACP extension method names (`_ruckcode/...`), from the product identity.
+pub fn ext_methods() -> &'static schema::ExtMethods {
+    static METHODS: std::sync::OnceLock<schema::ExtMethods> = std::sync::OnceLock::new();
+    METHODS.get_or_init(|| schema::ExtMethods::new(RUCKCODE.acp_namespace))
+}
+
+/// What `rc acp` and the in-process server report as `agentInfo`.
+pub fn acp_info() -> ruck_harness_acp::AcpInfo {
+    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION)
+}
+
 pub async fn initialize(conn: &Connection) -> Result<()> {
-    let req = schema::InitializeRequest::new(ruckcode_acp::PROTOCOL_VERSION)
-        .client_capabilities(schema::ruckcode_client_capabilities())
+    let req = schema::InitializeRequest::new(ruck_harness_acp::PROTOCOL_VERSION)
+        .client_capabilities(schema::client_capabilities(RUCKCODE.acp_namespace))
         .client_info(schema::Implementation::new("rc", env!("CARGO_PKG_VERSION")));
     let _: schema::InitializeResponse = conn
         .request_typed(schema::INITIALIZE, &req)
@@ -130,7 +142,7 @@ pub async fn set_model(conn: &Connection, session_id: &str, model: Option<&str>)
         session_id: session_id.to_string(),
         model: model.map(String::from),
     };
-    conn.request(schema::SET_MODEL, serde_json::to_value(req)?)
+    conn.request(&ext_methods().set_model, serde_json::to_value(req)?)
         .await
         .map_err(|e| anyhow!("set_model failed: {e}"))?;
     Ok(())

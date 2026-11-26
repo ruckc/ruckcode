@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use ruck_harness_acp::schema::*;
+use ruck_harness_acp::{spawn_in_process, Connection, Handler, RpcError};
 use ruck_harness_llm::mock::MockProvider;
-use ruckcode_acp::schema::*;
-use ruckcode_acp::{spawn_in_process, Connection, Handler, RpcError};
 use ruckcode_core::{Agent, AgentOptions};
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -49,7 +49,7 @@ impl Handler for Client {
                     None => json!({"outcome":{"outcome":"cancelled"}}),
                 })
             }
-            ASK_USER_QUESTION => {
+            "_ruckcode/ask_user_question" => {
                 self.ask_reqs.lock().unwrap().push(params.clone());
                 let qs = &params["questions"];
                 Ok(json!({"cancelled": false, "answers": [
@@ -94,7 +94,7 @@ impl Env {
             user_config_dir: Some(user.path().to_path_buf()),
             ..Default::default()
         }));
-        let conn = spawn_in_process(agent, client.clone());
+        let conn = spawn_in_process(agent, info(), client.clone());
         let caps = if ask_cap {
             json!({"_meta":{"ruckcode":{"askUserQuestion":true}}})
         } else {
@@ -203,4 +203,8 @@ async fn plain_prompt_and_unavailable_tool() {
     assert!(text.contains("You said: hello"));
     let text = env.prompt(&sid, "mock:mode nonexistent").await;
     assert!(!text.is_empty());
+}
+
+fn info() -> ruck_harness_acp::AcpInfo {
+    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION)
 }

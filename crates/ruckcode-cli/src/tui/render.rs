@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as UiBlock, Borders, Clear, Paragraph};
 use ratatui::Frame;
-use ruckcode_acp::schema::{PlanEntryStatus, ToolCallStatus};
+use ruck_harness_acp::schema::{PlanEntryStatus, ToolCallStatus};
 
 use super::app::{App, AskModal, Block, DiffKind, Modal, PermissionModal, PickerModal, ToolView};
 
@@ -691,7 +691,7 @@ mod tests {
     use crate::client::{AskRequest, Question, QuestionOption};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use ruckcode_acp::schema::{
+    use ruck_harness_acp::schema::{
         ContentBlock, ContentChunk, Diff, PermissionOption, PermissionOptionKind, Plan, PlanEntry,
         PlanEntryPriority, RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallContent,
         ToolCallUpdate, ToolCallUpdateFields,

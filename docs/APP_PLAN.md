@@ -24,7 +24,7 @@ Agent connection ("agent host"), chosen per window and project:
 
 | Host | How |
 |------|-----|
-| Local (default) | The Tauri backend embeds `ruckcode_core::Agent` behind `ruckcode_acp` over an in-process pipe. ACP JSON-RPC lines are relayed to the webview through a Tauri `Channel`, and outgoing lines go back through a Tauri command. |
+| Local (default) | The Tauri backend embeds `ruckcode_core::Agent` behind `ruck_harness_acp` over an in-process pipe. ACP JSON-RPC lines are relayed to the webview through a Tauri `Channel`, and outgoing lines go back through a Tauri command. |
 | WSL2 (Windows) | The Tauri backend spawns `wsl.exe -d <distro> --cd <linux path> --exec sh -lc <script ending in exec rc acp>` and relays its stdio the same way. The app lists distros (`wsl.exe -l -v`, falling back to `-l -q`), checks for `rc` inside the distro (and installs the copy bundled in the MSI automatically), and translates `\\wsl$\...` paths to Linux paths. |
 | Subprocess (any OS, optional) | `rc acp` as a child process. Useful for running against a specific `rc` binary. |
 
@@ -108,7 +108,7 @@ Built as planned, with these deviations and details:
   way to keep `--workspace` webkit-free was to exclude `crates/ruckcode-app` from the root
   workspace (`exclude` in the root `Cargo.toml`) and give it its own `[workspace]` and
   `Cargo.lock`. Use `--manifest-path crates/ruckcode-app/Cargo.toml` (CI does) instead of
-  `-p ruckcode-app`. It depends on `ruckcode-core` and `ruckcode-acp` by path.
+  `-p ruckcode-app`. It depends on `ruckcode-core` and `ruck-harness-acp` by path.
 - **SvelteKit 3.** Configuration lives in `vite.config.ts` (no `svelte.config.js`), and
   `$lib` is gone, so imports are relative. TypeScript is 6.x (svelte-check and typescript-eslint
   do not support 7 yet). The ACP SDK is `@agentclientprotocol/sdk` 2.0 (stable v1 entrypoint,
@@ -119,7 +119,7 @@ Built as planned, with these deviations and details:
   `session.notices` and `_meta.ruckcode.{askUserQuestion,notices}`.
 - **Backend.** `agent_connect(cwd, host?, rcPath?, onLine: Channel<String>) -> id`,
   `agent_send(id, line)`, `agent_disconnect(id)`. Hosts: `local` (embedded agent through the new
-  `ruckcode_acp::spawn_in_process_raw`) and `subprocess` (`rc acp`, path configurable; no UI for
+  `ruck_harness_acp::spawn_in_process_raw`) and `subprocess` (`rc acp`, path configurable; no UI for
   it yet). Capabilities grant only the three app commands (generated `allow-*` permissions via
   the build script's app manifest) and `dialog:allow-open`.
 - **Browser demo.** `?mock=1` swaps the Tauri host for a scripted in-memory agent

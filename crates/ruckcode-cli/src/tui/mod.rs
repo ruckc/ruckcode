@@ -23,11 +23,11 @@ use crossterm::terminal::{
 use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use ruckcode_acp::schema::{
+use ruck_harness_acp::schema::{
     self, PromptResponse, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SessionNotification, SessionUpdate,
 };
-use ruckcode_acp::{Connection, Handler, RpcError};
+use ruck_harness_acp::{Connection, Handler, RpcError};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 
@@ -79,7 +79,7 @@ impl Handler for TuiHandler {
                 let outcome = rx.await.unwrap_or(RequestPermissionOutcome::Cancelled);
                 Ok(serde_json::to_value(RequestPermissionResponse::new(outcome)).unwrap())
             }
-            schema::ASK_USER_QUESTION => {
+            m if m == client::ext_methods().ask_user_question => {
                 let req: AskRequest = serde_json::from_value(params)
                     .map_err(|e| RpcError::invalid_params(e.to_string()))?;
                 let (reply, rx) = oneshot::channel();
@@ -94,7 +94,7 @@ impl Handler for TuiHandler {
     }
 
     async fn notification(&self, method: &str, params: Value) {
-        if method == schema::RATE_LIMIT {
+        if method == client::ext_methods().rate_limit {
             let _ = self.tx.send(UiEvent::RateLimit(params));
             return;
         }

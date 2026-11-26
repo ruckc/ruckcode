@@ -1,8 +1,11 @@
-//! Serves a [`ruckcode_core::Agent`] over ACP.
+//! Serves a [`ruck_harness_core::Agent`] over ACP.
 //!
-//! # Extension: `_ruckcode/ask_user_question` (agent -> client request)
+//! Every product extension below is named after the identity's `acp_namespace` (`{ns}`): the
+//! methods are `_{ns}/...` and the `_meta` keys live under `_meta.{ns}`.
 //!
-//! Sent only when the client advertised `clientCapabilities._meta.ruckcode.askUserQuestion = true`.
+//! # Extension: `_{ns}/ask_user_question` (agent -> client request)
+//!
+//! Sent only when the client advertised `clientCapabilities._meta.{ns}.askUserQuestion = true`.
 //!
 //! ```json
 //! // params
@@ -16,12 +19,12 @@
 //! `other` carries free text when the user chose "Other". `cancelled: true` aborts the tool call.
 //! Without the capability, each question is posed through `session/request_permission` instead.
 //!
-//! # Extension: `_ruckcode/list_sessions` (client -> agent request, deprecated)
+//! # Extension: `_{ns}/list_sessions` (client -> agent request, deprecated)
 //!
 //! `{"cwd": "/path"}` -> `{"sessions": [{"id", "createdAt", "updatedAt", "firstPrompt", "mode"}]}`.
 //! Deprecated alias of the standard `session/list`.
 //!
-//! # Extension: `_ruckcode/set_model` (client -> agent request)
+//! # Extension: `_{ns}/set_model` (client -> agent request)
 //!
 //! `{"sessionId": "...", "model": "claude-haiku-5-5"}` -> `{}`. Pins the model for this session,
 //! overriding the mode's and profile's model (recorded in the transcript as `model_change`).
@@ -33,12 +36,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
-use ruck_harness_mcp::McpServerConfig;
-use ruck_harness_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
-use ruckcode_core::{
+use ruck_harness_core::{
     Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, RateLimitEvent, SessionEvent,
     SessionInfo as CoreSessionInfo, StopReason as CoreStop, ToolStatus, MAX_CLIENT_INSTRUCTIONS,
 };
+use ruck_harness_mcp::McpServerConfig;
+use ruck_harness_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -46,8 +49,27 @@ use crate::rpc::{self, Connection, Handler, RpcError};
 use crate::schema::{self as acp, *};
 use agent_client_protocol as sdk;
 
+/// What the server says about itself in `initialize`'s `agentInfo`. The name is the identity's
+/// name; the version is the product's, so it is passed in rather than guessed from this crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpInfo {
+    pub version: String,
+}
+
+impl AcpInfo {
+    pub fn new(version: impl Into<String>) -> Self {
+        Self {
+            version: version.into(),
+        }
+    }
+}
+
 struct Shared {
     agent: Arc<Agent>,
+    info: AcpInfo,
+    /// `identity.acp_namespace`: `_meta.{ns}` and the `_{ns}/*` methods.
+    ns: &'static str,
+    methods: ExtMethods,
     conn: OnceLock<Connection>,
     caps: Mutex<ClientCapabilities>,
     /// Models offered per session (for `config_option_update`), filled when a session is
@@ -78,7 +100,7 @@ impl Shared {
         let shared = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            let commands = ruckcode_core::Command::ALL
+            let commands = ruck_harness_core::Command::ALL
                 .iter()
                 .map(|(name, desc, hint)| {
                     let c = AvailableCommand::new(*name, *desc);
@@ -116,7 +138,7 @@ impl Shared {
     }
 
     fn notices_supported(&self) -> bool {
-        supports_notices(&self.caps.lock().unwrap())
+        supports_notices(&self.caps.lock().unwrap(), self.ns)
     }
 
     fn model_option_for(&self, session_id: &str, current: &str) -> Option<SessionConfigOption> {
@@ -131,7 +153,7 @@ impl Shared {
     }
 
     fn rate_limit_supported(&self) -> bool {
-        supports_rate_limit(&self.caps.lock().unwrap())
+        supports_rate_limit(&self.caps.lock().unwrap(), self.ns)
     }
 
     fn convert_event(&self, session_id: &str, ev: SessionEvent) -> Vec<SessionUpdate> {
@@ -200,14 +222,14 @@ fn rate_limit_text(ev: &RateLimitEvent) -> String {
             reason, wait_ms, ..
         } => format!(
             "{reason} \u{2014} retrying in {}",
-            ruckcode_core::retry::format_wait(std::time::Duration::from_millis(*wait_ms))
+            ruck_harness_core::retry::format_wait(std::time::Duration::from_millis(*wait_ms))
         ),
         RateLimitEvent::Resumed => "retrying".into(),
         RateLimitEvent::Stopped { message, .. } => message.clone(),
     }
 }
 
-/// Params of the `_ruckcode/rate_limit` notification.
+/// Params of the `_{ns}/rate_limit` notification.
 ///
 /// `status` is `waiting` (live countdown to `resumeAtMs`, Unix epoch ms), `resumed` (the wait
 /// ended or was cancelled; clear the countdown) or `stopped` (the turn ends; `message` says why
@@ -362,7 +384,7 @@ impl UserBridge for Bridge {
         questions: Vec<Question>,
     ) -> anyhow::Result<Vec<Answer>> {
         let sh = &self.0;
-        if supports_ask_user_question(&sh.caps.lock().unwrap()) {
+        if supports_ask_user_question(&sh.caps.lock().unwrap(), sh.ns) {
             let req = AskUserQuestionRequest {
                 session_id: session_id.to_string(),
                 questions: questions
@@ -372,7 +394,7 @@ impl UserBridge for Bridge {
             };
             let resp: AskUserQuestionResponse = sh
                 .conn()?
-                .request_typed(ASK_USER_QUESTION, &req)
+                .request_typed(&sh.methods.ask_user_question, &req)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             if resp.cancelled {
@@ -466,7 +488,8 @@ impl Client for Bridge {
         if let SessionEvent::RateLimit(r) = &event {
             if self.0.rate_limit_supported() {
                 if let Ok(conn) = self.0.conn() {
-                    let _ = conn.notify(RATE_LIMIT, rate_limit_params(session_id, r));
+                    let _ =
+                        conn.notify(&self.0.methods.rate_limit, rate_limit_params(session_id, r));
                 }
                 return;
             }
@@ -531,29 +554,29 @@ fn take_mcp_servers(params: &mut Value) -> Vec<Value> {
     }
 }
 
-/// The client's `_meta.ruckcode.systemPrompt.append`: `Ok(None)` when absent (leave the session's
+/// The client's `_meta.{ns}.systemPrompt.append`: `Ok(None)` when absent (leave the session's
 /// stored instructions alone), an invalid-params error when malformed or over the size limit.
 /// Unknown keys under `systemPrompt` are ignored.
-fn client_instructions(params: &Value) -> Result<Option<String>, RpcError> {
-    let Some(sp) = params.pointer("/_meta/ruckcode/systemPrompt") else {
+fn client_instructions(ns: &str, params: &Value) -> Result<Option<String>, RpcError> {
+    let Some(sp) = params.pointer(&format!("/_meta/{ns}/systemPrompt")) else {
         return Ok(None);
     };
     let Some(obj) = sp.as_object() else {
-        return Err(RpcError::invalid_params(
-            "_meta.ruckcode.systemPrompt must be an object like {\"append\": \"...\"}",
-        ));
+        return Err(RpcError::invalid_params(format!(
+            "_meta.{ns}.systemPrompt must be an object like {{\"append\": \"...\"}}"
+        )));
     };
     match obj.get("append") {
         None => Ok(None),
         Some(Value::String(s)) if s.len() > MAX_CLIENT_INSTRUCTIONS => {
             Err(RpcError::invalid_params(format!(
-                "_meta.ruckcode.systemPrompt.append is {} bytes; the limit is {MAX_CLIENT_INSTRUCTIONS}",
+                "_meta.{ns}.systemPrompt.append is {} bytes; the limit is {MAX_CLIENT_INSTRUCTIONS}",
                 s.len()
             )))
         }
         Some(Value::String(s)) => Ok(Some(s.clone())),
         Some(_) => Err(RpcError::invalid_params(
-            "_meta.ruckcode.systemPrompt.append must be a string",
+            format!("_meta.{ns}.systemPrompt.append must be a string"),
         )),
     }
 }
@@ -562,9 +585,9 @@ fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, RpcError> {
     serde_json::to_value(v).map_err(|e| RpcError::internal(e.to_string()))
 }
 
-/// Agent capability extensions under `_meta.ruckcode`.
-fn agent_meta() -> serde_json::Map<String, Value> {
-    let Value::Object(m) = json!({"ruckcode": {"systemPrompt": {"append": true}}}) else {
+/// Agent capability extensions under `_meta.{ns}`.
+fn agent_meta(ns: &str) -> serde_json::Map<String, Value> {
+    let Value::Object(m) = json!({ns: {"systemPrompt": {"append": true}}}) else {
         unreachable!()
     };
     m
@@ -578,10 +601,15 @@ fn session_capabilities() -> SessionCapabilities {
 }
 
 impl AcpAgent {
-    pub fn new(agent: Arc<Agent>) -> Self {
+    /// The namespace and the name in `agentInfo` come from the agent's identity.
+    pub fn new(agent: Arc<Agent>, info: AcpInfo) -> Self {
+        let ns = agent.identity().acp_namespace;
         Self {
             shared: Arc::new(Shared {
                 agent,
+                info,
+                ns,
+                methods: ExtMethods::new(ns),
                 conn: OnceLock::new(),
                 caps: Mutex::default(),
                 models: Mutex::default(),
@@ -622,7 +650,7 @@ impl AcpAgent {
             .list_sessions(&cwd)?
             .into_iter()
             .map(|s| {
-                let Value::Object(meta) = json!({"ruckcode": {
+                let Value::Object(meta) = json!({self.shared.ns: {
                     "createdAt": s.created_at, "mode": s.mode, "firstPrompt": s.first_prompt}})
                 else {
                     unreachable!()
@@ -674,15 +702,18 @@ impl Handler for AcpAgent {
                                 )
                                 .mcp_capabilities(McpCapabilities::new().http(true).sse(false))
                                 .session_capabilities(session_capabilities())
-                                .meta(agent_meta()),
+                                .meta(agent_meta(self.shared.ns)),
                         )
-                        .agent_info(Implementation::new("ruckcode", env!("CARGO_PKG_VERSION"))),
+                        .agent_info(Implementation::new(
+                            self.shared.agent.identity().name,
+                            self.shared.info.version.clone(),
+                        )),
                 )
             }
             AUTHENTICATE => Ok(json!({})),
             SESSION_NEW => {
                 let mcp = take_mcp_servers(&mut params);
-                let instructions = client_instructions(&params)?;
+                let instructions = client_instructions(self.shared.ns, &params)?;
                 let req: NewSessionRequest = parse(params)?;
                 let info = self
                     .agent()
@@ -703,7 +734,7 @@ impl Handler for AcpAgent {
             }
             SESSION_LOAD => {
                 let mcp = take_mcp_servers(&mut params);
-                let instructions = client_instructions(&params)?;
+                let instructions = client_instructions(self.shared.ns, &params)?;
                 let req: LoadSessionRequest = parse(params)?;
                 let info = self
                     .agent()
@@ -728,7 +759,7 @@ impl Handler for AcpAgent {
             }
             SESSION_RESUME => {
                 let mcp = take_mcp_servers(&mut params);
-                let instructions = client_instructions(&params)?;
+                let instructions = client_instructions(self.shared.ns, &params)?;
                 let req: ResumeSessionRequest = parse(params)?;
                 let info = self
                     .agent()
@@ -766,7 +797,7 @@ impl Handler for AcpAgent {
                     .prompt_with_usage(&session_id.0, prompt_to_text(&blocks), self.client())
                     .await?;
                 // `rate_limited` and `thinking_loop` are not ACP stop reasons: report `end_turn`
-                // and carry the real reason in `_meta.ruckcode.stopReason` for clients that know
+                // and carry the real reason in `_meta.{ns}.stopReason` for clients that know
                 // about it.
                 let custom = matches!(
                     stop,
@@ -787,10 +818,10 @@ impl Handler for AcpAgent {
                     .usage(usage.as_ref().map(prompt_usage)),
                 )?;
                 if let Some(reason) = custom {
-                    resp["_meta"] = json!({"ruckcode": {"stopReason": reason}});
+                    resp["_meta"] = json!({self.shared.ns: {"stopReason": reason}});
                     if stop == CoreStop::ToolLoop {
                         if let Some(kind) = self.agent().last_loop_kind(&session_id.0).await {
-                            resp["_meta"]["ruckcode"]["loopKind"] = json!(kind);
+                            resp["_meta"][self.shared.ns]["loopKind"] = json!(kind);
                         }
                     }
                 }
@@ -827,14 +858,14 @@ impl Handler for AcpAgent {
                     .collect();
                 to_value(&SetSessionConfigOptionResponse::new(options))
             }
-            SET_MODEL => {
+            m if m == self.shared.methods.set_model => {
                 let req: SetModelRequest = parse(params)?;
                 self.agent()
                     .set_session_model(&req.session_id, req.model, self.client())
                     .await?;
                 Ok(json!({}))
             }
-            LIST_SESSIONS => {
+            m if m == self.shared.methods.list_sessions => {
                 let req: ListSessionsExtRequest = parse(params)?;
                 let sessions = self
                     .agent()
@@ -864,19 +895,25 @@ impl Handler for AcpAgent {
 }
 
 /// Serve over arbitrary streams; returns when the peer disconnects.
-pub async fn serve<R, W>(agent: Arc<Agent>, reader: R, writer: W) -> anyhow::Result<()>
+pub async fn serve<R, W>(
+    agent: Arc<Agent>,
+    info: AcpInfo,
+    reader: R,
+    writer: W,
+) -> anyhow::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    serve_transport(agent, rpc::lines_transport(reader, writer)).await
+    serve_transport(agent, info, rpc::lines_transport(reader, writer)).await
 }
 
 async fn serve_transport(
     agent: Arc<Agent>,
+    info: AcpInfo,
     transport: impl sdk::ConnectTo<sdk::Agent> + 'static,
 ) -> anyhow::Result<()> {
-    let acp = Arc::new(AcpAgent::new(agent));
+    let acp = Arc::new(AcpAgent::new(agent, info));
     let (link, conn) = Connection::link();
     acp.set_connection(conn);
     rpc::run(sdk::Agent, transport, acp, link, None)
@@ -884,18 +921,22 @@ async fn serve_transport(
         .map_err(|e| anyhow::anyhow!("acp connection: {e}"))
 }
 
-pub async fn serve_stdio(agent: Arc<Agent>) -> anyhow::Result<()> {
-    serve(agent, tokio::io::stdin(), tokio::io::stdout()).await
+pub async fn serve_stdio(agent: Arc<Agent>, info: AcpInfo) -> anyhow::Result<()> {
+    serve(agent, info, tokio::io::stdin(), tokio::io::stdout()).await
 }
 
 /// Wire an agent to a client-side handler in process (over an in-memory byte pipe, so the wire
 /// is the same as over stdio); returns the client-side connection.
-pub fn spawn_in_process(agent: Arc<Agent>, client_handler: Arc<dyn Handler>) -> Connection {
+pub fn spawn_in_process(
+    agent: Arc<Agent>,
+    info: AcpInfo,
+    client_handler: Arc<dyn Handler>,
+) -> Connection {
     let (a, b) = tokio::io::duplex(1024 * 1024);
     let (ar, aw) = tokio::io::split(a);
     let (br, bw) = tokio::io::split(b);
     tokio::spawn(async move {
-        let _ = serve(agent, ar, aw).await;
+        let _ = serve(agent, info, ar, aw).await;
     });
     rpc::spawn_client(rpc::lines_transport(br, bw), client_handler)
 }
@@ -906,6 +947,7 @@ pub fn spawn_in_process(agent: Arc<Agent>, client_handler: Arc<dyn Handler>) -> 
 /// connection; the receiver then closes.
 pub fn spawn_in_process_raw(
     agent: Arc<Agent>,
+    info: AcpInfo,
 ) -> (
     tokio::sync::mpsc::UnboundedSender<String>,
     tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -915,7 +957,7 @@ pub fn spawn_in_process_raw(
     let (ar, aw) = tokio::io::split(a);
     let (br, mut bw) = tokio::io::split(b);
     tokio::spawn(async move {
-        let _ = serve(agent, ar, aw).await;
+        let _ = serve(agent, info, ar, aw).await;
     });
     let (to_agent, mut from_host) = tokio::sync::mpsc::unbounded_channel::<String>();
     let (to_host, from_agent) = tokio::sync::mpsc::unbounded_channel::<String>();

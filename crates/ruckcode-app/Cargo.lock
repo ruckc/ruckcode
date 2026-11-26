@@ -3251,6 +3251,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruck-harness-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "agent-client-protocol-schema",
+ "anyhow",
+ "async-trait",
+ "futures",
+ "ruck-harness-core",
+ "ruck-harness-ident",
+ "ruck-harness-llm",
+ "ruck-harness-mcp",
+ "ruck-harness-tools",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "ruck-harness-core"
 version = "0.1.0"
 dependencies = [
@@ -3387,31 +3409,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruckcode-acp"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol",
- "agent-client-protocol-schema",
- "anyhow",
- "async-trait",
- "futures",
- "ruck-harness-mcp",
- "ruck-harness-tools",
- "ruckcode-core",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "ruckcode-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ruckcode-acp",
+ "ruck-harness-acp",
  "ruckcode-core",
  "serde",
  "serde_json",

@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use ruck_harness_acp::schema::*;
+use ruck_harness_acp::{spawn_in_process, Connection, Handler, RpcError};
 use ruck_harness_llm::mock::MockProvider;
 use ruck_harness_llm::{ContentBlock as LlmBlock, Message, Provider, Role};
-use ruckcode_acp::schema::*;
-use ruckcode_acp::{spawn_in_process, Connection, Handler, RpcError};
 use ruckcode_core::{Agent, AgentOptions};
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -49,7 +49,7 @@ impl Handler for TestClient {
                     None => json!({"outcome":{"outcome":"cancelled"}}),
                 })
             }
-            ASK_USER_QUESTION => {
+            "_ruckcode/ask_user_question" => {
                 self.ask_reqs.lock().unwrap().push(params);
                 Ok(self.ask_reply.lock().unwrap().clone().unwrap())
             }
@@ -96,7 +96,7 @@ impl Env {
         }))
     }
     fn connect(&self, p: Arc<dyn Provider>) -> Connection {
-        spawn_in_process(self.agent(p), self.client.clone())
+        spawn_in_process(self.agent(p), info(), self.client.clone())
     }
 }
 
@@ -221,7 +221,7 @@ async fn text_prompt_streams() {
         .all(|n| *n.session_id.0 == *sid));
 
     let l = c
-        .request(LIST_SESSIONS, json!({"cwd":env.cwd()}))
+        .request("_ruckcode/list_sessions", json!({"cwd":env.cwd()}))
         .await
         .unwrap();
     assert_eq!(l["sessions"][0]["id"], sid);
@@ -694,7 +694,7 @@ async fn standard_session_list_and_legacy_alias() {
     assert!(l.get("nextCursor").is_none());
     // Deprecated alias keeps its original shape.
     let old = c
-        .request(LIST_SESSIONS, json!({"cwd": env.cwd()}))
+        .request("_ruckcode/list_sessions", json!({"cwd": env.cwd()}))
         .await
         .unwrap();
     assert_eq!(old["sessions"][0]["id"], sid.as_str());
@@ -796,7 +796,7 @@ async fn notices_use_standard_update_only_for_capable_clients() {
         init_with(&c, caps).await;
         let sid = new_session(&c, &env).await;
         c.request(
-            SET_MODEL,
+            "_ruckcode/set_model",
             json!({"sessionId": sid, "model": "pinned-model"}),
         )
         .await
@@ -891,7 +891,7 @@ async fn tool_call_update_omits_empty_content() {
 #[tokio::test]
 async fn raw_in_process_relays_json_lines() {
     let env = Env::new();
-    let (tx, mut rx) = ruckcode_acp::spawn_in_process_raw(env.agent(mock([])));
+    let (tx, mut rx) = ruck_harness_acp::spawn_in_process_raw(env.agent(mock([])), info());
     tx.send(
         json!({"jsonrpc":"2.0","id":1,"method":INITIALIZE,"params":{"protocolVersion":1}})
             .to_string(),
@@ -1424,4 +1424,8 @@ async fn oscillation_tool_loop_reports_its_kind() {
     let r = prompt(&c, &sid, "go").await;
     assert_eq!(r["_meta"]["ruckcode"]["stopReason"], "tool_loop");
     assert_eq!(r["_meta"]["ruckcode"]["loopKind"], "oscillation");
+}
+
+fn info() -> ruck_harness_acp::AcpInfo {
+    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION)
 }

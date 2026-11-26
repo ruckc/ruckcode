@@ -4,7 +4,7 @@
 //! This module only keeps two things:
 //!
 //! - a method-string + `serde_json::Value` view ([`Handler`], [`Connection`]) so that extension
-//!   methods (`_ruckcode/*`), `_meta` and our lenient parsing stay independent of the typed
+//!   methods (`_{ns}/*`), `_meta` and our lenient parsing stay independent of the typed
 //!   schema, and
 //! - the transport: newline-delimited JSON over tokio streams, where blank and non-JSON lines
 //!   are skipped (the SDK would answer them with a `-32700` error).
@@ -516,7 +516,7 @@ mod tests {
     async fn extension_meta_preserved() {
         let (ha, hb) = (Echo::new(), Echo::new());
         let (a, _b) = pair(ha, hb);
-        let p = json!({"_meta":{"ruckcode":{"x":true}},"v":[1,{"k":null}]});
+        let p = json!({"_meta":{"acme":{"x":true}},"v":[1,{"k":null}]});
         assert_eq!(a.request("echo", p.clone()).await.unwrap(), p);
     }
 }

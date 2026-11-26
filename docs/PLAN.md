@@ -23,7 +23,7 @@ crates/
   ruckcode-mise         mise task discovery, schema mapping, execution
   ruck-harness-mcp      MCP client (rmcp): connections, tool wrapping, lazy meta-tools
   ruck-harness-hooks    hook config, matching, runner, fix-turn feedback
-  ruckcode-acp          ACP JSON-RPC (stdio) agent server + client plumbing
+  ruck-harness-acp      ACP JSON-RPC (stdio) agent server + client plumbing
   ruckcode-cli          `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
 ```
 

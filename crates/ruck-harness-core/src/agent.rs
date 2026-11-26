@@ -453,6 +453,11 @@ struct Shared {
 }
 
 impl Agent {
+    /// The identity of the product this agent runs for.
+    pub fn identity(&self) -> &ruck_harness_ident::AppIdentity {
+        self.ext.identity()
+    }
+
     pub fn new(options: AgentOptions, ext: Arc<dyn AgentExtension>) -> Self {
         Self {
             options,
