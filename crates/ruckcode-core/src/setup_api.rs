@@ -174,7 +174,7 @@ pub fn keys_list(user_dir: Option<&Path>, project: &Path) -> Result<KeysList> {
 pub fn state(project: &Path, user_dir: Option<&Path>) -> SetupState {
     let profiles: Vec<Profile> = setup::configured_profiles(project, user_dir);
     let default_profile = crate::Config::load(project, user_dir)
-        .map(|c| c.default_profile)
+        .map(|c| c.harness.default_profile)
         .unwrap_or_default();
     SetupState {
         needs_onboarding: setup::needs_onboarding(project, user_dir),
@@ -777,6 +777,7 @@ pub fn keys_use(
         None => {
             crate::Config::load(project, user_dir)
                 .context("loading config")?
+                .harness
                 .default_profile
         }
     };

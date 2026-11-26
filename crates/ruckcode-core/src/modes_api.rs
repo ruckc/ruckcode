@@ -751,7 +751,7 @@ pub async fn catalog(project: &Path, user_dir: Option<&Path>) -> Catalog {
                     .collect()
             })
             .unwrap_or_default(),
-        default_profile: cfg.map(|c| c.default_profile),
+        default_profile: cfg.map(|c| c.harness.default_profile),
         hook_events: event_info(),
         permission_values: ["allow", "ask", "deny"].map(String::from).to_vec(),
         on_failure_values: ["ignore", "block", "fix_turn"].map(String::from).to_vec(),
