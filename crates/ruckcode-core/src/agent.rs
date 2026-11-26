@@ -1189,7 +1189,7 @@ impl Agent {
                 Some(&profile),
             )
             .await;
-            let tools = build_tools(s, &profile);
+            let tools = build_tools(s, &profile, self.options.user_config_dir.as_deref());
             let specs: Vec<_> = tools.iter().map(|t| t.spec()).collect();
             // Before every request, mid-turn included: compact when the prompt is near the
             // window (keeping the exchange in flight), then enforce the hard ceiling.
@@ -1802,9 +1802,10 @@ impl Agent {
             .sandbox
             .with_override(s.mode_def().sandbox.as_ref());
         let config_dir = crate::config::user_config_dir(self.options.user_config_dir.as_deref());
-        // Only process-spawning tools need the sandbox itself (and its proxy); the others get
-        // the path guards for ruckcode's config and secrets.
-        let sb = if kind == ToolKind::Execute {
+        // Process-spawning tools need the sandbox itself (and its proxy), and the in-process
+        // network tools (WebFetch, WebSearch) its network gate; the others get the path guards
+        // for ruckcode's config and secrets.
+        let sb = if matches!(kind, ToolKind::Execute | ToolKind::Fetch) {
             Some(match &s.sandbox {
                 Some(sb) => sb.clone(),
                 None => {
@@ -2464,9 +2465,10 @@ fn notify_blocked(s: &SessionState, client: &Arc<dyn Client>, outcomes: &[HookOu
 }
 
 /// Tools for the session's current mode.
-fn build_tools(s: &SessionState, profile: &Profile) -> Vec<Arc<dyn Tool>> {
+fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> Vec<Arc<dyn Tool>> {
     let mode = s.mode_def();
-    let mut tools: Vec<Arc<dyn Tool>> = ruckcode_tools::builtin_tools()
+    let web = s.config.web_resolved(user_dir);
+    let mut tools: Vec<Arc<dyn Tool>> = ruckcode_tools::builtin_tools_with(&web)
         .into_iter()
         .filter(|t| {
             mode.tools

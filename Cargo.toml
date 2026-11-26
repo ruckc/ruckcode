@@ -21,6 +21,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dirs = "7"
 futures = "0.3"
 globset = "0.4"
+html2text = { version = "0.17", default-features = false }
 ignore = "0.4"
 ratatui = "0.30"
 regex = "1"

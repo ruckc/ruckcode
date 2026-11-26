@@ -120,15 +120,23 @@ pub struct Profile {
 /// Built-in tools that `lean_tools` leaves out.
 pub const LEAN_DROPPED_TOOLS: [&str; 2] = ["TodoWrite", "AskUserQuestion"];
 
+/// Built-in tools that `lean_tools` leaves out unless the profile's `tools` allowlist names them.
+pub const LEAN_OPT_IN_TOOLS: [&str; 2] = ["WebFetch", "WebSearch"];
+
 impl Profile {
     /// Whether the built-in tool `name` is offered with this profile.
     pub fn allows_builtin(&self, name: &str) -> bool {
         if self.lean_tools && LEAN_DROPPED_TOOLS.contains(&name) {
             return false;
         }
-        self.tools
+        let listed = self
+            .tools
             .as_ref()
-            .is_none_or(|l| l.iter().any(|n| n.eq_ignore_ascii_case(name)))
+            .map(|l| l.iter().any(|n| n.eq_ignore_ascii_case(name)));
+        if self.lean_tools && LEAN_OPT_IN_TOOLS.contains(&name) {
+            return listed == Some(true);
+        }
+        listed.unwrap_or(true)
     }
 
     /// The prices for `model`, if any are configured.
@@ -291,6 +299,10 @@ pub struct Config {
     /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
     #[serde(default)]
     pub sandbox: ruckcode_sandbox::SandboxConfig,
+    /// The `WebFetch` and `WebSearch` tools (`[web]`). A project's own config may only set
+    /// `enabled`.
+    #[serde(default)]
+    pub web: ruckcode_tools::WebConfig,
 }
 
 impl Default for Config {
@@ -476,6 +488,11 @@ impl Config {
                     "ignoring [sandbox] in the project config.toml (only the verified remote copy is honoured)"
                 );
             }
+            // Likewise `[web]`: private-address access and search endpoints and keys are the
+            // user's call. A project may only switch the web tools off (or on).
+            if let Some(toml::Value::Table(w)) = t.get_mut("web") {
+                w.retain(|k, _| k == "enabled");
+            }
             layers.push(t);
         }
         if let Ok(p) = std::env::var("RUCKCODE_PROFILE") {
@@ -486,6 +503,13 @@ impl Config {
             }
         }
         from_tables(layers)
+    }
+
+    /// The `[web]` settings with named search keys (`api_key_name`) read from `credentials.toml`.
+    pub fn web_resolved(&self, user_dir: Option<&Path>) -> ruckcode_tools::WebConfig {
+        let mut w = self.web.clone();
+        w.search.resolve_named_keys(|n| named_key(user_dir, n));
+        w
     }
 
     pub fn profile(&self, name: &str) -> Result<&Profile> {
@@ -644,6 +668,98 @@ model = "m"
         assert!(!lean.allows_builtin("TodoWrite") && !lean.allows_builtin("AskUserQuestion"));
         assert!(pick.allows_builtin("Bash") && pick.allows_builtin("Read"));
         assert!(!pick.allows_builtin("Edit") && !pick.allows_builtin("TodoWrite"));
+    }
+
+    #[test]
+    fn web_tools_follow_lean_tools_and_the_allowlist() {
+        let c = cfg(r#"
+[profiles.lean]
+provider = "openai"
+model = "m"
+lean_tools = true
+[profiles.lean_web]
+provider = "openai"
+model = "m"
+lean_tools = true
+tools = ["Read", "WebSearch"]
+[profiles.pick]
+provider = "openai"
+model = "m"
+tools = ["Read", "webfetch"]
+[profiles.plain]
+provider = "openai"
+model = "m"
+"#)
+        .unwrap();
+        let p = &c.profiles;
+        for t in ["WebFetch", "WebSearch"] {
+            assert!(p["plain"].allows_builtin(t), "{t}");
+            assert!(!p["lean"].allows_builtin(t), "{t}");
+        }
+        assert!(
+            !p["lean_web"].allows_builtin("WebFetch") && p["lean_web"].allows_builtin("WebSearch")
+        );
+        assert!(p["pick"].allows_builtin("WebFetch") && !p["pick"].allows_builtin("WebSearch"));
+    }
+
+    #[test]
+    fn web_config_parses_and_projects_cannot_widen_it() {
+        let c = cfg(r#"
+[web]
+allow_private = true
+[web.search]
+provider = "searxng"
+fallback = ["duckduckgo"]
+url = "https://searx.example"
+[web.search.brave]
+api_key = "sekrit"
+api_key_env = "MY_BRAVE"
+"#)
+        .unwrap();
+        assert!(c.web.enabled && c.web.allow_private);
+        assert_eq!(c.web.search.provider, "searxng");
+        assert_eq!(
+            c.web.search.conf("searxng").url.as_deref(),
+            Some("https://searx.example")
+        );
+        assert_eq!(
+            c.web.search.conf("brave").api_key_env.as_deref(),
+            Some("MY_BRAVE")
+        );
+        assert!(
+            !format!("{:?}", c.web).contains("sekrit"),
+            "keys are redacted in Debug"
+        );
+        assert_eq!(Config::default().web.search.provider, "duckduckgo");
+        assert!(!cfg("[web]\nenabled = false\n").unwrap().web.enabled);
+        assert!(cfg("[web]\nbogus = 1\n").is_err());
+        // A project's config.toml keeps only `web.enabled`.
+        let user = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(proj.path().join(".ruckcode")).unwrap();
+        std::fs::write(
+            proj.path().join(".ruckcode/config.toml"),
+            "[web]\nenabled = false\nallow_private = true\n[web.search]\nurl = \"http://evil.test\"\n",
+        )
+        .unwrap();
+        let c = Config::load(proj.path(), Some(user.path())).unwrap();
+        assert!(!c.web.enabled && !c.web.allow_private && c.web.search.url.is_none());
+    }
+
+    #[test]
+    fn named_search_keys_come_from_credentials() {
+        let user = tempfile::tempdir().unwrap();
+        std::fs::write(
+            user.path().join("credentials.toml"),
+            "[keys.brv]\napi_key = \"from-creds\"\n",
+        )
+        .unwrap();
+        let c = cfg("[web.search]\nprovider = \"brave\"\napi_key_name = \"brv\"\n").unwrap();
+        let w = c.web_resolved(Some(user.path()));
+        assert_eq!(
+            w.search.conf("brave").api_key.unwrap().expose(),
+            "from-creds"
+        );
     }
 
     #[test]

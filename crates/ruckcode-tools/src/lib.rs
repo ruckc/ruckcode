@@ -6,6 +6,7 @@ mod fs;
 mod sandboxed;
 mod search;
 mod todo;
+pub mod web;
 
 pub use ask::{Answer, AskUserQuestion, Question, QuestionOption};
 pub use bash::Bash;
@@ -13,6 +14,7 @@ pub use fs::{Edit, Read, Write};
 pub use sandboxed::{launch, Launch, SandboxHandle, PROTECTED_WRITE_MSG};
 pub use search::{Glob, Grep};
 pub use todo::{TodoItem, TodoStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
+pub use web::{WebConfig, WebFetch, WebSearch};
 
 use async_trait::async_trait;
 use ruckcode_llm::ToolSpec;
@@ -160,9 +162,16 @@ pub trait Tool: Send + Sync {
     }
 }
 
-/// All built-in tools (excluding agent-level tools such as SwitchMode).
+/// All built-in tools (excluding agent-level tools such as SwitchMode), with the default
+/// `[web]` configuration.
 pub fn builtin_tools() -> Vec<Arc<dyn Tool>> {
-    vec![
+    builtin_tools_with(&WebConfig::default())
+}
+
+/// All built-in tools. `WebFetch` and `WebSearch` are left out when `web.enabled` is false and
+/// are built from `web` otherwise.
+pub fn builtin_tools_with(web: &WebConfig) -> Vec<Arc<dyn Tool>> {
+    let mut v: Vec<Arc<dyn Tool>> = vec![
         Arc::new(Read),
         Arc::new(Write),
         Arc::new(Edit),
@@ -171,7 +180,12 @@ pub fn builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(Bash),
         Arc::new(TodoWrite),
         Arc::new(AskUserQuestion),
-    ]
+    ];
+    if web.enabled {
+        v.push(Arc::new(WebFetch::new(web)));
+        v.push(Arc::new(WebSearch::new(web)));
+    }
+    v
 }
 
 pub(crate) fn str_arg<'a>(input: &'a Value, key: &str) -> anyhow::Result<&'a str> {
@@ -228,5 +242,32 @@ pub(crate) mod test_util {
             tool_call_id: String::new(),
             sandbox: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod web_registration_tests {
+    use super::*;
+
+    #[test]
+    fn web_tools_are_registered_unless_disabled() {
+        let names = |w: &WebConfig| -> Vec<String> {
+            builtin_tools_with(w)
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect()
+        };
+        let on = names(&WebConfig::default());
+        assert!(on.contains(&"WebFetch".to_string()) && on.contains(&"WebSearch".to_string()));
+        let off = names(&WebConfig {
+            enabled: false,
+            ..WebConfig::default()
+        });
+        assert!(!off.iter().any(|n| n.starts_with("Web")));
+        let t = builtin_tools_with(&WebConfig::default());
+        let fetch = t.iter().find(|t| t.name() == "WebFetch").unwrap();
+        assert_eq!(fetch.kind(), ToolKind::Fetch);
+        assert!(fetch.kind().is_read_only());
+        assert_eq!(fetch.input_schema()["required"][0], "url");
     }
 }

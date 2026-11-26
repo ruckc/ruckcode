@@ -15,7 +15,7 @@ provided.
 - Read code before changing it and match the style of the surrounding code.
 - Tools named `mise__*` (or MiseRun) run the project's own mise tasks; prefer them for builds, \
 tests, linting and other project workflows.
-{TODO}{ASK}- Work happens in lifecycle modes. When the current phase's work is done, use SwitchMode to \
+{TODO}{ASK}{WEB}- Work happens in lifecycle modes. When the current phase's work is done, use SwitchMode to \
 propose moving to the next phase; the user may need to approve.
 - Do not commit, push or publish unless explicitly asked.";
 
@@ -24,11 +24,23 @@ tell the user the plan is finished and summarise what was done, then stop unless
 const ASK_LINE: &str =
     "- Use AskUserQuestion when you are blocked on a decision only the user can make.\n";
 
+const WEB_LINE: &str =
+    "- Use WebSearch to find pages, then WebFetch on specific URLs to read them.\n";
+const WEB_FETCH_LINE: &str = "- Use WebFetch to read a specific URL.\n";
+const WEB_SEARCH_LINE: &str = "- Use WebSearch to look things up on the web.\n";
+
 /// The built-in guidance, leaving out the lines about built-in tools the profile does not offer
 /// (a model must not be told to use a tool it cannot call).
 fn base_prompt(profile: Option<&Profile>) -> String {
     let offers = |name: &str| profile.is_none_or(|p| p.allows_builtin(name));
-    BASE.replace("{TODO}", if offers("TodoWrite") { TODO_LINE } else { "" })
+    let web = match (offers("WebSearch"), offers("WebFetch")) {
+        (true, true) => WEB_LINE,
+        (false, true) => WEB_FETCH_LINE,
+        (true, false) => WEB_SEARCH_LINE,
+        (false, false) => "",
+    };
+    BASE.replace("{WEB}", web)
+        .replace("{TODO}", if offers("TodoWrite") { TODO_LINE } else { "" })
         .replace(
             "{ASK}",
             if offers("AskUserQuestion") {
@@ -118,6 +130,21 @@ mod tests {
         assert!(s.contains("Use TodoWrite") && s.contains("Use AskUserQuestion"));
         assert!(!s.contains('{'));
         assert!(s.contains("workflows.\n- Use TodoWrite"));
+    }
+
+    #[test]
+    fn web_lines_follow_the_profile() {
+        let prof = |extra: &str| -> Profile {
+            toml::from_str(&format!("provider = \"openai\"\nmodel = \"m\"\n{extra}")).unwrap()
+        };
+        assert!(base_prompt(None).contains("Use WebSearch to find pages, then WebFetch"));
+        assert!(base_prompt(Some(&prof(""))).contains("Use WebSearch to find pages"));
+        let lean = base_prompt(Some(&prof("lean_tools = true\n")));
+        assert!(!lean.contains("Web") && !lean.contains('{'), "{lean}");
+        let only_fetch = base_prompt(Some(&prof("tools = [\"Read\", \"WebFetch\"]\n")));
+        assert!(only_fetch.contains("Use WebFetch to read") && !only_fetch.contains("WebSearch"));
+        let lean_search = base_prompt(Some(&prof("lean_tools = true\ntools = [\"WebSearch\"]\n")));
+        assert!(lean_search.contains("Use WebSearch to look") && !lean_search.contains("WebFetch"));
     }
 
     #[test]

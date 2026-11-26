@@ -54,8 +54,10 @@ pub(crate) fn handle(
 ) -> SandboxHandle {
     let deny_read =
         ruckcode_sandbox::deny_list(&cfg, dirs::home_dir().as_deref(), project, config_dir);
+    let gate = sandbox.as_ref().map(|s| s.gate());
     SandboxHandle {
         sandbox,
+        gate,
         cfg,
         protected_write: protected_write(project, config_dir),
         deny_read,
@@ -78,6 +80,7 @@ mod tests {
             cfg: SandboxConfig::default(),
             protected_write: protected_write(&p, None),
             deny_read: vec![],
+            gate: None,
         };
         for blocked in [
             ".git/config",

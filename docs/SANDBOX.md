@@ -50,6 +50,14 @@ No sandbox: commands run unsandboxed and the first result says so ("sandbox unav
 Windows; commands run unsandboxed — use WSL"). `sandbox.strict = true` refuses to run commands.
 Commands through the WSL host run the Linux `rc` and are sandboxed there.
 
+## Web tools
+
+`WebFetch` and `WebSearch` run in the `rc` process, not inside a sandboxed command, so they apply the
+`[sandbox]` network settings themselves through the same `Gate` the proxy uses: `network = "off"`
+refuses them, `"full"` allows without a prompt, and `"allowlist"` checks `allowed_domains` and the
+remembered per-project domains, then prompts (allow once / always / reject). Approving a domain for a
+command also approves it for the web tools and vice versa. See the README's "Web tools" section.
+
 ## Defaults
 
 * Read: the whole system and your home directory, **except** `~/.ssh`, `~/.aws`, `~/.gnupg`,
