@@ -33,10 +33,15 @@ const MAX_BLOB: usize = 1024 * 1024;
 /// The user data directory holding pins, caches and the private fetch repositories. Outside the
 /// project and not writable by sandboxed commands.
 pub fn data_dir() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()) {
+    data_dir_for(&crate::identity::RUCKCODE)
+}
+
+/// [`data_dir`] for the product `identity`: `{env_prefix}_DATA_DIR`, else `<data dir>/<name>`.
+pub fn data_dir_for(identity: &ruck_harness_ident::AppIdentity) -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os(identity.env_var("DATA_DIR")).filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(d));
     }
-    dirs::data_dir().map(|d| d.join("ruckcode"))
+    dirs::data_dir().map(|d| d.join(identity.data_dir_name))
 }
 
 fn now() -> u64 {

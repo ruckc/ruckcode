@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod config;
 pub mod context;
+pub mod guard_ext;
 pub mod identity;
 pub mod init;
 pub mod keys;
@@ -22,7 +23,9 @@ pub mod tool_loop_guard;
 pub mod transcript;
 pub mod transcript_api;
 
-mod prompt;
+pub mod prompt;
+pub mod prompt_ext;
+pub mod session_policy;
 
 pub use agent::{
     Agent, AgentOptions, Client, Command, ModeInfo, PermissionDecision, PermissionRequest,

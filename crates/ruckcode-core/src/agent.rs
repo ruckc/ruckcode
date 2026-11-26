@@ -22,13 +22,17 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{make_provider_with, Config, Profile};
 use crate::context::{self, Limits};
+use crate::guard_ext::ruckcode_guard_hints;
+use crate::identity::RUCKCODE;
 use crate::mode_ext::RuckcodeModeExt;
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
-use crate::prompt::{system_prompt, MAX_CLIENT_INSTRUCTIONS};
+use crate::prompt::{system_prompt, PromptProvider, MAX_CLIENT_INSTRUCTIONS};
+use crate::prompt_ext::RuckcodePrompt;
 use crate::retry::{self, Decision, Pacer, RateLimitConfig};
+use crate::session_policy::{RemoteSandboxPolicy, SessionPolicy};
 use crate::thinking_guard::{LoopDetector, ThinkingGuardConfig, Trip};
-use crate::tool_loop_guard::{self, ToolLoopDetector};
+use crate::tool_loop_guard::{self, GuardHints, ToolLoopDetector};
 use crate::transcript::{
     self, compaction_message, interrupted_results, EditRecord, Initiator, McpServerRecord, Metrics,
     PermissionOutcome, Record, SessionMeta, SessionSummary, TranscriptReader, TranscriptWriter,
@@ -215,6 +219,13 @@ pub struct AgentOptions {
     /// The binary that acts as the sandbox launcher (`__sandbox-exec`); `None` re-executes the
     /// running binary. Tests whose binary does not embed the launcher set this.
     pub sandbox_exe: Option<ruck_harness_sandbox::LauncherExe>,
+    /// The product's part of the system prompt (default: ruckcode's).
+    pub prompt: Arc<dyn PromptProvider>,
+    /// How the tool-loop guard recognises the product's tools (default: ruckcode's; use
+    /// `GuardHints::default()` for none, which turns off the search and oscillation detectors).
+    pub guard_hints: GuardHints,
+    /// Adjusts the loaded config and modes at session start (default: the remote sandbox policy).
+    pub session_policy: Option<Arc<dyn SessionPolicy>>,
 }
 
 impl Default for AgentOptions {
@@ -226,6 +237,9 @@ impl Default for AgentOptions {
             persist: true,
             user_config_dir: None,
             sandbox_exe: None,
+            prompt: Arc::new(RuckcodePrompt),
+            guard_hints: ruckcode_guard_hints(),
+            session_policy: Some(Arc::new(RemoteSandboxPolicy::new(RUCKCODE))),
         }
     }
 }
@@ -467,7 +481,10 @@ impl Agent {
         let user_dir = self.options.user_config_dir.as_deref();
         let mut config = Config::load(&cwd, user_dir)?;
         let mut modes = ModeSet::load(&cwd, user_dir)?;
-        let policy_notices = self.project_policy(&cwd, &mut config, &mut modes).await;
+        let policy_notices = match &self.options.session_policy {
+            Some(p) => p.apply(&cwd, &mut config.harness, &mut modes).await,
+            None => vec![],
+        };
         let profile = self
             .options
             .profile_override
@@ -506,38 +523,6 @@ impl Agent {
             policy_notices,
             last_loop_kind: None,
         })
-    }
-
-    /// Lay the verified remote copy of the project's sandbox policy over the user's config. The
-    /// working tree's own sandbox settings were already dropped by the loaders.
-    async fn project_policy(
-        &self,
-        cwd: &Path,
-        config: &mut Config,
-        modes: &mut ModeSet,
-    ) -> Vec<String> {
-        use ruck_harness_sandbox::ProjectPolicy;
-        if !config.sandbox.enabled || config.sandbox.project_policy == ProjectPolicy::Off {
-            return vec![];
-        }
-        let Some(data) = crate::project_policy::data_dir() else {
-            return vec![];
-        };
-        let (project, mode) = (cwd.to_path_buf(), config.sandbox.project_policy);
-        let Ok(res) = tokio::task::spawn_blocking(move || {
-            crate::project_policy::resolve(&project, &data, mode)
-        })
-        .await
-        else {
-            return vec![];
-        };
-        let mut notices = res.notices.clone();
-        notices.extend(crate::project_policy::apply(
-            &res,
-            &mut config.sandbox,
-            modes,
-        ));
-        notices
     }
 
     /// Resolve (model id, profile) for the session's current mode. The returned profile's
@@ -1170,6 +1155,7 @@ impl Agent {
         self.start_mcp(s, client).await;
         let profile = self.model_for(s).ok().map(|(_, p)| p);
         let system = system_prompt(
+            self.options.prompt.as_ref(),
             &s.cwd,
             &s.modes,
             &s.mode,
@@ -1185,11 +1171,12 @@ impl Agent {
         let mut tool_nudges = 0u32;
         let mut overflow_retried = false;
         let mut last_estimate;
-        let mut tool_guard = ToolLoopDetector::default();
+        let mut tool_guard = ToolLoopDetector::new(self.options.guard_hints.clone());
         for _ in 0..s.config.max_turn_requests {
             self.apply_pending_mode(s, client).await;
             let (model, profile) = self.model_for(s)?;
             let system = system_prompt(
+                self.options.prompt.as_ref(),
                 &s.cwd,
                 &s.modes,
                 &s.mode,
@@ -1396,7 +1383,7 @@ impl Agent {
                 // hashed before and after; a Bash command is covered by the git working-tree
                 // snapshot (the first one of the turn is the baseline).
                 let target = track_files
-                    .then(|| tool_loop_guard::edit_target(name, input))
+                    .then(|| self.options.guard_hints.edit_target(name, input))
                     .flatten()
                     .map(|p| root.join(p));
                 if let Some(t) = &target {
@@ -1404,10 +1391,16 @@ impl Agent {
                         tool_guard.baseline_file(&t.to_string_lossy(), h);
                     }
                 }
-                let bash = track_files && name == "Bash" && !tool_guard.bash_snapshots_off;
-                if bash && !tool_guard.bash_baseline_done {
-                    tool_guard.bash_baseline_done = true;
-                    snapshot_tree(&root, &mut tool_guard, &loop_cfg, true).await;
+                let probe = self
+                    .options
+                    .guard_hints
+                    .progress_probe
+                    .as_deref()
+                    .filter(|p| track_files && p.watches(name) && !tool_guard.probe_snapshots_off);
+                if let Some(probe) = probe.filter(|_| !tool_guard.probe_baseline_done) {
+                    tool_guard.probe_baseline_done = true;
+                    tool_loop_guard::snapshot_tree(probe, &root, &mut tool_guard, &loop_cfg, true)
+                        .await;
                 }
                 let (block, c) = self
                     .execute_tool_use(s, client, cancel, &tools, id, name, input)
@@ -1422,8 +1415,15 @@ impl Agent {
                             tool_guard.observe_file(&loop_cfg, &t.to_string_lossy(), h);
                         }
                     }
-                    if bash {
-                        snapshot_tree(&root, &mut tool_guard, &loop_cfg, false).await;
+                    if let Some(probe) = probe {
+                        tool_loop_guard::snapshot_tree(
+                            probe,
+                            &root,
+                            &mut tool_guard,
+                            &loop_cfg,
+                            false,
+                        )
+                        .await;
                     }
                 }
                 if let ContentBlock::ToolResult {
@@ -2362,6 +2362,7 @@ impl Agent {
                 } else {
                     let profile = self.model_for(s).ok().map(|(_, p)| p);
                     let system = system_prompt(
+                        self.options.prompt.as_ref(),
                         &s.cwd,
                         &s.modes,
                         &s.mode,
@@ -2817,36 +2818,6 @@ fn replay(
                 }),
             ),
             _ => {}
-        }
-    }
-}
-
-/// Hash the files git reports as changed (plus the ones tracked this turn) into the detector.
-/// `baseline` only records states; otherwise returns to earlier states are counted. A tree that
-/// is not a git repository, or is too big or dirty (see [`tool_loop_guard::git_changed_files`]),
-/// turns the Bash snapshots off for the rest of the turn.
-async fn snapshot_tree(
-    root: &Path,
-    guard: &mut ToolLoopDetector,
-    cfg: &tool_loop_guard::ToolLoopGuardConfig,
-    baseline: bool,
-) {
-    let Some(mut files) = tool_loop_guard::git_changed_files(root).await else {
-        guard.bash_snapshots_off = true;
-        return;
-    };
-    files.extend(guard.tracked_paths().into_iter().map(PathBuf::from));
-    files.sort();
-    files.dedup();
-    let Some(hashes) = tool_loop_guard::hash_files(&files) else {
-        guard.bash_snapshots_off = true;
-        return;
-    };
-    for (path, hash) in hashes {
-        if baseline {
-            guard.baseline_file(&path, hash);
-        } else {
-            guard.observe_file(cfg, &path, hash);
         }
     }
 }
