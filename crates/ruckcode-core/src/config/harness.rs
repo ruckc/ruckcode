@@ -149,6 +149,7 @@ impl Profile {
     }
 }
 
+/// USD per million tokens. `input` is the rate for uncached prompt tokens. `cache_read` and
 /// `cache_write` default to the `input` rate when omitted, so cached tokens are never free by
 /// accident.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
