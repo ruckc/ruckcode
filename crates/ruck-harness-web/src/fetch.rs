@@ -2,9 +2,9 @@
 
 use super::net::{self, NetPolicy};
 use super::{html, truncate_chars, WebConfig, WEB_FETCH};
-use crate::{str_arg, Tool, ToolContext, ToolKind, ToolOutput};
 use async_trait::async_trait;
 use reqwest::Url;
+use ruck_harness_tools::{str_arg, Tool, ToolContext, ToolKind, ToolOutput};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -336,8 +336,8 @@ impl Tool for WebFetch {
         })
     }
 
-    fn lean_class(&self) -> crate::LeanClass {
-        crate::LeanClass::OptInWhenLean
+    fn lean_class(&self) -> ruck_harness_tools::LeanClass {
+        ruck_harness_tools::LeanClass::OptInWhenLean
     }
 
     fn kind(&self) -> ToolKind {
@@ -364,12 +364,12 @@ impl Tool for WebFetch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::ctx;
-    use crate::web::net::{BlockedFn, ResolveHook};
-    use crate::SandboxHandle;
+    use crate::net::{BlockedFn, ResolveHook};
     use async_trait::async_trait;
     use ruck_harness_sandbox::proxy::{DomainAnswer, DomainPrompter, DomainStore, Gate};
     use ruck_harness_sandbox::{NetworkMode, SandboxConfig};
+    use ruck_harness_tools::test_util::ctx;
+    use ruck_harness_tools::SandboxHandle;
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -589,7 +589,7 @@ mod tests {
         )])
         .await;
         let blocked: BlockedFn =
-            Arc::new(|ip: IpAddr| crate::web::net::is_blocked_ip(ip) && !ip.is_loopback());
+            Arc::new(|ip: IpAddr| crate::net::is_blocked_ip(ip) && !ip.is_loopback());
         let mut p = NetPolicy::new(false);
         p.blocked = Some(blocked);
         let (_d, c) = dir_ctx();

@@ -173,7 +173,7 @@ pub async fn run_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::ctx;
+    use ruck_harness_tools::test_util::ctx;
 
     #[tokio::test]
     async fn runs_and_reports_exit() {

@@ -3304,6 +3304,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruck-harness-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ruck-harness-ident",
+ "ruck-harness-llm",
+ "ruck-harness-sandbox",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "ruck-harness-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "encoding_rs",
+ "html2text",
+ "regex",
+ "reqwest",
+ "ruck-harness-ident",
+ "ruck-harness-sandbox",
+ "ruck-harness-tools",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "url",
+]
+
+[[package]]
 name = "ruckcode-acp"
 version = "0.1.0"
 dependencies = [
@@ -3413,21 +3448,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "encoding_rs",
  "globset",
- "html2text",
  "ignore",
  "libc",
  "regex",
- "reqwest",
  "ruck-harness-ident",
- "ruck-harness-llm",
- "ruck-harness-sandbox",
+ "ruck-harness-tools",
+ "ruck-harness-web",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
- "url",
 ]
 
 [[package]]

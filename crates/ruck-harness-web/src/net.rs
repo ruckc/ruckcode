@@ -1,10 +1,10 @@
 //! The shared network layer of the web tools: address policy (SSRF protection), a resolver that
 //! enforces it at connect time, and the sandbox network gate.
 
-use crate::ToolContext;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use ruck_harness_ident::AppIdentity;
 use ruck_harness_sandbox::NetworkMode;
+use ruck_harness_tools::ToolContext;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;

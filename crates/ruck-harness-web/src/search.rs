@@ -3,10 +3,10 @@
 use super::config::{ProviderConf, SearchConfig, PROVIDERS};
 use super::net::{self, NetPolicy};
 use super::{truncate_chars, WebConfig, WEB_SEARCH};
-use crate::{str_arg, Tool, ToolContext, ToolKind, ToolOutput};
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::Url;
+use ruck_harness_tools::{str_arg, Tool, ToolContext, ToolKind, ToolOutput};
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -559,8 +559,8 @@ impl Tool for WebSearch {
         })
     }
 
-    fn lean_class(&self) -> crate::LeanClass {
-        crate::LeanClass::OptInWhenLean
+    fn lean_class(&self) -> ruck_harness_tools::LeanClass {
+        ruck_harness_tools::LeanClass::OptInWhenLean
     }
 
     fn kind(&self) -> ToolKind {
@@ -629,15 +629,15 @@ impl Tool for WebSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::ctx;
-    use crate::SandboxHandle;
     use ruck_harness_sandbox::proxy::Gate;
     use ruck_harness_sandbox::{NetworkMode, SandboxConfig};
+    use ruck_harness_tools::test_util::ctx;
+    use ruck_harness_tools::SandboxHandle;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    const DDG_FIXTURE: &str = include_str!("../../tests/fixtures/ddg_results.html");
-    const DDG_ANOMALY: &str = include_str!("../../tests/fixtures/ddg_anomaly.html");
+    const DDG_FIXTURE: &str = include_str!("../tests/fixtures/ddg_results.html");
+    const DDG_ANOMALY: &str = include_str!("../tests/fixtures/ddg_anomaly.html");
 
     #[test]
     fn parses_the_ddg_fixture() {

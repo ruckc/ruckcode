@@ -16,6 +16,9 @@ pub use config::{ProviderConf, SearchConfig, Secret, WebConfig};
 pub use fetch::WebFetch;
 pub use search::WebSearch;
 
+use ruck_harness_tools::Tool;
+use std::sync::Arc;
+
 /// Tool names, shared with the profile allowlist logic.
 pub const WEB_FETCH: &str = "WebFetch";
 pub const WEB_SEARCH: &str = "WebSearch";
@@ -27,4 +30,12 @@ pub(crate) fn truncate_chars(s: &str, max: usize) -> (String, Option<usize>) {
         None => (s.to_string(), None),
         Some((i, _)) => (s[..i].to_string(), Some(s.chars().count())),
     }
+}
+
+/// `WebFetch` and `WebSearch` built from `web`, or none when `web.enabled` is false.
+pub fn web_tools(web: &WebConfig) -> Vec<Arc<dyn Tool>> {
+    if !web.enabled {
+        return Vec::new();
+    }
+    vec![Arc::new(WebFetch::new(web)), Arc::new(WebSearch::new(web))]
 }

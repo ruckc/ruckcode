@@ -49,6 +49,8 @@ ruck-harness-llm = { path = "crates/ruck-harness-llm" }
 ruckcode-mcp = { path = "crates/ruckcode-mcp" }
 ruckcode-mise = { path = "crates/ruckcode-mise" }
 ruck-harness-sandbox = { path = "crates/ruck-harness-sandbox" }
+ruck-harness-tools = { path = "crates/ruck-harness-tools" }
+ruck-harness-web = { path = "crates/ruck-harness-web" }
 ruckcode-tools = { path = "crates/ruckcode-tools" }
 
 [profile.release]
