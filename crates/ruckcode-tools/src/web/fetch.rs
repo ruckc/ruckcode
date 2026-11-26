@@ -124,20 +124,39 @@ fn classify(content_type: Option<&str>, body: &[u8]) -> (Kind, String) {
     (kind, mime)
 }
 
-fn decode(content_type: Option<&str>, body: &[u8]) -> String {
-    let charset = content_type
-        .and_then(|c| {
-            c.split(';')
-                .skip(1)
-                .find_map(|p| p.trim().strip_prefix("charset="))
+/// Decode a body: a BOM wins, then the `Content-Type` charset, then (for HTML) a `<meta
+/// charset>` / `http-equiv` declaration in the first 1 KiB, else UTF-8. Invalid sequences
+/// become U+FFFD.
+fn decode(content_type: Option<&str>, body: &[u8], html: bool) -> String {
+    use encoding_rs::Encoding;
+    let enc = Encoding::for_bom(body)
+        .map(|(e, _)| e)
+        .or_else(|| {
+            content_type
+                .and_then(|c| {
+                    c.split(';').skip(1).find_map(|p| {
+                        let p = p.trim();
+                        p.get(..8)
+                            .filter(|k| k.eq_ignore_ascii_case("charset="))
+                            .map(|_| p[8..].trim_matches('"').trim())
+                    })
+                })
+                .and_then(|l| Encoding::for_label(l.as_bytes()))
         })
-        .map(|c| c.trim_matches('"').to_ascii_lowercase());
-    match charset.as_deref() {
-        Some("iso-8859-1" | "latin1" | "windows-1252" | "us-ascii") => {
-            body.iter().map(|&b| b as char).collect()
-        }
-        _ => String::from_utf8_lossy(body).into_owned(),
-    }
+        .or_else(|| {
+            if !html {
+                return None;
+            }
+            static RE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
+            let re = RE.get_or_init(|| {
+                regex::bytes::Regex::new(r#"(?i)charset\s*=\s*["']?\s*([A-Za-z0-9_:.\-]+)"#)
+                    .unwrap()
+            });
+            re.captures(&body[..body.len().min(1024)])
+                .and_then(|c| Encoding::for_label(&c[1]))
+        })
+        .unwrap_or(encoding_rs::UTF_8);
+    enc.decode(body).0.into_owned()
 }
 
 impl WebFetch {
@@ -254,7 +273,7 @@ impl WebFetch {
                 body.len()
             ));
         }
-        let text = decode(content_type.as_deref(), &body);
+        let text = decode(content_type.as_deref(), &body, kind == Kind::Html);
         let text = if kind == Kind::Html {
             match html::to_markdown(&text) {
                 Ok(t) => t,
@@ -640,6 +659,46 @@ mod tests {
             !out.is_error && out.content.contains("secret"),
             "{}",
             out.content
+        );
+    }
+
+    #[test]
+    fn decodes_by_declared_charset() {
+        // windows-1252: 0x80 is the euro sign, 0x93/0x94 are curly quotes (not C1 controls).
+        let w = [0x80u8, b' ', 0x93, b'h', b'i', 0x94];
+        assert_eq!(
+            decode(Some("text/plain; charset=windows-1252"), &w, false),
+            "\u{20ac} \u{201c}hi\u{201d}"
+        );
+        // ISO-8859-1 is windows-1252 per the WHATWG label table; 0xE9 is e-acute.
+        assert_eq!(
+            decode(
+                Some("text/plain; charset=ISO-8859-1"),
+                &[b'c', b'a', b'f', 0xe9],
+                false
+            ),
+            "caf\u{e9}"
+        );
+        // An unknown label falls back to UTF-8.
+        assert_eq!(
+            decode(
+                Some("text/plain; charset=bogus-9"),
+                "caf\u{e9}".as_bytes(),
+                false
+            ),
+            "caf\u{e9}"
+        );
+        assert_eq!(decode(None, b"plain", false), "plain");
+        // Meta sniff for HTML without a header charset; a BOM beats the header.
+        let html = b"<meta charset=\"windows-1252\"><p>\x93q\x94";
+        assert_eq!(
+            decode(Some("text/html"), html, true),
+            "<meta charset=\"windows-1252\"><p>\u{201c}q\u{201d}"
+        );
+        let bom = [0xefu8, 0xbb, 0xbf, b'o', b'k'];
+        assert_eq!(
+            decode(Some("text/plain; charset=windows-1252"), &bom, false),
+            "ok"
         );
     }
 

@@ -9,6 +9,7 @@ license.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 globset.workspace = true
+encoding_rs = "0.8"
 html2text.workspace = true
 ignore.workspace = true
 regex.workspace = true

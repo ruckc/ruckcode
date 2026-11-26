@@ -126,6 +126,11 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 }
 
 /// DuckDuckGo wraps result links as `//duckduckgo.com/l/?uddg=<percent-encoded URL>&rut=...`.
+fn is_ddg_host(h: &str) -> bool {
+    let h = h.trim_end_matches('.').to_ascii_lowercase();
+    h == "duckduckgo.com" || h.ends_with(".duckduckgo.com")
+}
+
 pub fn unwrap_ddg_link(href: &str) -> Option<String> {
     let href = href.trim();
     let abs = if href.starts_with("//") {
@@ -136,7 +141,7 @@ pub fn unwrap_ddg_link(href: &str) -> Option<String> {
         href.to_string()
     };
     let u = Url::parse(&abs).ok()?;
-    if u.host_str().is_some_and(|h| h.ends_with("duckduckgo.com")) {
+    if u.host_str().is_some_and(is_ddg_host) {
         if u.path() == "/y.js" {
             return None; // an ad redirect
         }
@@ -684,6 +689,22 @@ mod tests {
         assert_eq!(
             unwrap_ddg_link("https://example.org/x").as_deref(),
             Some("https://example.org/x")
+        );
+        assert_eq!(
+            unwrap_ddg_link("https://html.duckduckgo.com/l/?uddg=https%3A%2F%2Fa.example%2F")
+                .as_deref(),
+            Some("https://a.example/")
+        );
+        // A look-alike host is an ordinary external link, not a DDG redirect.
+        assert_eq!(
+            unwrap_ddg_link("https://notduckduckgo.com/l/?uddg=https%3A%2F%2Fa.example%2F")
+                .as_deref(),
+            Some("https://notduckduckgo.com/l/?uddg=https%3A%2F%2Fa.example%2F")
+        );
+        assert!(
+            is_ddg_host("DuckDuckGo.com")
+                && is_ddg_host("html.duckduckgo.com")
+                && !is_ddg_host("notduckduckgo.com")
         );
         assert_eq!(unwrap_ddg_link("//duckduckgo.com/y.js?ad_provider=x"), None);
         assert_eq!(
