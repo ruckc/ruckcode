@@ -20,7 +20,7 @@ crates/
   ruck-harness-tools    Tool trait, sandboxed launcher, plan (TodoWrite) and AskUserQuestion tools
   ruck-harness-web      WebFetch and WebSearch (SSRF protection, sandbox network gate)
   ruckcode-mise         mise task discovery, schema mapping, execution
-  ruckcode-mcp          MCP client (rmcp): connections, tool wrapping, lazy meta-tools
+  ruck-harness-mcp          MCP client (rmcp): connections, tool wrapping, lazy meta-tools
   ruck-harness-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp          ACP JSON-RPC (stdio) agent server + client plumbing
   ruckcode-cli          `rc` binary: ratatui TUI + headless `-p`, `rc acp`, `rc init`
@@ -136,5 +136,5 @@ tool calls left dangling by a crash get synthetic "interrupted" results.
 5. Hooks including post-edit fix turns.
 6. AskUserQuestion end-to-end, session persistence/load, compaction.
 7. Tests (mock provider, ACP round trips) and CI.
-8. MCP client (`ruckcode-mcp`), per-mode selection, ACP passthrough, `rc mcp list`.
+8. MCP client (`ruck-harness-mcp`), per-mode selection, ACP passthrough, `rc mcp list`.
 9. Onboarding: model discovery, setup wizard, named API keys, `/model`.

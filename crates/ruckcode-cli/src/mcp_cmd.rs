@@ -1,8 +1,8 @@
 //! `rc mcp list`.
 
 use anyhow::Result;
+use ruck_harness_mcp::McpManager;
 use ruckcode_core::Config;
-use ruckcode_mcp::McpManager;
 
 use crate::Cli;
 

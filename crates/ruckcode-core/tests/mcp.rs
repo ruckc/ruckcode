@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use ruck_harness_llm::mock::MockProvider;
 use ruck_harness_llm::{ContentBlock, Message, Request, Role};
+use ruck_harness_tools::{Answer, Question, UserBridge};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
 use ruckcode_core::transcript::{session_path, Record, TranscriptReader};
 use ruckcode_core::McpServerConfig;
-use ruckcode_tools::{Answer, Question, UserBridge};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -37,7 +37,7 @@ impl Client for TestClient {
 
 fn fake_script() -> String {
     format!(
-        "{}/../ruckcode-mcp/tests/fake_mcp_server.py",
+        "{}/../ruck-harness-mcp/tests/fake_mcp_server.py",
         env!("CARGO_MANIFEST_DIR")
     )
 }

@@ -3,7 +3,7 @@
 use anyhow::{bail, Context, Result};
 use ruck_harness_hooks::HooksConfig;
 use ruck_harness_llm::Provider;
-use ruckcode_mcp::McpServerConfig;
+use ruck_harness_mcp::McpServerConfig;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -119,8 +119,8 @@ pub struct Profile {
 
 impl Profile {
     /// Whether the built-in tool `name` is offered with this profile. A tool's
-    /// [`LeanClass`](ruckcode_tools::LeanClass) says how `lean_tools` treats it; a name that is
-    /// not a built-in tool is treated as [`LeanClass::Keep`](ruckcode_tools::LeanClass::Keep).
+    /// [`LeanClass`](ruck_harness_tools::LeanClass) says how `lean_tools` treats it; a name that is
+    /// not a built-in tool is treated as [`LeanClass::Keep`](ruck_harness_tools::LeanClass::Keep).
     pub fn allows_builtin(&self, name: &str) -> bool {
         let class = ruckcode_tools::builtin_tool(name)
             .map(|t| t.lean_class())
@@ -129,12 +129,12 @@ impl Profile {
     }
 
     /// Whether `tool` is offered with this profile (see [`allows_builtin`](Self::allows_builtin)).
-    pub fn allows_tool(&self, tool: &dyn ruckcode_tools::Tool) -> bool {
+    pub fn allows_tool(&self, tool: &dyn ruck_harness_tools::Tool) -> bool {
         self.allows_class(tool.name(), tool.lean_class())
     }
 
-    fn allows_class(&self, name: &str, class: ruckcode_tools::LeanClass) -> bool {
-        use ruckcode_tools::LeanClass;
+    fn allows_class(&self, name: &str, class: ruck_harness_tools::LeanClass) -> bool {
+        use ruck_harness_tools::LeanClass;
         if self.lean_tools && class == LeanClass::DropWhenLean {
             return false;
         }
@@ -235,7 +235,7 @@ impl Default for MiseConfig {
 }
 
 fn default_mcp_lazy_threshold() -> usize {
-    ruckcode_mcp::DEFAULT_LAZY_THRESHOLD
+    ruck_harness_mcp::DEFAULT_LAZY_THRESHOLD
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -311,7 +311,7 @@ pub struct Config {
     /// The `WebFetch` and `WebSearch` tools (`[web]`). A project's own config may only set
     /// `enabled`.
     #[serde(default)]
-    pub web: ruckcode_tools::WebConfig,
+    pub web: ruck_harness_web::WebConfig,
 }
 
 impl Default for Config {
@@ -412,7 +412,7 @@ fn mcp_json_layer(project_dir: &Path) -> Result<Option<toml::Table>> {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Ok(None);
     };
-    let servers = ruckcode_mcp::parse_mcp_json(&text)
+    let servers = ruck_harness_mcp::parse_mcp_json(&text)
         .with_context(|| format!("parsing {}", path.display()))?;
     let mut t = toml::Table::new();
     t.insert(
@@ -517,7 +517,7 @@ impl Config {
     }
 
     /// The `[web]` settings with named search keys (`api_key_name`) read from `credentials.toml`.
-    pub fn web_resolved(&self, user_dir: Option<&Path>) -> ruckcode_tools::WebConfig {
+    pub fn web_resolved(&self, user_dir: Option<&Path>) -> ruck_harness_web::WebConfig {
         let mut w = self.web.clone();
         w.search.resolve_named_keys(|n| named_key(user_dir, n));
         w

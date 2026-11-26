@@ -32,5 +32,5 @@ pub use modes::{ModeDef, ModeSet};
 pub use permissions::Permission;
 pub use prompt::MAX_CLIENT_INSTRUCTIONS;
 pub use ruck_harness_llm::Usage as TokenUsage;
+pub use ruck_harness_mcp::McpServerConfig;
 pub use ruck_harness_sandbox;
-pub use ruckcode_mcp::McpServerConfig;

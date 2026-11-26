@@ -5,14 +5,12 @@ mod bash;
 mod fs;
 mod search;
 
-// Transition shims: the generic tools now live in `ruck-harness-tools` and `ruck-harness-web`.
-pub use ruck_harness_tools::*;
-pub use ruck_harness_web::*;
-
 pub use bash::Bash;
 pub use fs::{Edit, Read, Write};
 pub use search::{Glob, Grep};
 
+use ruck_harness_tools::{AskUserQuestion, PlanItem, TodoWrite, Tool};
+use ruck_harness_web::{web_tools, WebConfig};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -59,6 +57,7 @@ pub fn decode_builtin_plan(name: &str, input: &Value) -> Option<Vec<PlanItem>> {
 #[cfg(test)]
 mod web_registration_tests {
     use super::*;
+    use ruck_harness_tools::ToolKind;
 
     #[test]
     fn web_tools_are_registered_unless_disabled() {
@@ -87,6 +86,7 @@ mod web_registration_tests {
 mod hook_tests {
     use super::*;
     use async_trait::async_trait;
+    use ruck_harness_tools::{LeanClass, PlanStatus, ToolContext, ToolKind, ToolOutput};
     use serde_json::json;
 
     /// A tool that overrides none of the hooks.
@@ -173,6 +173,6 @@ mod hook_tests {
             json!({"content": "x", "status": "in_progress"})
         );
         #[allow(deprecated)]
-        let _alias: TodoItem = item;
+        let _alias: ruck_harness_tools::TodoItem = item;
     }
 }

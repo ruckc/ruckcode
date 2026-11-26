@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ruck_harness_ident::AppIdentity;
-use ruckcode_tools::{truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
+use ruck_harness_tools::{truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -72,10 +72,11 @@ async fn exec(
     sandbox: Option<&ToolContext>,
 ) -> Result<Exec, ExecError> {
     let mut launch = match sandbox {
-        Some(ctx) => ruckcode_tools::launch(ctx, program, args, cwd).map_err(ExecError::Refused)?,
-        None => {
-            ruckcode_tools::launch(&plain_ctx(), program, args, cwd).map_err(ExecError::Refused)?
+        Some(ctx) => {
+            ruck_harness_tools::launch(ctx, program, args, cwd).map_err(ExecError::Refused)?
         }
+        None => ruck_harness_tools::launch(&plain_ctx(), program, args, cwd)
+            .map_err(ExecError::Refused)?,
     };
     launch
         .cmd()
@@ -122,12 +123,12 @@ async fn exec(
 fn plain_ctx() -> ToolContext {
     struct NoUser;
     #[async_trait]
-    impl ruckcode_tools::UserBridge for NoUser {
+    impl ruck_harness_tools::UserBridge for NoUser {
         async fn ask_user(
             &self,
             _: &str,
-            _: Vec<ruckcode_tools::Question>,
-        ) -> anyhow::Result<Vec<ruckcode_tools::Answer>> {
+            _: Vec<ruck_harness_tools::Question>,
+        ) -> anyhow::Result<Vec<ruck_harness_tools::Answer>> {
             anyhow::bail!("no user")
         }
     }
@@ -474,7 +475,7 @@ pub fn tools_for(selected: Vec<MiseTask>, lazy_threshold: usize) -> Vec<Arc<dyn 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruckcode_tools::{Answer, Question, UserBridge};
+    use ruck_harness_tools::{Answer, Question, UserBridge};
     use tokio_util::sync::CancellationToken;
 
     struct NoUser;

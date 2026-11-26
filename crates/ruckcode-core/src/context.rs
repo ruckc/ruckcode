@@ -119,7 +119,7 @@ pub fn estimate_tokens(system: &str, tools: &[ToolSpec], messages: &[Message]) -
 
 /// Keep the head and tail of `s` within `max` bytes, with a marker naming what was cut.
 pub fn truncate_head_tail(s: &str, max: usize) -> String {
-    ruckcode_tools::truncate_middle(s, max, &crate::identity::RUCKCODE)
+    ruck_harness_tools::truncate_middle(s, max, &crate::identity::RUCKCODE)
 }
 
 /// Index of the first message of the in-flight exchange: the last assistant tool calls and the

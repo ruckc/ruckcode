@@ -28,7 +28,7 @@
 //! answers those locally (see [`normalise_plan`]).
 
 use ruck_harness_llm::{ContentBlock, Message};
-use ruckcode_tools::PlanItem;
+use ruck_harness_tools::PlanItem;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
@@ -598,7 +598,7 @@ fn similar(a: &Value, b: &Value) -> bool {
 }
 
 /// The plan's (content, status) pairs, normalised for comparison (whitespace collapsed, case
-/// ignored). The agent takes the items from the plan tool's [`ruckcode_tools::Tool::plan`] hook.
+/// ignored). The agent takes the items from the plan tool's [`ruck_harness_tools::Tool::plan`] hook.
 pub fn normalise_plan(items: &[PlanItem]) -> Vec<(String, String)> {
     items
         .iter()

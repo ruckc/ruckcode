@@ -5,13 +5,13 @@
 use async_trait::async_trait;
 use ruck_harness_llm::mock::MockProvider;
 use ruck_harness_llm::{ContentBlock, Message, Provider, StopReason as LlmStop, Usage};
+use ruck_harness_tools::{Answer, Question, UserBridge};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent,
 };
 use ruckcode_core::transcript::{
     assess_unfinished, Metrics, Record, TranscriptReader, TranscriptWriter, UserSource,
 };
-use ruckcode_tools::{Answer, Question, UserBridge};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

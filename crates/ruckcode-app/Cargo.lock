@@ -3285,6 +3285,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruck-harness-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "globset",
+ "http",
+ "rmcp",
+ "ruck-harness-ident",
+ "ruck-harness-tools",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "ruck-harness-sandbox"
 version = "0.1.0"
 dependencies = [
@@ -3347,9 +3366,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "ruck-harness-mcp",
+ "ruck-harness-tools",
  "ruckcode-core",
- "ruckcode-mcp",
- "ruckcode-tools",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3390,8 +3409,10 @@ dependencies = [
  "ruck-harness-hooks",
  "ruck-harness-ident",
  "ruck-harness-llm",
+ "ruck-harness-mcp",
  "ruck-harness-sandbox",
- "ruckcode-mcp",
+ "ruck-harness-tools",
+ "ruck-harness-web",
  "ruckcode-mise",
  "ruckcode-tools",
  "serde",
@@ -3408,25 +3429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruckcode-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures",
- "globset",
- "http",
- "rmcp",
- "ruck-harness-ident",
- "ruckcode-tools",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "ruckcode-mise"
 version = "0.1.0"
 dependencies = [
@@ -3434,7 +3436,7 @@ dependencies = [
  "async-trait",
  "globset",
  "ruck-harness-ident",
- "ruckcode-tools",
+ "ruck-harness-tools",
  "serde",
  "serde_json",
  "tokio",

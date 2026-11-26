@@ -1,5 +1,5 @@
 //! MCP (Model Context Protocol) client support: connect to configured servers and expose their
-//! tools as [`ruckcode_tools::Tool`]s named `mcp__<server>__<tool>`.
+//! tools as [`ruck_harness_tools::Tool`]s named `mcp__<server>__<tool>`.
 
 use async_trait::async_trait;
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -9,7 +9,7 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{RoleClient, ServiceExt};
 use ruck_harness_ident::AppIdentity;
-use ruckcode_tools::{truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
+use ruck_harness_tools::{truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};

@@ -4,7 +4,7 @@
 use crate::agent::{Client, PermissionDecision, PermissionRequest};
 use async_trait::async_trait;
 use ruck_harness_sandbox::{DomainAnswer, DomainPrompter, SandboxConfig};
-use ruckcode_tools::{SandboxHandle, ToolKind};
+use ruck_harness_tools::{SandboxHandle, ToolKind};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -67,7 +67,7 @@ pub(crate) fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruckcode_tools::SandboxHandle;
+    use ruck_harness_tools::SandboxHandle;
 
     #[test]
     fn write_guards_cover_git_config_hooks_and_info() {

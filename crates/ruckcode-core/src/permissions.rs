@@ -1,7 +1,7 @@
 //! Tool permission resolution.
 
 use globset::Glob;
-use ruckcode_tools::Tool;
+use ruck_harness_tools::Tool;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -47,7 +47,7 @@ pub fn resolve(tool: &dyn Tool, mode: &ModeDef, config: &Config) -> Permission {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use ruckcode_tools::{ToolContext, ToolKind, ToolOutput};
+    use ruck_harness_tools::{ToolContext, ToolKind, ToolOutput};
     use serde_json::{json, Value};
 
     /// A tool that only has a name and a kind: the defaults for MCP and mise tools.
