@@ -1,8 +1,8 @@
 //! Provider end-to-end tests against a tiny local HTTP server serving canned SSE streams.
 
-use ruckcode_llm::anthropic::Anthropic;
-use ruckcode_llm::openai::OpenAi;
-use ruckcode_llm::{
+use ruck_harness_llm::anthropic::Anthropic;
+use ruck_harness_llm::openai::OpenAi;
+use ruck_harness_llm::{
     ContentBlock, Message, Provider, Request, StopReason, StreamEvent, ToolSpec, Usage,
 };
 use serde_json::{json, Value};
@@ -665,7 +665,7 @@ fn no_nulls(v: &Value) {
 
 fn assistant(content: Vec<ContentBlock>) -> Message {
     Message {
-        role: ruckcode_llm::Role::Assistant,
+        role: ruck_harness_llm::Role::Assistant,
         content,
     }
 }
@@ -701,7 +701,7 @@ async fn openai_empty_assistant_content_is_never_null() {
             },
         ]),
         Message {
-            role: ruckcode_llm::Role::User,
+            role: ruck_harness_llm::Role::User,
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: "t1".into(),
                 content: "".into(),

@@ -5,7 +5,7 @@
 //! the agent loop (`agent.rs`) owns waiting, cancellation and user-visible status.
 
 use chrono::{DateTime, Local};
-use ruckcode_llm::{is_transport_error, ApiError, LimitKind, RateLimitInfo};
+use ruck_harness_llm::{is_transport_error, ApiError, LimitKind, RateLimitInfo};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Mutex;

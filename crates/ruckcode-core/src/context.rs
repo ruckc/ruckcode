@@ -9,7 +9,7 @@
 //! * a hard ceiling: prompt estimate plus the output reserve never exceeds the window; the
 //!   largest tool results of the turn are truncated until the request fits.
 
-use ruckcode_llm::{ContentBlock, Message, Role, ToolSpec};
+use ruck_harness_llm::{ContentBlock, Message, Role, ToolSpec};
 use serde::Deserialize;
 
 /// Token estimates assume this many bytes per token (conservative for code and JSON).

@@ -3,7 +3,7 @@
 
 use crate::ToolContext;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use ruckcode_sandbox::NetworkMode;
+use ruck_harness_sandbox::NetworkMode;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;

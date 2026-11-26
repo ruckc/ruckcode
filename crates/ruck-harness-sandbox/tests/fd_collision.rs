@@ -5,7 +5,7 @@
 
 #![cfg(target_os = "linux")]
 
-use ruckcode_sandbox::{
+use ruck_harness_sandbox::{
     LauncherExe, NamespaceMode, NetworkMode, Prep, Sandbox, SandboxConfig, SandboxOptions,
 };
 use std::path::PathBuf;

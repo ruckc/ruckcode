@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::modes::ModeSet;
-use ruckcode_sandbox::NetworkMode;
+use ruck_harness_sandbox::NetworkMode;
 
 fn git_in(dir: &Path, args: &[&str]) -> String {
     let o = Command::new("git")

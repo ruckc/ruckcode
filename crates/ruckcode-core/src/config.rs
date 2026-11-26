@@ -1,8 +1,8 @@
 //! Layered configuration: built-in defaults, user config, then project config.
 
 use anyhow::{bail, Context, Result};
-use ruckcode_hooks::HooksConfig;
-use ruckcode_llm::Provider;
+use ruck_harness_hooks::HooksConfig;
+use ruck_harness_llm::Provider;
 use ruckcode_mcp::McpServerConfig;
 use serde::Deserialize;
 use serde_json::Value;
@@ -160,7 +160,7 @@ pub struct Pricing {
 
 impl Pricing {
     /// Cost in USD of one request's usage; `None` when the provider reported no usage.
-    pub fn cost(&self, u: &ruckcode_llm::Usage) -> Option<f64> {
+    pub fn cost(&self, u: &ruck_harness_llm::Usage) -> Option<f64> {
         if !u.is_reported() {
             return None;
         }
@@ -298,7 +298,7 @@ pub struct Config {
     pub context: ContextConfig,
     /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
     #[serde(default)]
-    pub sandbox: ruckcode_sandbox::SandboxConfig,
+    pub sandbox: ruck_harness_sandbox::SandboxConfig,
     /// The `WebFetch` and `WebSearch` tools (`[web]`). A project's own config may only set
     /// `enabled`.
     #[serde(default)]
@@ -537,10 +537,10 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
         )
     };
     Ok(match profile.provider {
-        ProviderKind::Mock => Arc::new(ruckcode_llm::mock::MockProvider::demo()),
+        ProviderKind::Mock => Arc::new(ruck_harness_llm::mock::MockProvider::demo()),
         ProviderKind::Anthropic => {
             let key = key.ok_or_else(missing)?;
-            Arc::new(ruckcode_llm::anthropic::Anthropic::new(
+            Arc::new(ruck_harness_llm::anthropic::Anthropic::new(
                 key,
                 profile.base_url.clone(),
             ))
@@ -553,7 +553,7 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
             if key.is_none() && !local {
                 return Err(missing());
             }
-            let mut p = ruckcode_llm::openai::OpenAi::new(key, profile.base_url.clone());
+            let mut p = ruck_harness_llm::openai::OpenAi::new(key, profile.base_url.clone());
             if let Some(extra) = profile.ollama.as_ref().and_then(OllamaOptions::extra_body) {
                 p = p.with_extra_body(extra);
             }
@@ -799,7 +799,7 @@ output = 75.0
 "#)
         .unwrap();
         let p = &c.profiles["anthropic"];
-        let u = ruckcode_llm::Usage {
+        let u = ruck_harness_llm::Usage {
             input_tokens: 1_000_000,
             output_tokens: 100_000,
             cache_read_tokens: Some(400_000),
@@ -814,7 +814,7 @@ output = 75.0
         assert_eq!(
             p.pricing_for("x")
                 .unwrap()
-                .cost(&ruckcode_llm::Usage::default()),
+                .cost(&ruck_harness_llm::Usage::default()),
             None
         );
         // Unpriced profile.
@@ -911,7 +911,10 @@ output = 75.0
         );
         // The working-tree [sandbox] table is not read at all (only the verified remote copy is
         // honoured, see `project_policy`).
-        assert_eq!(c.sandbox.network, ruckcode_sandbox::NetworkMode::Allowlist);
+        assert_eq!(
+            c.sandbox.network,
+            ruck_harness_sandbox::NetworkMode::Allowlist
+        );
         assert!(c.sandbox.extra_write_paths.is_empty());
         std::fs::write(
             user.path().join("config.toml"),

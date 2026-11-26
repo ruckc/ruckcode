@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(hooks("test"), ["mise run fmt"]);
         assert!(hooks("review").is_empty());
         let h = &set.get("test").unwrap().hooks.post_edit[0];
-        assert_eq!(h.on_failure, ruckcode_hooks::OnFailure::FixTurn);
+        assert_eq!(h.on_failure, ruck_harness_hooks::OnFailure::FixTurn);
         assert_eq!(set.get("test").unwrap().next, ["implement", "review"]);
     }
 

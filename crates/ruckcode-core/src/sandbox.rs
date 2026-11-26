@@ -3,7 +3,7 @@
 
 use crate::agent::{Client, PermissionDecision, PermissionRequest};
 use async_trait::async_trait;
-use ruckcode_sandbox::{DomainAnswer, DomainPrompter, SandboxConfig};
+use ruck_harness_sandbox::{DomainAnswer, DomainPrompter, SandboxConfig};
 use ruckcode_tools::{SandboxHandle, ToolKind};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -42,18 +42,18 @@ impl DomainPrompter for NetPrompter {
 pub(crate) fn protected_write(project: &Path, config_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut v = vec![project.join(".ruckcode"), project.join(".mcp.json")];
     v.extend(config_dir.map(Path::to_path_buf));
-    v.extend(ruckcode_sandbox::git_protected_paths(project));
+    v.extend(ruck_harness_sandbox::git_protected_paths(project));
     v
 }
 
 pub(crate) fn handle(
-    sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
+    sandbox: Option<Arc<ruck_harness_sandbox::Sandbox>>,
     cfg: SandboxConfig,
     project: &Path,
     config_dir: Option<&Path>,
 ) -> SandboxHandle {
     let deny_read =
-        ruckcode_sandbox::deny_list(&cfg, dirs::home_dir().as_deref(), project, config_dir);
+        ruck_harness_sandbox::deny_list(&cfg, dirs::home_dir().as_deref(), project, config_dir);
     let gate = sandbox.as_ref().map(|s| s.gate());
     SandboxHandle {
         sandbox,

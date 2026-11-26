@@ -1,6 +1,6 @@
 //! `list_models` against a local fake server that serves scripted responses in order.
 
-use ruckcode_llm::{list_models, ApiKind};
+use ruck_harness_llm::{list_models, ApiKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 

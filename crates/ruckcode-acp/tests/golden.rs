@@ -12,10 +12,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use ruck_harness_llm::mock::MockProvider;
+use ruck_harness_llm::{ContentBlock as LlmBlock, Message, Role};
 use ruckcode_acp::{spawn_in_process, Handler, RpcError};
 use ruckcode_core::{Agent, AgentOptions};
-use ruckcode_llm::mock::MockProvider;
-use ruckcode_llm::{ContentBlock as LlmBlock, Message, Role};
 use serde_json::{json, Value};
 
 #[derive(Default)]

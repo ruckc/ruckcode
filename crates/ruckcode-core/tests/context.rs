@@ -2,13 +2,13 @@
 //! compact-and-retry after a `max_tokens` stop on a full context. Scripted provider, 8K window.
 
 use async_trait::async_trait;
+use ruck_harness_llm::mock::MockProvider;
+use ruck_harness_llm::{ContentBlock, Message, Request, Role, StopReason as LlmStop, Usage};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
 use ruckcode_core::context::estimate_tokens;
 use ruckcode_core::McpServerConfig;
-use ruckcode_llm::mock::MockProvider;
-use ruckcode_llm::{ContentBlock, Message, Request, Role, StopReason as LlmStop, Usage};
 use ruckcode_tools::{Answer, Question, UserBridge};
 use serde_json::{json, Value};
 use std::path::PathBuf;

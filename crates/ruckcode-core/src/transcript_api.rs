@@ -14,7 +14,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use anyhow::{bail, Context, Result};
-use ruckcode_llm::{ContentBlock, Message};
+use ruck_harness_llm::{ContentBlock, Message};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -764,7 +764,7 @@ mod tests {
         EditRecord, Initiator, McpServerRecord, Metrics, PermissionOutcome, SessionMeta,
         TranscriptWriter,
     };
-    use ruckcode_llm::{Role, StopReason, Usage};
+    use ruck_harness_llm::{Role, StopReason, Usage};
     use std::io::Write;
 
     fn meta(id: &str) -> SessionMeta {

@@ -2,12 +2,12 @@
 //! discard that reasoning, nudge the model, and stop the turn after too many nudges.
 
 use async_trait::async_trait;
-use ruckcode_core::agent::{
-    Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
-};
-use ruckcode_llm::{
+use ruck_harness_llm::{
     ContentBlock, Message, Provider, Request, Response, Role, StopReason as LlmStop, StreamEvent,
     Usage,
+};
+use ruckcode_core::agent::{
+    Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
 use ruckcode_tools::{Answer, Question, UserBridge};
 use std::collections::VecDeque;

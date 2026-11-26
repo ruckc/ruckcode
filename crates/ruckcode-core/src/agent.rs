@@ -2,8 +2,10 @@
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
-use ruckcode_hooks::{fix_turn_prompt, HookEvent, HookOutcome, HookRunner, HooksConfig, OnFailure};
-use ruckcode_llm::{
+use ruck_harness_hooks::{
+    fix_turn_prompt, HookEvent, HookOutcome, HookRunner, HooksConfig, OnFailure,
+};
+use ruck_harness_llm::{
     ContentBlock, LimitKind, Message, Provider, Request, Response, Role, StopReason as LlmStop,
     StreamEvent, Usage,
 };
@@ -212,7 +214,7 @@ pub struct AgentOptions {
     pub user_config_dir: Option<PathBuf>,
     /// The binary that acts as the sandbox launcher (`__sandbox-exec`); `None` re-executes the
     /// running binary. Tests whose binary does not embed the launcher set this.
-    pub sandbox_exe: Option<ruckcode_sandbox::LauncherExe>,
+    pub sandbox_exe: Option<ruck_harness_sandbox::LauncherExe>,
 }
 
 impl Default for AgentOptions {
@@ -261,7 +263,7 @@ struct SessionState {
     /// compaction included; failed attempts return no usage and count nothing).
     turn_usage: Usage,
     /// Created on the first sandboxed command.
-    sandbox: Option<Arc<ruckcode_sandbox::Sandbox>>,
+    sandbox: Option<Arc<ruck_harness_sandbox::Sandbox>>,
     /// Project sandbox policy messages, sent once at the first prompt.
     policy_notices: Vec<String>,
     /// `loopKind` of the tool-loop trip that ended the last turn (`repeat`, `search` or
@@ -514,7 +516,7 @@ impl Agent {
         config: &mut Config,
         modes: &mut ModeSet,
     ) -> Vec<String> {
-        use ruckcode_sandbox::ProjectPolicy;
+        use ruck_harness_sandbox::ProjectPolicy;
         if !config.sandbox.enabled || config.sandbox.project_policy == ProjectPolicy::Off {
             return vec![];
         }
@@ -1809,23 +1811,24 @@ impl Agent {
             Some(match &s.sandbox {
                 Some(sb) => sb.clone(),
                 None => {
-                    let sb = ruckcode_sandbox::Sandbox::new(ruckcode_sandbox::SandboxOptions {
-                        project_root: s.cwd.clone(),
-                        exe: self
-                            .options
-                            .sandbox_exe
-                            .clone()
-                            .unwrap_or(ruckcode_sandbox::LauncherExe::SelfExe),
-                        prompter: Some(Arc::new(crate::sandbox::NetPrompter {
-                            client: client.clone(),
-                            session_id: s.id.clone(),
-                        })),
-                        store: ruckcode_sandbox::DomainStore::for_project(&s.cwd),
-                        config_dir: config_dir.clone(),
-                        home: None,
-                        caps: None,
-                    })
-                    .await;
+                    let sb =
+                        ruck_harness_sandbox::Sandbox::new(ruck_harness_sandbox::SandboxOptions {
+                            project_root: s.cwd.clone(),
+                            exe: self
+                                .options
+                                .sandbox_exe
+                                .clone()
+                                .unwrap_or(ruck_harness_sandbox::LauncherExe::SelfExe),
+                            prompter: Some(Arc::new(crate::sandbox::NetPrompter {
+                                client: client.clone(),
+                                session_id: s.id.clone(),
+                            })),
+                            store: ruck_harness_sandbox::DomainStore::for_project(&s.cwd),
+                            config_dir: config_dir.clone(),
+                            home: None,
+                            caps: None,
+                        })
+                        .await;
                     s.sandbox = Some(sb.clone());
                     sb
                 }
@@ -2019,7 +2022,7 @@ impl Agent {
                 Err(StreamFail { error, streamed }) => {
                     let api = error
                         .chain()
-                        .find_map(|e| e.downcast_ref::<ruckcode_llm::ApiError>());
+                        .find_map(|e| e.downcast_ref::<ruck_harness_llm::ApiError>());
                     if let Some(api) = api {
                         self.pacer.observe(pace_key, &api.rate_limit);
                     }
@@ -2174,7 +2177,7 @@ impl Agent {
         client: &Arc<dyn Client>,
         cancel: &CancellationToken,
         system: &str,
-        tools: &[ruckcode_llm::ToolSpec],
+        tools: &[ruck_harness_llm::ToolSpec],
         profile: &Profile,
     ) -> u64 {
         let limits = self.limits(s, profile);

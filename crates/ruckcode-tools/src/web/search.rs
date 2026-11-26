@@ -627,8 +627,8 @@ mod tests {
     use super::*;
     use crate::test_util::ctx;
     use crate::SandboxHandle;
-    use ruckcode_sandbox::proxy::Gate;
-    use ruckcode_sandbox::{NetworkMode, SandboxConfig};
+    use ruck_harness_sandbox::proxy::Gate;
+    use ruck_harness_sandbox::{NetworkMode, SandboxConfig};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 

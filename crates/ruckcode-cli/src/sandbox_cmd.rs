@@ -3,9 +3,9 @@
 use crate::Cli;
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use ruck_harness_sandbox::{LauncherExe, ProjectPolicy, SandboxConfig};
 use ruckcode_core::project_policy::{self, Resolution, Status};
 use ruckcode_core::{Config, ModeSet};
-use ruckcode_sandbox::{LauncherExe, ProjectPolicy, SandboxConfig};
 use std::io::IsTerminal;
 
 #[derive(Subcommand, Debug)]
@@ -108,8 +108,8 @@ fn policy_lines(cfg: &SandboxConfig, res: Option<&Resolution>) -> Vec<String> {
     v
 }
 
-fn path_lines(cfg: &SandboxConfig, paths: &[ruckcode_sandbox::PathStatus]) -> Vec<String> {
-    use ruckcode_sandbox::PathState;
+fn path_lines(cfg: &SandboxConfig, paths: &[ruck_harness_sandbox::PathStatus]) -> Vec<String> {
+    use ruck_harness_sandbox::PathState;
     let mut v = Vec::new();
     for (kind, title) in [
         ("cache", "cache paths"),
@@ -195,11 +195,12 @@ fn trust_remote(cli: &Cli, yes: bool) -> Result<()> {
 
 fn status(cli: &Cli, json: bool) -> Result<()> {
     let Effective { cfg, mode, policy } = effective_config(cli)?;
-    let caps = ruckcode_sandbox::detect(&LauncherExe::SelfExe);
+    let caps = ruck_harness_sandbox::detect(&LauncherExe::SelfExe);
     let project = cli.project_dir()?;
-    let paths = ruckcode_sandbox::path_report(&cfg, dirs::home_dir().as_deref(), &project, false);
+    let paths =
+        ruck_harness_sandbox::path_report(&cfg, dirs::home_dir().as_deref(), &project, false);
     if json {
-        let plan = ruckcode_sandbox::plan(&caps, &cfg);
+        let plan = ruck_harness_sandbox::plan(&caps, &cfg);
         let pol = policy.as_ref().map(|r| {
             serde_json::json!({
                 "status": r.status,
@@ -222,7 +223,7 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
         return Ok(());
     }
     println!("mode: {mode}");
-    print!("{}", ruckcode_sandbox::report(&caps, &cfg));
+    print!("{}", ruck_harness_sandbox::report(&caps, &cfg));
     for l in path_lines(&cfg, &paths) {
         println!("{l}");
     }
@@ -240,7 +241,7 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
 #[cfg(test)]
 mod path_status_tests {
     use super::*;
-    use ruckcode_sandbox::{PathState, PathStatus};
+    use ruck_harness_sandbox::{PathState, PathStatus};
 
     #[test]
     fn status_lists_cache_and_extra_path_states() {

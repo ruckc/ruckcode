@@ -1,7 +1,7 @@
 //! Append-only JSONL session transcripts stored in the project for audit and resume.
 
 use anyhow::{Context, Result};
-use ruckcode_llm::{ContentBlock, Message, Role, StopReason, Usage};
+use ruck_harness_llm::{ContentBlock, Message, Role, StopReason, Usage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{File, OpenOptions};

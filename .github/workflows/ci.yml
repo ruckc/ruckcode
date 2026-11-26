@@ -144,7 +144,7 @@ jobs:
       - run: cargo test --workspace --locked
       - name: Sandbox enforcement tests (verbose, shows skips)
         run: |
-          cargo test -p ruckcode-sandbox --test enforcement --locked -- --nocapture --test-threads=1
+          cargo test -p ruck-harness-sandbox --test enforcement --locked -- --nocapture --test-threads=1
           cargo test -p ruckcode-cli --test sandbox_cli --locked -- --nocapture
 
   # Portability smoke test for the other release platforms.
@@ -204,7 +204,7 @@ jobs:
       - name: Sandbox tests (macOS Seatbelt)
         if: runner.os == 'macOS'
         run: |
-          cargo test -p ruckcode-sandbox --locked -- --nocapture --test-threads=1
+          cargo test -p ruck-harness-sandbox --locked -- --nocapture --test-threads=1
           cargo test -p ruckcode-cli --test sandbox_cli --locked -- --nocapture
       - name: Save cargo cache
         if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'

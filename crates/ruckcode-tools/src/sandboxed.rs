@@ -1,8 +1,8 @@
 //! Glue between process-spawning tools and the command sandbox.
 
 use crate::ToolContext;
-use ruckcode_sandbox::proxy::Gate;
-use ruckcode_sandbox::{Prep, Prepared, Sandbox, SandboxConfig};
+use ruck_harness_sandbox::proxy::Gate;
+use ruck_harness_sandbox::{Prep, Prepared, Sandbox, SandboxConfig};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

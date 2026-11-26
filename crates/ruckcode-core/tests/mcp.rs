@@ -1,11 +1,11 @@
 use async_trait::async_trait;
+use ruck_harness_llm::mock::MockProvider;
+use ruck_harness_llm::{ContentBlock, Message, Request, Role};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
 use ruckcode_core::transcript::{session_path, Record, TranscriptReader};
 use ruckcode_core::McpServerConfig;
-use ruckcode_llm::mock::MockProvider;
-use ruckcode_llm::{ContentBlock, Message, Request, Role};
 use ruckcode_tools::{Answer, Question, UserBridge};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;

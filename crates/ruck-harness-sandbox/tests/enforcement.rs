@@ -4,7 +4,7 @@
 
 #![cfg(unix)]
 
-use ruckcode_sandbox::{
+use ruck_harness_sandbox::{
     LauncherExe, NamespaceMode, NetworkMode, Prep, Sandbox, SandboxConfig, SandboxOptions,
 };
 use std::path::{Path, PathBuf};
@@ -398,7 +398,7 @@ async fn network_through_proxy_landlock() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_namespace_probes_all_agree() {
     let exe = LauncherExe::Path(PathBuf::from(env!("CARGO_BIN_EXE_rc-sandbox-exec")));
-    let reference = ruckcode_sandbox::caps::detect_uncached(&exe);
+    let reference = ruck_harness_sandbox::caps::detect_uncached(&exe);
     if !reference.namespaces {
         return skip("user namespaces unavailable");
     }
@@ -406,7 +406,9 @@ async fn concurrent_namespace_probes_all_agree() {
         let probes: Vec<_> = (0..16)
             .map(|_| {
                 let exe = exe.clone();
-                tokio::task::spawn_blocking(move || ruckcode_sandbox::caps::detect_uncached(&exe))
+                tokio::task::spawn_blocking(move || {
+                    ruck_harness_sandbox::caps::detect_uncached(&exe)
+                })
             })
             .collect();
         for p in probes {
@@ -619,7 +621,7 @@ async fn strict_refuses_without_enforcement() {
         store: None,
         config_dir: None,
         home: Some(e.home.clone()),
-        caps: Some(ruckcode_sandbox::Capabilities {
+        caps: Some(ruck_harness_sandbox::Capabilities {
             platform: "linux".into(),
             landlock_abi: None,
             seccomp: false,

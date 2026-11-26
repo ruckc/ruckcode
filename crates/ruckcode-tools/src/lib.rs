@@ -17,7 +17,7 @@ pub use todo::{TodoItem, TodoStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
 pub use web::{WebConfig, WebFetch, WebSearch};
 
 use async_trait::async_trait;
-use ruckcode_llm::ToolSpec;
+use ruck_harness_llm::ToolSpec;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
