@@ -165,9 +165,12 @@ it is not a client parsing problem. It tracks the tool list: the built-in `TodoW
 provider = "openai"
 base_url = "http://localhost:11434/v1"
 model = "gemma4:26b"
-lean_tools = true                      # drop TodoWrite and AskUserQuestion, and the prompt lines about them
+lean_tools = true                      # drop TodoWrite, AskUserQuestion, WebFetch and WebSearch, and the prompt lines about them
 # tools = ["Read", "Edit", "Bash"]     # or: allowlist of built-in tools (MCP and mise tools unaffected)
 ```
+
+`lean_tools` also leaves out `WebFetch` and `WebSearch` (see [Web tools](#web-tools)) unless the
+profile's `tools` allowlist names them (`tools = ["Read", "Bash", "WebSearch"]`).
 
 Both keys are off by default, so other profiles send exactly the same tools and prompt as before.
 Set `RUCKCODE_TRACE_HTTP=/path/to/file` to append each OpenAI-compatible request body and raw SSE
@@ -510,6 +513,82 @@ cannot modify `.git/config`, `.git/hooks/`, `.git/info/` or the remote-tracking 
 `rc sandbox status` shows what your system can enforce and where the project policy comes from. Native Windows has no sandbox (use WSL).
 See [docs/SANDBOX.md](docs/SANDBOX.md) for the layers, defaults, every config key, the Ubuntu
 AppArmor profile for user namespaces and the known limits.
+
+## Web tools
+
+Two built-in tools give the model web access; both are on by default and read-only (no permission
+prompt for the call itself; the network policy below is the consent step).
+
+- **`WebFetch`** (`url`, optional `max_chars`, default 20,000): fetches an http(s) page. HTML is
+  converted to Markdown (headings, `[text](url)` links, lists, code; scripts, styles, nav, footers
+  and asides dropped, via [`html2text`](https://crates.io/crates/html2text)); text, JSON, XML and
+  Markdown pass through; binary content is refused. The result starts with the final URL, status and
+  content type. `http://` URLs without an explicit port are upgraded to `https://` (falling back to
+  http only if https cannot connect). At most 5 redirects, each hop re-validated; 10 s connect and
+  30 s total timeouts; the body is read up to 5 MB then truncated. The `User-Agent` is
+  `ruckcode/<version> (+https://github.com/ruckc/ruckcode)`. Output is further limited by
+  `[context] max_tool_result_*`.
+- **`WebSearch`** (`query`, optional `max_results`, default 8, and `site`): returns a numbered list of
+  title, URL and snippet. The prompt tells the model to search, then fetch specific URLs.
+
+**SSRF protection.** `WebFetch` refuses private (10/8, 172.16/12, 192.168/16), loopback, link-local
+(169.254/16, including the 169.254.169.254 metadata address), CGNAT, unspecified, multicast and
+reserved addresses, `fc00::/7`, `fe80::/10`, and IPv4 embedded in IPv6 (`::ffff:a.b.c.d`, NAT64,
+6to4). IP literals are checked before sending; host names are resolved by a custom resolver that
+returns only permitted addresses and is the one the connection uses, so a name that resolves to a
+private address (or flips between lookups, DNS rebinding) is never connected to. System HTTP proxies
+are ignored (they would resolve names themselves). `web.allow_private = true` lifts the restriction.
+
+**Network policy.** The tools run in-process, not inside the command sandbox, so they apply the
+`[sandbox]` network settings themselves, through the same gate as the sandbox proxy (one allowlist,
+one set of remembered per-project decisions, one prompt):
+
+| `sandbox.network` | `WebFetch` / `WebSearch` |
+|---|---|
+| `"off"` | refused |
+| `"allowlist"` (default) | domains in `sandbox.allowed_domains` or already approved go through; others prompt (allow once / always for this project / reject) |
+| `"full"` | no prompt |
+
+With `sandbox.enabled = false` there is no network policy (the address checks still apply). Every
+redirect hop is checked against the gate, so a redirect to a new domain prompts.
+
+```toml
+# config.toml
+[web]
+enabled = true            # false removes both tools
+allow_private = false     # true lets WebFetch reach localhost, LAN and metadata addresses
+[web.search]
+provider = "duckduckgo"   # "duckduckgo" (default, keyless) | "searxng" | "brave" | "tavily"
+fallback = []             # tried in order if provider fails; empty = never switch silently
+# url = "https://searx.example"      # searxng endpoint (or [web.search.searxng] url)
+# api_key_name = "brave"             # named key from credentials.toml (`rc keys add brave`)
+# api_key_env = "BRAVE_API_KEY"      # or an environment variable (BRAVE_API_KEY / TAVILY_API_KEY by default)
+# [web.search.tavily]                # per-provider tables, needed for providers used as fallbacks
+# api_key_name = "tavily"
+```
+
+A project's `.ruckcode/config.toml` can only set `web.enabled`; endpoints, keys and `allow_private`
+are read from the user config. Keys are never logged (they are redacted in debug output); prefer
+`api_key_name`/`api_key_env` over an inline `api_key`.
+
+**Providers.**
+
+- `duckduckgo` (default, no key): fetches `https://html.duckduckgo.com/html/?q=...` and parses the
+  results page. This scrapes a public HTML page that has no official API, so it can break when the
+  markup changes and is subject to DuckDuckGo's terms of service. To be polite it sends one request
+  per search, at most one per 2 seconds process-wide (`web.search.ddg_min_interval_secs`), and never
+  retries. On HTTP 202/429 or the "anomaly" CAPTCHA page it returns "search temporarily unavailable"
+  and stops; an unrecognisable page is reported as a changed layout. A self-hosted SearXNG is the
+  robust keyless option.
+- `searxng` (self-hosted): `GET <url>/search?q=...&format=json`. The instance must enable the `json`
+  format (`search: formats: [html, json]` in its `settings.yml`), otherwise it answers 403. Since
+  you configure the URL, a localhost or LAN address is allowed.
+- `brave` (`api_key`, env `BRAVE_API_KEY`): Brave Search API, `X-Subscription-Token` header.
+- `tavily` (`api_key`, env `TAVILY_API_KEY`): Tavily Search API, `Authorization: Bearer`.
+
+The configured provider's host is pre-allowed (configuring it is consent) but `sandbox.network =
+"off"` still refuses. Provider-native server-side search (for example Anthropic's web search tool)
+is not used; it could be a follow-up.
 
 ## MCP servers
 
@@ -919,7 +998,7 @@ release is deployed to the site). Everything is verified with the project's mini
 crates/
   ruckcode-core     agent loop, sessions, context assembly, modes, permissions, config
   ruckcode-llm      Provider trait + Anthropic and OpenAI-compatible clients
-  ruckcode-tools    Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, SwitchMode
+  ruckcode-tools    Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, AskUserQuestion, TodoWrite, SwitchMode
   ruckcode-mise     mise task discovery, schema mapping, execution
   ruckcode-sandbox  command sandbox: launcher, namespaces, Landlock, seccomp, Seatbelt, allowlist proxy
   ruckcode-mcp      MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`

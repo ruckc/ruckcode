@@ -451,6 +451,12 @@ impl Sandbox {
         self.gate.set_current_call(tool_call_id);
     }
 
+    /// The network gate shared by the proxy and in-process network tools (WebFetch, WebSearch):
+    /// one allowlist, one set of remembered per-project decisions, one prompt.
+    pub fn gate(&self) -> Arc<Gate> {
+        self.gate.clone()
+    }
+
     pub fn proxy_port(&self) -> Option<u16> {
         self.proxy.as_ref().map(|p| p.port)
     }

@@ -1,6 +1,7 @@
 //! Glue between process-spawning tools and the command sandbox.
 
 use crate::ToolContext;
+use ruckcode_sandbox::proxy::Gate;
 use ruckcode_sandbox::{Prep, Prepared, Sandbox, SandboxConfig};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,6 +18,8 @@ pub struct SandboxHandle {
     pub protected_write: Vec<PathBuf>,
     /// Secrets in-process tools may not read.
     pub deny_read: Vec<PathBuf>,
+    /// The sandbox's network gate, for in-process network tools (WebFetch, WebSearch).
+    pub gate: Option<Arc<Gate>>,
 }
 
 fn normalize(p: &Path) -> PathBuf {

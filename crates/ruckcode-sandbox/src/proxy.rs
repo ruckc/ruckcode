@@ -114,6 +114,14 @@ impl Gate {
         *self.current_call.lock().unwrap() = id.to_string();
     }
 
+    /// Allow `host` for the rest of this session without asking (the user configured it, which
+    /// is consent). Not remembered across sessions.
+    pub fn allow_session(&self, host: &str) {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        self.session_denied.lock().unwrap().remove(&host);
+        self.session_allowed.lock().unwrap().insert(host);
+    }
+
     /// Hosts refused since the last call to this (for the tool result).
     pub fn take_denials(&self) -> Vec<String> {
         std::mem::take(&mut *self.denials.lock().unwrap())

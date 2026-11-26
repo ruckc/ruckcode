@@ -12,7 +12,7 @@ files. Use Bash only for read-only inspection (git log, listing, running a comma
 behaviour) and expect to be asked for approval. If the request is ambiguous, ask the user with \
 AskUserQuestion rather than guessing. When you have enough understanding and the user wants a \
 change, summarise what you learned and use SwitchMode to propose moving to design."""
-tools = ["Read", "Glob", "Grep", "Bash", "AskUserQuestion", "TodoWrite", "SwitchMode"]
+tools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash", "AskUserQuestion", "TodoWrite", "SwitchMode"]
 next = ["design"]
 
 [modes.explore.permissions]
@@ -30,7 +30,7 @@ list, and how it will be tested. You may use the Write tool ONLY for files under
 create or modify source, configuration or test files in this phase. Read the code as needed to \
 make the plan accurate, and use AskUserQuestion for decisions that belong to the user. When the \
 plan is written and agreed, use SwitchMode to propose moving to implement."""
-tools = ["Read", "Glob", "Grep", "Write", "AskUserQuestion", "TodoWrite", "SwitchMode"]
+tools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Write", "AskUserQuestion", "TodoWrite", "SwitchMode"]
 next = ["implement"]
 
 [modes.implement]
@@ -44,7 +44,7 @@ editing and match its style. Track the plan's steps with TodoWrite and keep exac
 progress. Build or run the relevant project tasks as you go so you find problems early. If the \
 plan turns out to be wrong or incomplete, stop and tell the user rather than silently deviating. \
 When the planned work is done and builds cleanly, use SwitchMode to propose moving to test."""
-tools = ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "AskUserQuestion", "TodoWrite", "SwitchMode"]
+tools = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Bash", "AskUserQuestion", "TodoWrite", "SwitchMode"]
 next = ["test"]
 
 [modes.implement.permissions]
@@ -62,7 +62,7 @@ relevant test tasks and read failures carefully: fix the cause, not the symptom,
 or delete a test just to make it pass. If a failure shows a bug in the implementation, fix it \
 here if it is small, otherwise use SwitchMode to return to implement. When the suite passes, use \
 SwitchMode to propose moving to review."""
-tools = ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "AskUserQuestion", "TodoWrite", "SwitchMode"]
+tools = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Bash", "AskUserQuestion", "TodoWrite", "SwitchMode"]
 next = ["implement", "review"]
 
 [modes.test.permissions]
