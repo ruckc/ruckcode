@@ -262,6 +262,7 @@ pub fn diff(existing: &str, generated: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mode_ext::RuckcodeModeExt;
     use crate::modes::ModeSet;
 
     fn task(name: &str) -> MiseTask {
@@ -302,7 +303,7 @@ mod tests {
                 "release"
             ]
         );
-        let tasks = |m: &str| set.get(m).unwrap().mise_tasks.clone();
+        let tasks = |m: &str| set.get(m).unwrap().mise_tasks();
         assert_eq!(tasks("test"), ["test", "test:unit"]);
         assert_eq!(tasks("review"), ["lint", "fmt"]);
         assert_eq!(tasks("implement"), ["build"]);
@@ -334,10 +335,10 @@ mod tests {
         };
         let set = ModeSet::from_toml_str(&generate(&fixture(), &opts).unwrap()).unwrap();
         assert_eq!(set.ids(), ["plan", "build", "verify"]);
-        assert_eq!(set.get("plan").unwrap().mise_tasks, ["docs"]);
-        assert_eq!(set.get("build").unwrap().mise_tasks, ["build"]);
+        assert_eq!(set.get("plan").unwrap().mise_tasks(), ["docs"]);
+        assert_eq!(set.get("build").unwrap().mise_tasks(), ["build"]);
         assert_eq!(
-            set.get("verify").unwrap().mise_tasks,
+            set.get("verify").unwrap().mise_tasks(),
             ["test", "test:unit", "lint", "fmt"]
         );
         assert_eq!(

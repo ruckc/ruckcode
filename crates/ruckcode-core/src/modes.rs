@@ -21,9 +21,6 @@ pub struct ModeDef {
     /// Built-in tool allowlist; `None` means all built-ins.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
-    /// Task selectors (globs over mise task names).
-    #[serde(default)]
-    pub mise_tasks: Vec<String>,
     /// Glob selectors over full MCP tool names (e.g. `mcp__github__*`). Empty means no MCP
     /// tools in this mode (the implicit default mode selects `mcp__*`).
     #[serde(default)]
@@ -50,6 +47,36 @@ pub struct ModeDef {
     /// Per-mode sandbox overrides (`[modes.<id>.sandbox]`); cannot turn the sandbox off.
     #[serde(default)]
     pub sandbox: Option<ruck_harness_sandbox::SandboxOverride>,
+    /// Product-specific keys (for ruckcode: `mise_tasks`), restricted to the keys the product's
+    /// [`ModeSchema`] declares. Never filled by serde, so other unknown keys stay ignored.
+    #[serde(skip)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+/// What a product adds to the generic mode format.
+pub struct ModeSchema {
+    /// The only keys copied into [`ModeDef::extra`]; every other unknown key stays ignored.
+    pub extra_keys: &'static [&'static str],
+    /// Validates one declared extra key's value (a failure rejects the mode).
+    pub check_extra: fn(&str, &toml::Value) -> Result<()>,
+    /// `extra` of the implicit `default` mode.
+    pub implicit_extra: fn() -> BTreeMap<String, toml::Value>,
+}
+
+impl ModeDef {
+    /// Deserialise one `[modes.<id>]` table, capturing the schema's extra keys.
+    pub fn from_value(v: &toml::Value, schema: &ModeSchema) -> Result<Self> {
+        let mut def: ModeDef = v.clone().try_into()?;
+        if let Some(t) = v.as_table() {
+            for key in schema.extra_keys {
+                if let Some(val) = t.get(*key) {
+                    (schema.check_extra)(key, val)?;
+                    def.extra.insert((*key).to_string(), val.clone());
+                }
+            }
+        }
+        Ok(def)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,9 +96,13 @@ fn capitalize(s: &str) -> String {
 impl ModeSet {
     /// A single permissive `default` mode, used when no modes file exists.
     pub fn implicit() -> Self {
+        Self::implicit_with(&crate::mode_ext::RUCKCODE_MODE_SCHEMA)
+    }
+
+    pub fn implicit_with(schema: &ModeSchema) -> Self {
         let def = ModeDef {
             description: "General-purpose mode with all tools".into(),
-            mise_tasks: vec!["*".into()],
+            extra: (schema.implicit_extra)(),
             mcp_tools: vec!["mcp__*".into()],
             ..Default::default()
         };
@@ -82,14 +113,16 @@ impl ModeSet {
     }
 
     pub fn from_toml_str(text: &str) -> Result<Self> {
+        Self::from_toml_str_with(text, &crate::mode_ext::RUCKCODE_MODE_SCHEMA)
+    }
+
+    pub fn from_toml_str_with(text: &str, schema: &ModeSchema) -> Result<Self> {
         let table: toml::Table = text.parse().context("parsing modes.toml")?;
         let mut modes = Vec::new();
         if let Some(t) = table.get("modes") {
             let t = t.as_table().context("`modes` must be a table")?;
             for (id, v) in t {
-                let def: ModeDef = v
-                    .clone()
-                    .try_into()
+                let def = ModeDef::from_value(v, schema)
                     .with_context(|| format!("invalid mode `{id}`"))?;
                 modes.push((id.clone(), def));
             }

@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{make_provider_with, Config, Profile};
 use crate::context::{self, Limits};
+use crate::mode_ext::RuckcodeModeExt;
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::{system_prompt, MAX_CLIENT_INSTRUCTIONS};
@@ -2515,7 +2516,7 @@ fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> 
     if let Some(mcp) = &s.mcp {
         tools.extend(mcp.tools_for(&mode.mcp_tools, s.config.mcp.lazy_threshold));
     }
-    match TaskSelector::new(&mode.mise_tasks) {
+    match TaskSelector::new(&mode.mise_tasks()) {
         Ok(sel) => {
             let selected = sel.select(&s.mise_tasks).into_iter().cloned().collect();
             tools.extend(ruckcode_mise::tools_for(

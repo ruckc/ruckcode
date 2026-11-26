@@ -1,6 +1,7 @@
 //! Golden parse of the shipped `templates/modes*.toml`: the parsed `ModeSet` must not change.
 //! `prompthash` is a polynomial hash of the prompt text, so any change to a prompt shows up.
 
+use ruckcode_core::mode_ext::RuckcodeModeExt;
 use ruckcode_core::ModeSet;
 
 fn summary(s: &ModeSet) -> String {
@@ -8,7 +9,7 @@ fn summary(s: &ModeSet) -> String {
     for (id, m) in &s.modes {
         out.push_str(&format!(
             "MODE {id} name={:?} desc={:?} tools={:?} mise={:?} mcp={:?} next={:?} auto={:?} prof={:?} model={:?} perms={:?} hooks={} sandbox={:?} promptlen={} prompthash={}\n",
-            m.name, m.description, m.tools, m.mise_tasks, m.mcp_tools, m.next, m.auto_advance_to,
+            m.name, m.description, m.tools, m.mise_tasks(), m.mcp_tools, m.next, m.auto_advance_to,
             m.profile, m.model, m.permissions, m.hooks.post_edit.len(), m.sandbox, m.prompt.len(),
             m.prompt.bytes().fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64))
         ));
@@ -46,7 +47,7 @@ fn the_implicit_set_is_pinned() {
     assert_eq!(s.default_mode, "default");
     assert_eq!(s.ids(), ["default"]);
     let d = s.get("default").unwrap();
-    assert_eq!(d.mise_tasks, ["*"]);
+    assert_eq!(d.mise_tasks(), ["*"]);
     assert_eq!(d.mcp_tools, ["mcp__*"]);
     assert_eq!(d.description, "General-purpose mode with all tools");
     assert!(d.tools.is_none() && d.next.is_empty());
