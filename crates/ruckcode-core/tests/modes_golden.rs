@@ -2,6 +2,7 @@
 //! `prompthash` is a polynomial hash of the prompt text, so any change to a prompt shows up.
 
 use ruckcode_core::mode_ext::RuckcodeModeExt;
+use ruckcode_core::mode_ext::RuckcodeModeSet as _;
 use ruckcode_core::ModeSet;
 
 fn summary(s: &ModeSet) -> String {

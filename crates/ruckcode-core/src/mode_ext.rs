@@ -42,20 +42,29 @@ pub static RUCKCODE_MODE_SCHEMA: ModeSchema = ModeSchema {
     },
 };
 
-/// The mode loaders with ruckcode's schema and identity.
-impl ModeSet {
+/// The mode loaders with ruckcode's schema and identity (`ModeSet` is a harness type, so they
+/// are a trait; import it to call `ModeSet::load(..)` and friends).
+pub trait RuckcodeModeSet: Sized {
     /// A single permissive `default` mode, used when no modes file exists.
-    pub fn implicit() -> Self {
-        Self::implicit_with(&RUCKCODE_MODE_SCHEMA)
-    }
+    fn implicit() -> Self;
 
-    pub fn from_toml_str(text: &str) -> Result<Self> {
-        Self::from_toml_str_with(text, &RUCKCODE_MODE_SCHEMA)
-    }
+    fn from_toml_str(text: &str) -> Result<Self>;
 
     /// Project `.ruckcode/modes.toml`, else the user's, else the implicit set (see
     /// [`ModeSet::load_with`]).
-    pub fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
+    fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self>;
+}
+
+impl RuckcodeModeSet for ModeSet {
+    fn implicit() -> Self {
+        Self::implicit_with(&RUCKCODE_MODE_SCHEMA)
+    }
+
+    fn from_toml_str(text: &str) -> Result<Self> {
+        Self::from_toml_str_with(text, &RUCKCODE_MODE_SCHEMA)
+    }
+
+    fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
         Self::load_with(
             project_dir,
             user_dir,

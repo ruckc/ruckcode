@@ -9,6 +9,8 @@
 use async_trait::async_trait;
 use ruck_harness_llm::mock::MockProvider;
 use ruck_harness_tools::{Answer, Question, UserBridge};
+use ruckcode_core::extension::RuckcodeAgent as _;
+use ruckcode_core::mode_ext::RuckcodeModeSet as _;
 use ruckcode_core::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent,
 };

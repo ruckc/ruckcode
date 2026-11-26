@@ -6,6 +6,7 @@ pub mod input;
 pub mod render;
 pub mod runner;
 
+use ruckcode_core::mode_ext::RuckcodeModeSet as _;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

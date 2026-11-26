@@ -100,7 +100,7 @@ impl PromptProvider for RuckcodePrompt {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::Profile;
+    use crate::config::{Profile, ProfileBuiltins as _};
 
     fn base_prompt(profile: Option<&Profile>) -> String {
         let offers = |name: &str| profile.is_none_or(|p| p.allows_builtin(name));

@@ -881,6 +881,7 @@ pub fn apply(project: &Path, user_dir: Option<&Path>, doc: &ModesDoc) -> Result<
 mod tests {
     use super::*;
     use crate::init::{generate, InitOptions};
+    use crate::mode_ext::RuckcodeModeSet as _;
     use ruckcode_mise::MiseTask;
 
     fn task(name: &str) -> MiseTask {

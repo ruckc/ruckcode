@@ -123,9 +123,14 @@ impl SessionExt for RuckcodeSession {
     }
 }
 
-impl Agent {
-    /// An agent running the ruckcode coding extension.
-    pub fn ruckcode(options: AgentOptions) -> Self {
+/// `Agent::ruckcode(..)`: an agent running the ruckcode coding extension (`Agent` is a harness
+/// type, so this is a trait; import it to call the constructor).
+pub trait RuckcodeAgent {
+    fn ruckcode(options: AgentOptions) -> Self;
+}
+
+impl RuckcodeAgent for Agent {
+    fn ruckcode(options: AgentOptions) -> Self {
         Self::new(options, Arc::new(RuckcodeExtension))
     }
 }
@@ -142,5 +147,10 @@ pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
 
 /// [`transcript_api::find_unfinished_with`] decoding ruckcode's plan tool.
 pub fn find_unfinished(project: &Path, limit: Option<usize>) -> Vec<UnfinishedSession> {
-    transcript_api::find_unfinished_with(project, limit, &ruckcode_tools::decode_builtin_plan)
+    transcript_api::find_unfinished_with(
+        &RUCKCODE,
+        project,
+        limit,
+        &ruckcode_tools::decode_builtin_plan,
+    )
 }

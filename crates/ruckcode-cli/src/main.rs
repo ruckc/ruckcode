@@ -13,6 +13,7 @@ mod setup_cmd;
 mod tui;
 mod update;
 
+use ruckcode_core::extension::RuckcodeAgent as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;

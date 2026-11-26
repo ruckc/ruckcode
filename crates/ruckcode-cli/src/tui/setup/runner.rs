@@ -1,5 +1,6 @@
 //! Drives a [`SetupWizard`] on a real terminal and performs its effects.
 
+use ruckcode_core::mode_ext::RuckcodeModeSet as _;
 use std::time::Duration;
 
 use anyhow::Result;

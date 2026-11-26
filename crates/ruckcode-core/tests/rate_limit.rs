@@ -13,6 +13,7 @@ use ruckcode_core::agent::{
     SessionEvent, StopReason,
 };
 use ruckcode_core::extension::assess_unfinished;
+use ruckcode_core::extension::RuckcodeAgent as _;
 use ruckcode_core::transcript::{session_path, Record, TranscriptReader};
 use std::collections::VecDeque;
 use std::path::PathBuf;

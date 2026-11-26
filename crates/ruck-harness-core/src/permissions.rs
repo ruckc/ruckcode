@@ -46,13 +46,12 @@ pub fn resolve(tool: &dyn Tool, mode: &ModeDef, config: &HarnessConfig) -> Permi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
     use async_trait::async_trait;
     use ruck_harness_tools::{ToolContext, ToolKind, ToolOutput};
     use serde_json::{json, Value};
 
-    /// A tool that only has a name and a kind: the defaults for MCP and mise tools.
-    struct Stub(String, ToolKind);
+    /// A tool that only has a name, a kind and whether it opts in with `auto_allow`.
+    struct Stub(String, ToolKind, bool);
 
     #[async_trait]
     impl Tool for Stub {
@@ -68,17 +67,17 @@ mod tests {
         fn kind(&self) -> ToolKind {
             self.1
         }
+        fn auto_allow(&self) -> bool {
+            self.2
+        }
         async fn call(&self, _: Value, _: &ToolContext) -> anyhow::Result<ToolOutput> {
             Ok(ToolOutput::ok(""))
         }
     }
 
-    /// Resolve `name`: the built-in tool of that name if there is one, else a stub of `kind`.
-    fn resolve(name: &str, kind: ToolKind, mode: &ModeDef, config: &Config) -> Permission {
-        match ruckcode_tools::builtin_tool(name) {
-            Some(t) => super::resolve(t.as_ref(), mode, config),
-            None => super::resolve(&Stub(name.into(), kind), mode, config),
-        }
+    /// Resolve a stub tool `name` of `kind`.
+    fn resolve(name: &str, kind: ToolKind, mode: &ModeDef, config: &HarnessConfig) -> Permission {
+        super::resolve(&Stub(name.into(), kind, false), mode, config)
     }
 
     fn mode(perms: &str) -> ModeDef {
@@ -87,8 +86,9 @@ mod tests {
 
     #[test]
     fn precedence() {
-        let cfg = Config::from_toml_str("[permissions]\nBash = \"allow\"\n\"mise__*\" = \"deny\"")
-            .unwrap();
+        let cfg =
+            HarnessConfig::from_toml_str("[permissions]\nBash = \"allow\"\n\"mise__*\" = \"deny\"")
+                .unwrap();
         let m = mode("Bash = \"ask\"\n\"mise__t*\" = \"allow\"");
         assert_eq!(
             resolve("Bash", ToolKind::Execute, &m, &cfg),
@@ -111,23 +111,22 @@ mod tests {
 
     #[test]
     fn defaults() {
-        let cfg = Config::default();
+        let cfg = HarnessConfig::default();
         let m = mode("");
         assert_eq!(resolve("Read", ToolKind::Read, &m, &cfg), Permission::Allow);
         assert_eq!(resolve("Write", ToolKind::Edit, &m, &cfg), Permission::Ask);
+        // A tool that is not read-only asks unless it opts in with `auto_allow`.
+        assert_eq!(resolve("Other", ToolKind::Other, &m, &cfg), Permission::Ask);
         assert_eq!(
-            resolve("TodoWrite", ToolKind::Other, &m, &cfg),
-            Permission::Allow
-        );
-        assert_eq!(
-            resolve("AskUserQuestion", ToolKind::Other, &m, &cfg),
+            super::resolve(&Stub("Plan".into(), ToolKind::Other, true), &m, &cfg),
             Permission::Allow
         );
     }
 
     #[test]
     fn mcp_globs() {
-        let cfg = Config::from_toml_str("[permissions]\n\"mcp__github__*\" = \"allow\"").unwrap();
+        let cfg =
+            HarnessConfig::from_toml_str("[permissions]\n\"mcp__github__*\" = \"allow\"").unwrap();
         let m = mode("\"mcp__github__delete*\" = \"deny\"");
         let r = |t, k| resolve(t, k, &m, &cfg);
         assert_eq!(r("mcp__github__search", ToolKind::Other), Permission::Allow);

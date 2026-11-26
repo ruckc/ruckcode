@@ -155,6 +155,7 @@ const DISCOVERY_IDENTITY: AppIdentity = AppIdentity {
     user_agent: "mise-discovery",
     homepage_url: "",
     acp_namespace: "mise-discovery",
+    cli_name: "mise-discovery",
     extra_protected_project_paths: &[],
 };
 

@@ -1,5 +1,6 @@
 //! End-to-end: a real Agent driven by the demo mock model (`MockProvider::demo()`).
 
+use ruckcode_core::extension::RuckcodeAgent as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

@@ -4,6 +4,7 @@ use crate::Cli;
 use anyhow::{bail, Result};
 use clap::Subcommand;
 use ruck_harness_sandbox::{LauncherExe, ProjectPolicy, SandboxConfig};
+use ruckcode_core::mode_ext::RuckcodeModeSet as _;
 use ruckcode_core::project_policy::{self, Resolution, Status};
 use ruckcode_core::{Config, ModeSet};
 use std::io::IsTerminal;

@@ -1,0 +1,36 @@
+[package]
+name = "ruck-harness-core"
+description = "Generic agent loop, sessions, modes, permissions, config and guards for agent harnesses"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+globset.workspace = true
+regex.workspace = true
+ruck-harness-hooks.workspace = true
+ruck-harness-ident.workspace = true
+ruck-harness-llm.workspace = true
+ruck-harness-mcp.workspace = true
+ruck-harness-sandbox.workspace = true
+ruck-harness-tools.workspace = true
+ruck-harness-web.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+ruck-harness-ident = { workspace = true, features = ["testing"] }
+ruck-harness-tools = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true

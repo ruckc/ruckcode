@@ -567,7 +567,7 @@ impl Agent {
     }
 
     /// Notices for modes whose `profile` isn't configured.
-    fn missing_profile_notices(s: &SessionState) -> Vec<String> {
+    fn missing_profile_notices(s: &SessionState, cli_name: &str) -> Vec<String> {
         s.modes
             .modes
             .iter()
@@ -576,8 +576,8 @@ impl Agent {
                 (!s.config.profiles.contains_key(p)).then(|| {
                     format!(
                         "mode `{id}` uses profile `{p}`, which isn't configured; falling back to \
-                         `{}` (run `rc setup` to add it)",
-                        s.profile
+                         `{}` (run `{} setup` to add it)",
+                        s.profile, cli_name
                     )
                 })
             })
@@ -742,6 +742,7 @@ impl Agent {
         if self.options.persist {
             let (model, _) = self.model_for(&s)?;
             s.transcript = Some(TranscriptWriter::create(
+                self.ext.identity(),
                 &s.cwd,
                 SessionMeta {
                     id,
@@ -807,12 +808,17 @@ impl Agent {
         replay_to: Option<Arc<dyn Client>>,
         extra_mcp: BTreeMap<String, McpServerConfig>,
     ) -> Result<SessionInfo> {
-        let path = transcript::session_path(&cwd, id);
+        let path = transcript::session_path(self.ext.identity(), &cwd, id);
         let loaded = TranscriptReader::load(&path)?;
         let mode = Some(loaded.mode.clone()).filter(|m| {
-            ModeSet::load(&cwd, self.options.user_config_dir.as_deref())
-                .map(|ms| ms.get(m).is_some())
-                .unwrap_or(false)
+            ModeSet::load_with(
+                &cwd,
+                self.options.user_config_dir.as_deref(),
+                self.ext.identity(),
+                self.ext.mode_schema(),
+            )
+            .map(|ms| ms.get(m).is_some())
+            .unwrap_or(false)
         });
         let mut s = self
             .build_state(id.to_string(), cwd.clone(), mode, extra_mcp)
@@ -866,7 +872,7 @@ impl Agent {
     }
 
     pub fn list_sessions(&self, cwd: &Path) -> Result<Vec<SessionSummary>> {
-        Ok(transcript::list_sessions(cwd))
+        Ok(transcript::list_sessions(self.ext.identity(), cwd))
     }
 
     pub fn session_modes(&self, session_id: &str) -> Option<SessionInfo> {
@@ -1140,7 +1146,7 @@ impl Agent {
         }
         if !s.warned_profiles {
             s.warned_profiles = true;
-            for n in Self::missing_profile_notices(s) {
+            for n in Self::missing_profile_notices(s, self.ext.identity().cli_name) {
                 client.send_event(&s.id, SessionEvent::Notice(n));
             }
         }
@@ -1826,7 +1832,7 @@ impl Agent {
             .config
             .sandbox
             .with_override(s.mode_def().sandbox.as_ref());
-        let config_dir = crate::config::user_config_dir_for(
+        let config_dir = crate::config::user_config_dir(
             self.ext.identity(),
             self.options.user_config_dir.as_deref(),
         );
@@ -1867,6 +1873,7 @@ impl Agent {
             None
         };
         Some(crate::sandbox::handle(
+            self.ext.identity(),
             sb,
             cfg,
             &s.cwd,

@@ -15,15 +15,21 @@ use std::sync::Arc;
 use crate::identity::RUCKCODE;
 use crate::thinking_guard::OllamaOptions;
 
-mod harness;
 pub use harness::user_config_dir as user_config_dir_for;
 pub use harness::{ConfigLoader, HarnessConfig, McpConfig, Pricing, Profile, ProviderKind};
+use ruck_harness_core::config as harness;
 
-impl Profile {
+/// Lean-tools lookups against ruckcode's built-in tools (`Profile` is a harness type, so this is
+/// a trait; import it to call `profile.allows_builtin(..)`).
+pub trait ProfileBuiltins {
     /// Whether the built-in tool `name` is offered with this profile. A tool's
     /// [`LeanClass`](ruck_harness_tools::LeanClass) says how `lean_tools` treats it; a name that is
     /// not a built-in tool is treated as [`LeanClass::Keep`](ruck_harness_tools::LeanClass::Keep).
-    pub fn allows_builtin(&self, name: &str) -> bool {
+    fn allows_builtin(&self, name: &str) -> bool;
+}
+
+impl ProfileBuiltins for Profile {
+    fn allows_builtin(&self, name: &str) -> bool {
         let class = ruckcode_tools::builtin_tool(name)
             .map(|t| t.lean_class())
             .unwrap_or_default();

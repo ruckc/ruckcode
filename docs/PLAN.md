@@ -13,7 +13,8 @@ A Rust agentic coding agent in the spirit of Claude Code, with:
 
 ```
 crates/
-  ruckcode-core         agent loop, sessions, context assembly, modes, permissions, config
+  ruckcode-core         the ruckcode product on the harness: extension (prompt, tools, guard hints), config, setup, modes API
+  ruck-harness-core     agent loop, sessions, context assembly, modes, permissions, transcripts, loop guards, layered config
   ruck-harness-ident    AppIdentity: the product name, env prefix, dirs and user agent the harness crates take
   ruck-harness-llm      Provider trait + Anthropic + OpenAI-compatible clients (streaming, tool use)
   ruckcode-tools        coding tools: Read, Write, Edit, Glob, Grep, Bash, plus the built-in tool registration

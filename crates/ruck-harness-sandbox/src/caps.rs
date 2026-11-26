@@ -19,6 +19,7 @@ const PROBE_IDENTITY: AppIdentity = AppIdentity {
     user_agent: "sandbox-probe",
     homepage_url: "",
     acp_namespace: "sandbox-probe",
+    cli_name: "sandbox-probe",
     extra_protected_project_paths: &[],
 };
 

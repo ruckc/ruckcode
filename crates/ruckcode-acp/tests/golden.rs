@@ -8,6 +8,7 @@
 //! `golden/current.json` for inspection; `GOLDEN_UPDATE=baseline` overwrites the baseline (only
 //! do that when the wire format changes on purpose).
 
+use ruckcode_core::extension::RuckcodeAgent as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

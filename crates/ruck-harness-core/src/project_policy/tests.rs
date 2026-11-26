@@ -1,7 +1,8 @@
 //! Tests use a local bare repository as the "remote" and a clone in a temp dir.
 
 use super::*;
-use crate::modes::ModeSet;
+use crate::modes::{ModeSchema, ModeSet};
+use ruck_harness_ident::testing::ACME;
 use ruck_harness_sandbox::NetworkMode;
 
 fn git_in(dir: &Path, args: &[&str]) -> String {
@@ -58,10 +59,10 @@ fn fixture(config: &str, modes: Option<&str>) -> Fx {
     std::fs::create_dir_all(&seed).unwrap();
     git_in(&b, &["init", "-q", "--bare", "-b", "trunk", "remote.git"]);
     git_in(&b, &["init", "-q", "-b", "trunk", "seed"]);
-    std::fs::create_dir_all(seed.join(".ruckcode")).unwrap();
-    std::fs::write(seed.join(".ruckcode/config.toml"), config).unwrap();
+    std::fs::create_dir_all(seed.join(".acme")).unwrap();
+    std::fs::write(seed.join(".acme/config.toml"), config).unwrap();
     if let Some(m) = modes {
-        std::fs::write(seed.join(".ruckcode/modes.toml"), m).unwrap();
+        std::fs::write(seed.join(".acme/modes.toml"), m).unwrap();
     }
     git_in(&seed, &["add", "."]);
     git_in(&seed, &["commit", "-q", "-m", "policy"]);
@@ -76,12 +77,12 @@ fn fixture(config: &str, modes: Option<&str>) -> Fx {
 }
 
 fn resolve_fx(f: &Fx) -> Resolution {
-    resolve(&f.clone, &f.data, ProjectPolicy::Remote)
+    resolve(&ACME, &f.clone, &f.data, ProjectPolicy::Remote)
 }
 
 fn effective(res: &Resolution) -> SandboxConfig {
     let mut c = SandboxConfig::default();
-    let mut m = ModeSet::implicit();
+    let mut m = ModeSet::implicit_with(&ModeSchema::NEUTRAL);
     apply(res, &mut c, &mut m);
     c
 }
@@ -145,7 +146,7 @@ fn working_tree_edit_is_ignored_with_a_drift_warning() {
     let f = fixture(POLICY, None);
     resolve_fx(&f);
     std::fs::write(
-        f.clone.join(".ruckcode/config.toml"),
+        f.clone.join(".acme/config.toml"),
         "[sandbox]\nnetwork = \"full\"\nextra_write_paths = [\"/\"]\n",
     )
     .unwrap();
@@ -158,7 +159,10 @@ fn working_tree_edit_is_ignored_with_a_drift_warning() {
     assert!(d.contains("trunk"), "{d}");
     assert!(res.notices.iter().any(|n| n.contains("until merged")));
     // The normal config loader no longer reads [sandbox] from the working tree either.
-    let cfg = crate::Config::load(&f.clone, None).unwrap();
+    let table = crate::config::ConfigLoader::new(ACME)
+        .load_table(&f.clone, None)
+        .unwrap();
+    let cfg = crate::config::HarnessConfig::from_table(table).unwrap();
     assert_eq!(cfg.sandbox.network, NetworkMode::Allowlist);
 }
 
@@ -169,7 +173,7 @@ fn staged_and_local_commits_are_ignored() {
     }
     let f = fixture(POLICY, None);
     std::fs::write(
-        f.clone.join(".ruckcode/config.toml"),
+        f.clone.join(".acme/config.toml"),
         "[sandbox]\nnetwork = \"full\"\n",
     )
     .unwrap();
@@ -191,7 +195,7 @@ fn forged_remote_tracking_ref_is_ignored() {
     }
     let f = fixture(POLICY, None);
     std::fs::write(
-        f.clone.join(".ruckcode/config.toml"),
+        f.clone.join(".acme/config.toml"),
         "[sandbox]\nnetwork = \"full\"\n",
     )
     .unwrap();
@@ -218,11 +222,11 @@ fn changed_origin_url_disables_project_policy_until_trusted() {
     let b = f.remote.parent().unwrap();
     let evil = b.join("evil.git");
     let seed = b.join("evilseed");
-    std::fs::create_dir_all(seed.join(".ruckcode")).unwrap();
+    std::fs::create_dir_all(seed.join(".acme")).unwrap();
     git_in(b, &["init", "-q", "--bare", "-b", "trunk", "evil.git"]);
     git_in(b, &["init", "-q", "-b", "trunk", "evilseed"]);
     std::fs::write(
-        seed.join(".ruckcode/config.toml"),
+        seed.join(".acme/config.toml"),
         "[sandbox]\nnetwork = \"full\"\n",
     )
     .unwrap();
@@ -241,7 +245,7 @@ fn changed_origin_url_disables_project_policy_until_trusted() {
     );
     assert!(res.verified.is_none());
     assert_eq!(effective(&res).network, NetworkMode::Allowlist);
-    assert!(res.notices.join("\n").contains("rc sandbox trust-remote"));
+    assert!(res.notices.join("\n").contains("acme sandbox trust-remote"));
     // Explicit re-pin by the user.
     let url = trust_remote(&f.clone, &f.data).unwrap();
     assert_eq!(url, evil.to_str().unwrap());
@@ -296,13 +300,13 @@ fn no_remote_or_no_repo_means_no_project_policy() {
     let b = tempfile::tempdir().unwrap();
     let data = b.path().join("data");
     let proj = b.path().join("proj");
-    std::fs::create_dir_all(proj.join(".ruckcode")).unwrap();
-    std::fs::write(proj.join(".ruckcode/config.toml"), POLICY).unwrap();
-    let res = resolve(&proj, &data, ProjectPolicy::Remote);
+    std::fs::create_dir_all(proj.join(".acme")).unwrap();
+    std::fs::write(proj.join(".acme/config.toml"), POLICY).unwrap();
+    let res = resolve(&ACME, &proj, &data, ProjectPolicy::Remote);
     assert_eq!(res.status, Status::NotGit);
     assert_eq!(effective(&res).network, NetworkMode::Allowlist);
     git_in(&proj, &["init", "-q"]);
-    let res = resolve(&proj, &data, ProjectPolicy::Remote);
+    let res = resolve(&ACME, &proj, &data, ProjectPolicy::Remote);
     assert_eq!(res.status, Status::NoRemote);
     assert!(res.verified.is_none());
     assert_eq!(effective(&res).network, NetworkMode::Allowlist);
@@ -316,7 +320,7 @@ fn project_policy_off_ignores_everything() {
         return eprintln!("SKIPPED: git not installed");
     }
     let f = fixture(POLICY, None);
-    let res = resolve(&f.clone, &f.data, ProjectPolicy::Off);
+    let res = resolve(&ACME, &f.clone, &f.data, ProjectPolicy::Off);
     assert_eq!(res.status, Status::Off);
     assert!(res.verified.is_none() && res.notices.is_empty());
     assert!(!f.data.exists(), "nothing is pinned when the policy is off");
@@ -385,11 +389,11 @@ fn per_mode_overrides_come_from_the_committed_modes_file() {
     let f = fixture("", Some(modes));
     // A local modes.toml tries to widen it.
     std::fs::write(
-        f.clone.join(".ruckcode/modes.toml"),
+        f.clone.join(".acme/modes.toml"),
         "default_mode = \"build\"\n[modes.build]\ndescription = \"b\"\n[modes.build.sandbox]\nnetwork = \"full\"\n",
     )
     .unwrap();
-    let local = ModeSet::load(&f.clone, None).unwrap();
+    let local = ModeSet::load_with(&f.clone, None, &ACME, &ModeSchema::NEUTRAL).unwrap();
     assert!(
         local.get("build").unwrap().sandbox.is_none(),
         "working tree sandbox overrides are dropped by the loader"
@@ -411,12 +415,12 @@ fn project_in_a_subdirectory_reads_its_own_files() {
     }
     let f = fixture("", None);
     let sub = f.clone.join("svc");
-    std::fs::create_dir_all(sub.join(".ruckcode")).unwrap();
-    std::fs::write(sub.join(".ruckcode/config.toml"), POLICY).unwrap();
+    std::fs::create_dir_all(sub.join(".acme")).unwrap();
+    std::fs::write(sub.join(".acme/config.toml"), POLICY).unwrap();
     git_in(&f.clone, &["add", "."]);
     git_in(&f.clone, &["commit", "-q", "-m", "svc"]);
     git_in(&f.clone, &["push", "-q", "origin", "trunk"]);
-    let res = resolve(&sub, &f.data, ProjectPolicy::Remote);
+    let res = resolve(&ACME, &sub, &f.data, ProjectPolicy::Remote);
     assert_eq!(res.status, Status::Active, "{:?}", res.notices);
     assert_eq!(effective(&res).network, NetworkMode::Off);
 }
