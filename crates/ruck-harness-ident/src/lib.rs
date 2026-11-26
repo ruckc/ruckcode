@@ -29,6 +29,8 @@ pub struct AppIdentity {
     pub user_agent: &'static str,
     /// Where the product is documented; appended to the user agent of web tool requests.
     pub homepage_url: &'static str,
+    /// The command users run to start the product ("rc"); named in hints such as "run `rc setup`".
+    pub cli_name: &'static str,
     /// The ACP extension namespace (`_meta.<ns>.*`, `_<ns>/*` methods).
     pub acp_namespace: &'static str,
     /// Project files, besides `project_dir`, that sandboxed commands cannot write
@@ -79,6 +81,7 @@ pub mod testing {
         user_agent: concat!("ruckcode/", env!("CARGO_PKG_VERSION")),
         homepage_url: "https://github.com/ruckc/ruckcode",
         acp_namespace: "ruckcode",
+        cli_name: "rc",
         extra_protected_project_paths: &[".mcp.json"],
     };
 
@@ -93,6 +96,7 @@ pub mod testing {
         user_agent: "acme/9.9.9",
         homepage_url: "https://example.com/acme",
         acp_namespace: "acme",
+        cli_name: "acme",
         extra_protected_project_paths: &[".acme-tools.json"],
     };
 }
@@ -111,6 +115,7 @@ mod tests {
         user_agent: "x/1",
         homepage_url: "https://x.test",
         acp_namespace: "x",
+        cli_name: "x",
         extra_protected_project_paths: &[".x.json"],
     };
 

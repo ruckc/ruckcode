@@ -1,3 +1,4 @@
+use ruckcode_core::extension::RuckcodeAgent as _;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

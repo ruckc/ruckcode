@@ -128,7 +128,7 @@ impl Profile {
         self.allows_class(tool.name(), tool.lean_class())
     }
 
-    pub(crate) fn allows_class(&self, name: &str, class: ruck_harness_tools::LeanClass) -> bool {
+    pub fn allows_class(&self, name: &str, class: ruck_harness_tools::LeanClass) -> bool {
         use ruck_harness_tools::LeanClass;
         if self.lean_tools && class == LeanClass::DropWhenLean {
             return false;
@@ -391,8 +391,9 @@ pub fn resolve_api_key(
         return match named_key(identity, user_dir, name) {
             Some(k) => Ok(Some(k)),
             None => bail!(
-                "named key `{name}` (profile `{}`) not found in credentials.toml: run `rc keys add {name}`",
-                profile.name
+                "named key `{name}` (profile `{}`) not found in credentials.toml: run `{} keys add {name}`",
+                profile.name,
+                identity.cli_name
             ),
         };
     }

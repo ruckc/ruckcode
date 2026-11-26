@@ -13,6 +13,7 @@ use zeroize::Zeroize;
 use crate::config::{Profile, ProviderKind};
 use crate::init::{self, InitOptions};
 use crate::keys::{self, KeyScope};
+use crate::mode_ext::RuckcodeModeSet as _;
 use crate::setup::{self, NewKey, SetupPlan, SetupReport};
 use crate::ModeSet;
 

@@ -4,6 +4,7 @@
 //! Tauri `Channel`; lines to the agent come in through `agent_send`. The backend never inspects
 //! them, so the host kind (embedded agent or `rc acp` child process) is invisible to the UI.
 
+use ruckcode_core::extension::RuckcodeAgent as _;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::process::Stdio;

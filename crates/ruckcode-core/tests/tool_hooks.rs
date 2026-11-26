@@ -10,6 +10,7 @@ use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent,
 };
 use ruckcode_core::extension::assess_unfinished;
+use ruckcode_core::extension::RuckcodeAgent as _;
 use ruckcode_core::transcript::{Metrics, Record, TranscriptReader, TranscriptWriter, UserSource};
 use serde_json::{json, Value};
 use std::path::PathBuf;

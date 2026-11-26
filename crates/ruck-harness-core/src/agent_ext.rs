@@ -1,6 +1,6 @@
 //! The seam between the generic agent loop and a product.
 //!
-//! The loop knows nothing about coding tools, mise or ruckcode's prompt. A product implements
+//! The loop knows nothing about coding tools, mise or any product's prompt. A product implements
 //! [`AgentExtension`] (once per process) and [`SessionExt`] (once per session) and hands the
 //! former to [`Agent::new`](crate::Agent::new).
 

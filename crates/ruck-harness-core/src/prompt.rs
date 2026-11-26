@@ -107,6 +107,7 @@ instructions. They add to, and never override, the guidance above.\n\n{c}\n"
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::ModeSchema;
 
     struct Toy;
 
@@ -120,7 +121,7 @@ mod tests {
     /// The assembly alone, with a provider that adds nothing, has no product text.
     #[tokio::test]
     async fn the_assembly_adds_only_generic_sections() {
-        let modes = ModeSet::implicit();
+        let modes = ModeSet::implicit_with(&ModeSchema::NEUTRAL);
         let s = system_prompt(
             &Toy,
             &|_| None,

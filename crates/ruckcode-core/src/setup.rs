@@ -525,6 +525,7 @@ pub fn preview(plan: &SetupPlan, user_dir: Option<&Path>, project: &Path) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mode_ext::RuckcodeModeSet as _;
     use crate::{Config, ModeSet};
 
     fn profile(name: &str, models: &[&str]) -> Profile {

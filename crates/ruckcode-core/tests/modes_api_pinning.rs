@@ -2,6 +2,7 @@
 //! moving `mise_tasks` into `ModeDef.extra`. Output is compared byte for byte.
 
 use ruckcode_core::mode_ext::RuckcodeModeExt;
+use ruckcode_core::mode_ext::RuckcodeModeSet as _;
 use ruckcode_core::modes_api::{apply, catalog, parse_doc, preview};
 use ruckcode_core::ModeSet;
 

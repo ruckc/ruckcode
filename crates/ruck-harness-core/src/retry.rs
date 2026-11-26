@@ -536,7 +536,8 @@ mod tests {
             toml::from_str("max_auto_wait_secs = 30\nmax_retries = 2\npacing = false").unwrap();
         assert_eq!(c.max_auto_wait(), Duration::from_secs(30));
         assert_eq!((c.max_retries, c.pacing), (2, false));
-        let cfg = crate::Config::from_toml_str("[rate_limit]\nmax_retries = 9").unwrap();
+        let cfg =
+            crate::config::HarnessConfig::from_toml_str("[rate_limit]\nmax_retries = 9").unwrap();
         assert_eq!(cfg.rate_limit.max_retries, 9);
         assert_eq!(cfg.rate_limit.max_auto_wait_secs, 60);
     }

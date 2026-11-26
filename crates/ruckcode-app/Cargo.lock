@@ -3251,6 +3251,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruck-harness-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "globset",
+ "regex",
+ "ruck-harness-hooks",
+ "ruck-harness-ident",
+ "ruck-harness-llm",
+ "ruck-harness-mcp",
+ "ruck-harness-sandbox",
+ "ruck-harness-tools",
+ "ruck-harness-web",
+ "serde",
+ "serde_json",
+ "similar",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "toml 1.2.2+spec-1.1.0",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "ruck-harness-hooks"
 version = "0.1.0"
 dependencies = [
@@ -3406,6 +3435,7 @@ dependencies = [
  "dirs",
  "globset",
  "regex",
+ "ruck-harness-core",
  "ruck-harness-hooks",
  "ruck-harness-ident",
  "ruck-harness-llm",

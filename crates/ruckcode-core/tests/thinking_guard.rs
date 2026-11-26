@@ -10,6 +10,7 @@ use ruck_harness_tools::{Answer, Question, UserBridge};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
+use ruckcode_core::extension::RuckcodeAgent as _;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

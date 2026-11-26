@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::config::user_config_dir_for;
+use crate::config::user_config_dir;
 use crate::permissions::Permission;
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -48,7 +48,7 @@ pub struct ModeDef {
     /// Per-mode sandbox overrides (`[modes.<id>.sandbox]`); cannot turn the sandbox off.
     #[serde(default)]
     pub sandbox: Option<ruck_harness_sandbox::SandboxOverride>,
-    /// Product-specific keys (for ruckcode: `mise_tasks`), restricted to the keys the product's
+    /// Product-specific keys (e.g. a task selector list), restricted to the keys the product's
     /// [`ModeSchema`] declares. Never filled by serde, so other unknown keys stay ignored.
     #[serde(skip)]
     pub extra: BTreeMap<String, toml::Value>,
@@ -65,6 +65,16 @@ pub struct ModeSchema {
     /// Whether `name` is one of the product's built-in tools (a mode listing another name that
     /// is not `SwitchMode`, `mise__*` or `mcp__*` gets a warning).
     pub is_builtin_tool: fn(&str) -> bool,
+}
+
+impl ModeSchema {
+    /// A product with no extra mode keys and no built-in tool names.
+    pub const NEUTRAL: ModeSchema = ModeSchema {
+        extra_keys: &[],
+        check_extra: |_, _| Ok(()),
+        implicit_extra: BTreeMap::new,
+        is_builtin_tool: |_| false,
+    };
 }
 
 impl ModeDef {
@@ -150,7 +160,7 @@ impl ModeSet {
         identity: &AppIdentity,
         schema: &ModeSchema,
     ) -> Result<Self> {
-        let user_path = user_config_dir_for(identity, user_dir).map(|d| d.join("modes.toml"));
+        let user_path = user_config_dir(identity, user_dir).map(|d| d.join("modes.toml"));
         let project_path = identity.project_path(project_dir).join("modes.toml");
         if let Ok(text) = std::fs::read_to_string(&project_path) {
             let mut set = Self::from_toml_str_with(&text, schema)
@@ -230,6 +240,15 @@ fn is_known_tool(name: &str, schema: &ModeSchema) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ruck_harness_ident::testing::ACME;
+
+    fn from_toml_str(text: &str) -> Result<ModeSet> {
+        ModeSet::from_toml_str_with(text, &ModeSchema::NEUTRAL)
+    }
+
+    fn load(project: &Path, user: Option<&Path>) -> Result<ModeSet> {
+        ModeSet::load_with(project, user, &ACME, &ModeSchema::NEUTRAL)
+    }
 
     const SAMPLE: &str = r#"
 default_mode = "explore"
@@ -251,7 +270,7 @@ auto_advance_to = ["explore"]
 
     #[test]
     fn parses_in_order() {
-        let s = ModeSet::from_toml_str(SAMPLE).unwrap();
+        let s = from_toml_str(SAMPLE).unwrap();
         assert_eq!(s.ids(), ["explore", "design"]);
         assert_eq!(s.display_name("explore"), "Explore");
         assert_eq!(s.display_name("design"), "Designing");
@@ -261,7 +280,10 @@ auto_advance_to = ["explore"]
         assert_eq!(e.mcp_tools, ["mcp__github__*"]);
         assert!(s.get("design").unwrap().mcp_tools.is_empty());
         assert_eq!(
-            ModeSet::implicit().get("default").unwrap().mcp_tools,
+            ModeSet::implicit_with(&ModeSchema::NEUTRAL)
+                .get("default")
+                .unwrap()
+                .mcp_tools,
             ["mcp__*"]
         );
         assert_eq!(s.switch_targets("explore"), ["design"]);
@@ -270,23 +292,23 @@ auto_advance_to = ["explore"]
 
     #[test]
     fn validation() {
-        assert!(ModeSet::from_toml_str("default_mode='x'\n[modes.a]").is_err());
-        assert!(ModeSet::from_toml_str("[modes.a]\nnext=['zzz']").is_err());
-        assert!(ModeSet::from_toml_str("").is_err());
+        assert!(from_toml_str("default_mode='x'\n[modes.a]").is_err());
+        assert!(from_toml_str("[modes.a]\nnext=['zzz']").is_err());
+        assert!(from_toml_str("").is_err());
     }
 
     #[test]
     fn load_prefers_project_then_user_then_implicit() {
         let user = tempfile::tempdir().unwrap();
         let proj = tempfile::tempdir().unwrap();
-        let implicit = ModeSet::load(proj.path(), Some(user.path())).unwrap();
+        let implicit = load(proj.path(), Some(user.path())).unwrap();
         assert_eq!(implicit.ids(), ["default"]);
         std::fs::write(user.path().join("modes.toml"), "[modes.u]").unwrap();
-        let m = ModeSet::load(proj.path(), Some(user.path())).unwrap();
+        let m = load(proj.path(), Some(user.path())).unwrap();
         assert_eq!(m.ids(), ["u"]);
-        std::fs::create_dir_all(proj.path().join(".ruckcode")).unwrap();
-        std::fs::write(proj.path().join(".ruckcode/modes.toml"), "[modes.p]").unwrap();
-        let m = ModeSet::load(proj.path(), Some(user.path())).unwrap();
+        std::fs::create_dir_all(proj.path().join(".acme")).unwrap();
+        std::fs::write(proj.path().join(".acme/modes.toml"), "[modes.p]").unwrap();
+        let m = load(proj.path(), Some(user.path())).unwrap();
         assert_eq!(m.ids(), ["p"]);
     }
 }

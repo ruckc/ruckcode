@@ -14,7 +14,7 @@
 //! Two further detectors catch loops whose arguments keep changing:
 //!
 //! * **Repeated search**: the search pattern of the calls that [`GuardHints::search_tool`]
-//!   recognises (ruckcode: `Grep`/`Glob` and `Bash` commands running grep, rg, ag, ack, `git grep`
+//!   recognises (for a coding agent: `Grep`/`Glob` and `Bash` commands running grep, rg, ag, ack, `git grep`
 //!   or `find -name`, see [`crate::guard_ext`]) is counted per turn, whatever the paths, flags or trailing filters. It trips when the pattern has been
 //!   searched `search_repeat_count` times and the latest `search_repeat_count / 2` searches added
 //!   no new information. "No new information" means: every non-empty (trimmed) line of the result
@@ -147,7 +147,7 @@ pub enum TripKind {
 }
 
 impl TripKind {
-    /// `_meta.ruckcode.loopKind`: `repeat`, `search` or `oscillation`.
+    /// `_meta.<namespace>.loopKind`: `repeat`, `search` or `oscillation`.
     pub fn loop_kind(&self) -> &'static str {
         match self {
             TripKind::Repeat { .. } | TripKind::PlanNoop { .. } | TripKind::NoProgress { .. } => {
@@ -663,6 +663,24 @@ pub fn drop_tool_calls(messages: &mut Vec<Message>, ids: &HashSet<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A toy search tool: `Find` with the pattern in `q`.
+    fn toy_search(tool: &str, input: &Value) -> Option<String> {
+        if tool != "Find" {
+            return None;
+        }
+        input["q"].as_str().map(str::to_string)
+    }
+
+    /// Hints of a toy agent with file-edit tools and a search tool, built inline.
+    fn test_hints() -> GuardHints {
+        GuardHints {
+            edit_tools: &["Write", "Edit", "NotebookEdit"],
+            path_keys: &["file_path", "path", "notebook_path"],
+            search_tool: Some(toy_search),
+            progress_probe: None,
+        }
+    }
     use serde_json::json;
 
     fn obs(d: &mut ToolLoopDetector, cfg: &ToolLoopGuardConfig, i: usize, input: Value, r: &str) {
@@ -711,15 +729,14 @@ mod tests {
     #[test]
     fn search_trips_only_when_recent_results_add_nothing() {
         let cfg = ToolLoopGuardConfig::default();
-        let grep =
-            |i: usize| json!({"command": format!("grep -r \"foo bar\" dir{i}/ | head -{i}")});
-        let mut d = ToolLoopDetector::new(crate::guard_ext::ruckcode_guard_hints());
+        let grep = |i: usize| json!({"q": "foo bar", "page": i});
+        let mut d = ToolLoopDetector::new(test_hints());
         // Every search finds something new: never trips.
         for i in 0..10 {
             d.observe(
                 &cfg,
                 &format!("n{i}"),
-                "Bash",
+                "Find",
                 &grep(i),
                 &format!("hit {i}"),
                 false,
@@ -728,14 +745,14 @@ mod tests {
         }
         assert!(d.take_trip().is_none());
         // Same pattern, results a subset of what was seen: trips at 6 and drops the stale ones.
-        let mut d = ToolLoopDetector::new(crate::guard_ext::ruckcode_guard_hints());
-        d.observe(&cfg, "s0", "Bash", &grep(0), "a\nb\nc", false, false);
+        let mut d = ToolLoopDetector::new(test_hints());
+        d.observe(&cfg, "s0", "Find", &grep(0), "a\nb\nc", false, false);
         for i in 1..6 {
             assert!(d.take_trip().is_none());
             d.observe(
                 &cfg,
                 &format!("s{i}"),
-                "Bash",
+                "Find",
                 &grep(i),
                 "b\nc",
                 false,
@@ -762,11 +779,11 @@ mod tests {
         // The same pattern searched ever more often with nothing new: no search trip.
         let mut d = ToolLoopDetector::default();
         for i in 0..12 {
-            let input = json!({"command": format!("grep -r needle dir{i}/")});
+            let input = json!({"q": "needle", "page": i});
             d.observe(
                 &cfg,
                 &format!("s{i}"),
-                "Bash",
+                "Find",
                 &input,
                 if i % 2 == 0 { "a\nb\nc" } else { "a\nb" },
                 false,
@@ -774,14 +791,14 @@ mod tests {
             );
         }
         assert!(d.take_trip().is_none());
-        // With ruckcode's hints the same calls do trip.
-        let mut d = ToolLoopDetector::new(crate::guard_ext::ruckcode_guard_hints());
+        // With search hints the same calls do trip.
+        let mut d = ToolLoopDetector::new(test_hints());
         for i in 0..12 {
-            let input = json!({"command": format!("grep -r needle dir{i}/")});
+            let input = json!({"q": "needle", "page": i});
             d.observe(
                 &cfg,
                 &format!("s{i}"),
-                "Bash",
+                "Find",
                 &input,
                 if i % 2 == 0 { "a\nb\nc" } else { "a\nb" },
                 false,
@@ -792,7 +809,7 @@ mod tests {
         // No edit tools are known, so no file is tracked.
         let hints = GuardHints::default();
         assert_eq!(hints.edit_target("Write", &json!({"file_path": "a"})), None);
-        let hints = crate::guard_ext::ruckcode_guard_hints();
+        let hints = test_hints();
         assert_eq!(
             hints.edit_target("Edit", &json!({"path": "b", "file_path": "a"})),
             Some("a".into())

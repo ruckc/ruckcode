@@ -3,6 +3,7 @@
 
 use crate::agent::{Client, PermissionDecision, PermissionRequest};
 use async_trait::async_trait;
+use ruck_harness_ident::AppIdentity;
 use ruck_harness_sandbox::{DomainAnswer, DomainPrompter, SandboxConfig};
 use ruck_harness_tools::{SandboxHandle, ToolKind};
 use serde_json::json;
@@ -36,17 +37,26 @@ impl DomainPrompter for NetPrompter {
     }
 }
 
-/// Paths in-process tools must not write: ruckcode's own configuration and the parts of `.git`
-/// that could redirect the remote or run code outside the sandbox (`.git/config`,
+/// Paths in-process tools must not write: the product's project directory and extra protected
+/// files (see [`AppIdentity::protected_project_paths`]), its user config directory and the parts
+/// of `.git` that could redirect the remote or run code outside the sandbox (`.git/config`,
 /// `.git/hooks/**`, `.git/info/**`, remote-tracking refs, ...).
-pub(crate) fn protected_write(project: &Path, config_dir: Option<&Path>) -> Vec<PathBuf> {
-    let mut v = vec![project.join(".ruckcode"), project.join(".mcp.json")];
+pub(crate) fn protected_write(
+    identity: &AppIdentity,
+    project: &Path,
+    config_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = identity
+        .protected_project_paths()
+        .map(|p| project.join(p))
+        .collect();
     v.extend(config_dir.map(Path::to_path_buf));
     v.extend(ruck_harness_sandbox::git_protected_paths(project));
     v
 }
 
 pub(crate) fn handle(
+    identity: &AppIdentity,
     sandbox: Option<Arc<ruck_harness_sandbox::Sandbox>>,
     cfg: SandboxConfig,
     project: &Path,
@@ -59,7 +69,7 @@ pub(crate) fn handle(
         sandbox,
         gate,
         cfg,
-        protected_write: protected_write(project, config_dir),
+        protected_write: protected_write(identity, project, config_dir),
         deny_read,
     }
 }
@@ -67,6 +77,7 @@ pub(crate) fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ruck_harness_ident::testing::ACME;
     use ruck_harness_tools::SandboxHandle;
 
     #[test]
@@ -78,7 +89,7 @@ mod tests {
         let h = SandboxHandle {
             sandbox: None,
             cfg: SandboxConfig::default(),
-            protected_write: protected_write(&p, None),
+            protected_write: protected_write(&ACME, &p, None),
             deny_read: vec![],
             gate: None,
         };
@@ -89,7 +100,8 @@ mod tests {
             ".git/info/exclude",
             ".git/refs/remotes/origin/main",
             ".git/hooks/../config",
-            ".ruckcode/config.toml",
+            ".acme/config.toml",
+            ".acme-tools.json",
         ] {
             assert!(h.blocks_write(&p.join(blocked)), "{blocked}");
         }

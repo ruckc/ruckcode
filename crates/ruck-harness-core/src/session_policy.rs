@@ -2,7 +2,7 @@
 //! starts, before anything is built from them.
 //!
 //! The harness runs whatever [`SessionPolicy`] it is given, or none. [`RemoteSandboxPolicy`] is
-//! the one ruckcode uses: it lays the verified remote copy of the project's sandbox policy over
+//! the one the reference product uses: it lays the verified remote copy of the project's sandbox policy over
 //! the user's config (see [`crate::project_policy`]).
 
 use async_trait::async_trait;
@@ -43,9 +43,10 @@ impl SessionPolicy for RemoteSandboxPolicy {
         let Some(data) = crate::project_policy::data_dir_for(&self.identity) else {
             return vec![];
         };
-        let (project, mode) = (cwd.to_path_buf(), cfg.sandbox.project_policy);
+        let (project, mode, identity) =
+            (cwd.to_path_buf(), cfg.sandbox.project_policy, self.identity);
         let Ok(res) = tokio::task::spawn_blocking(move || {
-            crate::project_policy::resolve(&project, &data, mode)
+            crate::project_policy::resolve(&identity, &project, &data, mode)
         })
         .await
         else {
@@ -60,6 +61,8 @@ impl SessionPolicy for RemoteSandboxPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::ModeSchema;
+    use ruck_harness_ident::testing::ACME;
 
     struct Toy;
 
@@ -74,7 +77,7 @@ mod tests {
     #[tokio::test]
     async fn a_policy_adjusts_the_config_and_reports_notices() {
         let mut cfg = HarnessConfig::default();
-        let mut modes = ModeSet::implicit();
+        let mut modes = ModeSet::implicit_with(&ModeSchema::NEUTRAL);
         let notices = Toy.apply(Path::new("/w"), &mut cfg, &mut modes).await;
         assert_eq!(
             (cfg.max_turn_requests, notices),
@@ -87,8 +90,8 @@ mod tests {
     async fn the_remote_policy_is_inert_when_the_sandbox_is_off() {
         let mut cfg = HarnessConfig::default();
         cfg.sandbox.enabled = false;
-        let mut modes = ModeSet::implicit();
-        let p = RemoteSandboxPolicy::new(crate::identity::RUCKCODE);
+        let mut modes = ModeSet::implicit_with(&ModeSchema::NEUTRAL);
+        let p = RemoteSandboxPolicy::new(ACME);
         assert!(p
             .apply(Path::new("/w"), &mut cfg, &mut modes)
             .await

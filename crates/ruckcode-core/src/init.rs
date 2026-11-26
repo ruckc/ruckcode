@@ -263,6 +263,7 @@ pub fn diff(existing: &str, generated: &str) -> String {
 mod tests {
     use super::*;
     use crate::mode_ext::RuckcodeModeExt;
+    use crate::mode_ext::RuckcodeModeSet as _;
     use crate::modes::ModeSet;
 
     fn task(name: &str) -> MiseTask {

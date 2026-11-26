@@ -18,6 +18,7 @@ pub const RUCKCODE: AppIdentity = AppIdentity {
     user_agent: concat!("ruckcode/", env!("CARGO_PKG_VERSION")),
     homepage_url: "https://github.com/ruckc/ruckcode",
     acp_namespace: "ruckcode",
+    cli_name: "rc",
     extra_protected_project_paths: &[".mcp.json"],
 };
 
@@ -46,6 +47,7 @@ mod tests {
             )
         );
         assert_eq!(RUCKCODE.acp_namespace, "ruckcode");
+        assert_eq!(RUCKCODE.cli_name, "rc");
         assert_eq!(RUCKCODE.extra_protected_project_paths, [".mcp.json"]);
     }
 
