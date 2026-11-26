@@ -213,7 +213,7 @@ impl Tool for Grep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::ctx;
+    use ruck_harness_tools::test_util::ctx;
 
     #[tokio::test]
     async fn glob_and_grep() {

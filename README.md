@@ -999,7 +999,9 @@ crates/
   ruckcode-core         agent loop, sessions, context assembly, modes, permissions, config
   ruck-harness-ident    AppIdentity: the product name, env prefix, dirs and user agent the harness crates take
   ruck-harness-llm      Provider trait + Anthropic and OpenAI-compatible clients
-  ruckcode-tools        Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, AskUserQuestion, TodoWrite, SwitchMode
+  ruckcode-tools        coding tools: Read, Write, Edit, Glob, Grep, Bash; registers them with the harness tools below
+  ruck-harness-tools    Tool trait, sandboxed launcher, plan (TodoWrite) and AskUserQuestion tools
+  ruck-harness-web      WebFetch and WebSearch with SSRF protection and the sandbox network gate
   ruckcode-mise         mise task discovery, schema mapping, execution
   ruck-harness-sandbox  command sandbox: launcher, namespaces, Landlock, seccomp, Seatbelt, allowlist proxy
   ruckcode-mcp          MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
