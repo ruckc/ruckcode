@@ -1396,9 +1396,9 @@ impl Agent {
                     .guard_hints
                     .progress_probe
                     .as_deref()
-                    .filter(|p| track_files && p.watches(name) && !tool_guard.bash_snapshots_off);
-                if let Some(probe) = probe.filter(|_| !tool_guard.bash_baseline_done) {
-                    tool_guard.bash_baseline_done = true;
+                    .filter(|p| track_files && p.watches(name) && !tool_guard.probe_snapshots_off);
+                if let Some(probe) = probe.filter(|_| !tool_guard.probe_baseline_done) {
+                    tool_guard.probe_baseline_done = true;
                     tool_loop_guard::snapshot_tree(probe, &root, &mut tool_guard, &loop_cfg, true)
                         .await;
                 }

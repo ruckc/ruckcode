@@ -251,11 +251,11 @@ pub struct ToolLoopDetector {
     trip: Option<ToolTrip>,
     searches: HashMap<String, SearchState>,
     files: HashMap<String, FileHistory>,
-    /// Whether the working-tree baseline for Bash was taken this turn.
-    pub bash_baseline_done: bool,
+    /// Whether the working-tree baseline for the probed tools was taken this turn.
+    pub probe_baseline_done: bool,
     /// Set when the progress probe is unavailable or too costly; probed tools are not tracked
     /// afterwards.
-    pub bash_snapshots_off: bool,
+    pub probe_snapshots_off: bool,
     hints: GuardHints,
 }
 
@@ -552,14 +552,14 @@ pub async fn snapshot_tree(
     baseline: bool,
 ) {
     let Some(mut files) = probe.changed_files(root).await else {
-        guard.bash_snapshots_off = true;
+        guard.probe_snapshots_off = true;
         return;
     };
     files.extend(guard.tracked_paths().into_iter().map(PathBuf::from));
     files.sort();
     files.dedup();
     let Some(hashes) = hash_files(&files) else {
-        guard.bash_snapshots_off = true;
+        guard.probe_snapshots_off = true;
         return;
     };
     for (path, hash) in hashes {
