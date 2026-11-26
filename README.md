@@ -1004,7 +1004,7 @@ crates/
   ruck-harness-web      WebFetch and WebSearch with SSRF protection and the sandbox network gate
   ruckcode-mise         mise task discovery, schema mapping, execution
   ruck-harness-sandbox  command sandbox: launcher, namespaces, Landlock, seccomp, Seatbelt, allowlist proxy
-  ruck-harness-mcp     MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
+  ruck-harness-mcp      MCP client (rmcp): server connections, tools as `mcp__<server>__<tool>`
   ruck-harness-hooks    hook config, matching, runner, fix-turn feedback
   ruckcode-acp          ACP agent server + client plumbing (official ACP SDK for JSON-RPC)
   ruckcode-cli          `rc` binary: TUI, headless `-p`, `rc acp`, `rc init`
