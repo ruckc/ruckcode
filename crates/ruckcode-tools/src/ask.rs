@@ -1,6 +1,6 @@
 //! AskUserQuestion: structured multiple-choice questions for the user.
 
-use crate::{Tool, ToolContext, ToolKind, ToolOutput};
+use crate::{LeanClass, Tool, ToolContext, ToolKind, ToolOutput};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -39,6 +39,14 @@ pub struct AskUserQuestion;
 impl Tool for AskUserQuestion {
     fn name(&self) -> &str {
         "AskUserQuestion"
+    }
+
+    fn auto_allow(&self) -> bool {
+        true
+    }
+
+    fn lean_class(&self) -> LeanClass {
+        LeanClass::DropWhenLean
     }
 
     fn description(&self) -> String {

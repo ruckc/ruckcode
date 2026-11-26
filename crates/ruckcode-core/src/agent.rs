@@ -11,7 +11,7 @@ use ruck_harness_llm::{
 };
 use ruckcode_mcp::{McpManager, McpServerConfig};
 use ruckcode_mise::{MiseTask, TaskSelector};
-use ruckcode_tools::{FileEdit, TodoItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
+use ruckcode_tools::{FileEdit, PlanItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -35,7 +35,6 @@ use crate::transcript::{
 };
 
 const SWITCH_MODE: &str = "SwitchMode";
-const PLAN_TOOL: &str = "TodoWrite";
 const INTERRUPTED: &str = "[Request interrupted by user]";
 const RATE_LIMITED_NOTE: &str =
     "[Turn paused: the API rate limit was reached. The work continues when the user asks to resume.]";
@@ -77,7 +76,7 @@ pub enum SessionEvent {
         output: Option<String>,
         edits: Vec<FileEdit>,
     },
-    Plan(Vec<TodoItem>),
+    Plan(Vec<PlanItem>),
     ModeChanged(String),
     /// Informational message for the user.
     Notice(String),
@@ -861,7 +860,13 @@ impl Agent {
         }
         s.rec(Record::SessionResumed {});
         if let Some(client) = replay_to {
-            replay(&cwd, id, &loaded.records, client.as_ref());
+            let tools = match self.model_for(&s) {
+                Ok((_, profile)) => {
+                    build_tools(&s, &profile, self.options.user_config_dir.as_deref())
+                }
+                Err(_) => vec![],
+            };
+            replay(&cwd, id, &loaded.records, &tools, client.as_ref());
         }
         Ok(self.register(s))
     }
@@ -1424,8 +1429,9 @@ impl Agent {
                     content, is_error, ..
                 } = &block
                 {
-                    let noop =
-                        name == PLAN_TOOL && content.starts_with(tool_loop_guard::PLAN_UNCHANGED);
+                    // The plan tool answers an update that changes nothing locally.
+                    let noop = content.starts_with(tool_loop_guard::PLAN_UNCHANGED)
+                        && tools.get(name).is_some_and(|t| t.plan(input).is_some());
                     tool_guard.observe(&loop_cfg, id, name, input, content, *is_error, noop);
                 }
                 results.push(block);
@@ -1617,8 +1623,11 @@ impl Agent {
                 permission = PermissionOutcome::Rejected;
                 break 'run ("cancelled before execution".into(), true);
             }
-            if name == PLAN_TOOL && s.config.tool_loop_guard.enabled {
-                if let Some(items) = tool_loop_guard::plan_items(input) {
+            if s.config.tool_loop_guard.enabled {
+                if let Some(items) = tool
+                    .plan(input)
+                    .map(|p| tool_loop_guard::normalise_plan(&p))
+                {
                     if s.last_plan.as_ref() == Some(&items) {
                         // Nothing changed: answer locally, run nothing, send no plan update.
                         let mut msg = tool_loop_guard::PLAN_UNCHANGED.to_string();
@@ -1633,7 +1642,7 @@ impl Agent {
             let gate = if name == SWITCH_MODE {
                 self.switch_gate(s, client, id, &title, input).await
             } else {
-                self.tool_gate(s, client, id, name, &title, kind, input)
+                self.tool_gate(s, client, id, tool.as_ref(), &title, input)
                     .await
             };
             match gate {
@@ -1706,7 +1715,9 @@ impl Agent {
             match tool.call(input.clone(), &ctx).await {
                 Ok(out) => {
                     if let Some(plan) = out.plan {
-                        s.last_plan = tool_loop_guard::plan_items(input);
+                        s.last_plan = tool
+                            .plan(input)
+                            .map(|p| tool_loop_guard::normalise_plan(&p));
                         client.send_event(&s.id, SessionEvent::Plan(plan));
                     }
                     if !out.is_error {
@@ -1855,18 +1866,18 @@ impl Agent {
         s: &mut SessionState,
         client: &Arc<dyn Client>,
         id: &str,
-        name: &str,
+        tool: &dyn Tool,
         title: &str,
-        kind: ToolKind,
         input: &Value,
     ) -> Gate {
+        let (name, kind) = (tool.name(), tool.kind());
         if s.allow_always.contains(name) {
             return Gate::Run {
                 outcome: PermissionOutcome::AllowAlways,
                 target: None,
             };
         }
-        match permissions::resolve(name, kind, s.mode_def(), &s.config) {
+        match permissions::resolve(tool, s.mode_def(), &s.config) {
             Permission::Allow => Gate::Run {
                 outcome: PermissionOutcome::Allow,
                 target: None,
@@ -2482,7 +2493,7 @@ fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> 
             mode.tools
                 .as_ref()
                 .is_none_or(|l| l.iter().any(|n| n == t.name()))
-                && profile.allows_builtin(t.name())
+                && profile.allows_tool(t.as_ref())
         })
         .collect();
     let targets: Vec<(String, String, String)> = s
@@ -2715,7 +2726,18 @@ fn kind_from_str(s: &str) -> ToolKind {
 }
 
 /// Send a loaded transcript's history to the client as session events.
-fn replay(cwd: &Path, session_id: &str, records: &[transcript::Stamped], client: &dyn Client) {
+///
+/// Transcripts keep only tool names and inputs, so a recorded call's plan is decoded by the tool
+/// of that name in `tools` (the session's current tool set). A tool that set does not offer
+/// (another mode, a lean profile) falls back to the built-in tool of that name, so old
+/// transcripts replay their plan whatever the current mode or profile offers.
+fn replay(
+    cwd: &Path,
+    session_id: &str,
+    records: &[transcript::Stamped],
+    tools: &[Arc<dyn Tool>],
+    client: &dyn Client,
+) {
     for r in records {
         match &r.record {
             Record::UserMessage {
@@ -2756,12 +2778,12 @@ fn replay(cwd: &Path, session_id: &str, records: &[transcript::Stamped], client:
                         input: input.clone(),
                     },
                 );
-                if name == "TodoWrite" {
-                    if let Ok(items) =
-                        serde_json::from_value::<Vec<TodoItem>>(input["todos"].clone())
-                    {
-                        client.send_event(session_id, SessionEvent::Plan(items));
-                    }
+                let plan = match tools.iter().find(|t| t.name() == name) {
+                    Some(t) => t.plan(input),
+                    None => ruckcode_tools::decode_builtin_plan(name, input),
+                };
+                if let Some(items) = plan {
+                    client.send_event(session_id, SessionEvent::Plan(items));
                 }
             }
             Record::ToolResult {

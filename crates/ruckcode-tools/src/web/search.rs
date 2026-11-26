@@ -559,6 +559,10 @@ impl Tool for WebSearch {
         })
     }
 
+    fn lean_class(&self) -> crate::LeanClass {
+        crate::LeanClass::OptInWhenLean
+    }
+
     fn kind(&self) -> ToolKind {
         ToolKind::Fetch
     }

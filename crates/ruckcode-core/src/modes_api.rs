@@ -716,8 +716,7 @@ pub async fn catalog(project: &Path, user_dir: Option<&Path>) -> Catalog {
         .map(|t| ToolInfo {
             name: t.name().into(),
             kind: t.kind().as_str().into(),
-            read_only: t.kind().is_read_only()
-                || matches!(t.name(), "TodoWrite" | "AskUserQuestion"),
+            read_only: t.kind().is_read_only() || t.auto_allow(),
         })
         .collect();
     builtin.push(ToolInfo {

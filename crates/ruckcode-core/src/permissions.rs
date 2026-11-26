@@ -1,7 +1,7 @@
 //! Tool permission resolution.
 
 use globset::Glob;
-use ruckcode_tools::ToolKind;
+use ruckcode_tools::Tool;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -28,12 +28,14 @@ fn lookup(map: &BTreeMap<String, Permission>, tool: &str) -> Option<Permission> 
     })
 }
 
-/// Mode rules, then config rules (exact names before globs), then the default for the tool kind.
-pub fn resolve(tool: &str, kind: ToolKind, mode: &ModeDef, config: &Config) -> Permission {
-    lookup(&mode.permissions, tool)
-        .or_else(|| lookup(&config.permissions, tool))
+/// Mode rules, then config rules (exact names before globs), then the default for the tool: its
+/// kind, or the tool opting in with [`Tool::auto_allow`].
+pub fn resolve(tool: &dyn Tool, mode: &ModeDef, config: &Config) -> Permission {
+    let name = tool.name();
+    lookup(&mode.permissions, name)
+        .or_else(|| lookup(&config.permissions, name))
         .unwrap_or_else(|| {
-            if kind.is_read_only() || matches!(tool, "TodoWrite" | "AskUserQuestion") {
+            if tool.kind().is_read_only() || tool.auto_allow() {
                 Permission::Allow
             } else {
                 Permission::Ask
@@ -44,6 +46,39 @@ pub fn resolve(tool: &str, kind: ToolKind, mode: &ModeDef, config: &Config) -> P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use ruckcode_tools::{ToolContext, ToolKind, ToolOutput};
+    use serde_json::{json, Value};
+
+    /// A tool that only has a name and a kind: the defaults for MCP and mise tools.
+    struct Stub(String, ToolKind);
+
+    #[async_trait]
+    impl Tool for Stub {
+        fn name(&self) -> &str {
+            &self.0
+        }
+        fn description(&self) -> String {
+            String::new()
+        }
+        fn input_schema(&self) -> Value {
+            json!({})
+        }
+        fn kind(&self) -> ToolKind {
+            self.1
+        }
+        async fn call(&self, _: Value, _: &ToolContext) -> anyhow::Result<ToolOutput> {
+            Ok(ToolOutput::ok(""))
+        }
+    }
+
+    /// Resolve `name`: the built-in tool of that name if there is one, else a stub of `kind`.
+    fn resolve(name: &str, kind: ToolKind, mode: &ModeDef, config: &Config) -> Permission {
+        match ruckcode_tools::builtin_tool(name) {
+            Some(t) => super::resolve(t.as_ref(), mode, config),
+            None => super::resolve(&Stub(name.into(), kind), mode, config),
+        }
+    }
 
     fn mode(perms: &str) -> ModeDef {
         toml::from_str(&format!("[permissions]\n{perms}")).unwrap()

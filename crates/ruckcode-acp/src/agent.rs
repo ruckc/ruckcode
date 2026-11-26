@@ -318,9 +318,9 @@ fn convert_event(ev: SessionEvent) -> SessionUpdate {
                         i.content,
                         PlanEntryPriority::Medium,
                         match i.status {
-                            ruckcode_tools::TodoStatus::Pending => PlanEntryStatus::Pending,
-                            ruckcode_tools::TodoStatus::InProgress => PlanEntryStatus::InProgress,
-                            ruckcode_tools::TodoStatus::Completed => PlanEntryStatus::Completed,
+                            ruckcode_tools::PlanStatus::Pending => PlanEntryStatus::Pending,
+                            ruckcode_tools::PlanStatus::InProgress => PlanEntryStatus::InProgress,
+                            ruckcode_tools::PlanStatus::Completed => PlanEntryStatus::Completed,
                         },
                     )
                 })
