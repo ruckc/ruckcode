@@ -52,9 +52,13 @@ impl AppIdentity {
         std::iter::once(self.project_dir).chain(self.extra_protected_project_paths.iter().copied())
     }
 
-    /// The user agent of web tool requests: the plain user agent plus the homepage.
+    /// The user agent of web tool requests: the plain user agent plus the homepage (when set).
     pub fn web_user_agent(&self) -> String {
-        format!("{} (+{})", self.user_agent, self.homepage_url)
+        if self.homepage_url.is_empty() {
+            self.user_agent.to_string()
+        } else {
+            format!("{} (+{})", self.user_agent, self.homepage_url)
+        }
     }
 }
 
@@ -119,5 +123,10 @@ mod tests {
             [".x", ".x.json"]
         );
         assert_eq!(ID.web_user_agent(), "x/1 (+https://x.test)");
+        let bare = AppIdentity {
+            homepage_url: "",
+            ..ID
+        };
+        assert_eq!(bare.web_user_agent(), "x/1");
     }
 }

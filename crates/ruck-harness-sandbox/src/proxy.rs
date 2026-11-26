@@ -571,14 +571,14 @@ mod identity_tests {
 
     #[test]
     fn domain_store_lives_under_the_data_dir_name() {
+        // No data directory on this platform: nothing to place (`for_project` returns `None`).
+        let Some(data) = dirs::data_dir() else {
+            return;
+        };
         let p = Path::new("/some/project");
         let tail = |id| {
-            DomainStore::for_project(p, &id).map(|s| {
-                s.path
-                    .strip_prefix(dirs::data_dir().unwrap())
-                    .unwrap()
-                    .to_path_buf()
-            })
+            DomainStore::for_project(p, &id)
+                .map(|s| s.path.strip_prefix(&data).unwrap().to_path_buf())
         };
         let key = project_key(p);
         assert_eq!(
