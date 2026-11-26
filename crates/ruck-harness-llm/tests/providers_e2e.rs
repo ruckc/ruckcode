@@ -1,5 +1,6 @@
 //! Provider end-to-end tests against a tiny local HTTP server serving canned SSE streams.
 
+use ruck_harness_ident::testing::{ACME, RUCKCODE};
 use ruck_harness_llm::anthropic::Anthropic;
 use ruck_harness_llm::openai::OpenAi;
 use ruck_harness_llm::{
@@ -218,7 +219,7 @@ async fn anthropic_stream_thinking_text_and_tool() {
         ("message_stop", json!({"type":"message_stop"})),
     ]);
     let (url, cap) = serve("200 OK", "text/event-stream", body).await;
-    let p = Anthropic::new("sk-ant-test", Some(url));
+    let p = Anthropic::new("sk-ant-test", Some(url), &RUCKCODE);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut req = request();
     req.thinking = Some(json!({"type":"enabled","budget_tokens":2000}));
@@ -285,7 +286,7 @@ async fn anthropic_error_surfaces_body() {
     let body =
         r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#;
     let (url, _cap) = serve("401 Unauthorized", "application/json", body.into()).await;
-    let p = Anthropic::new("bad", Some(url));
+    let p = Anthropic::new("bad", Some(url), &RUCKCODE);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let e = p.complete(request(), tx).await.unwrap_err().to_string();
     assert!(e.contains("401"), "{e}");
@@ -299,7 +300,7 @@ async fn anthropic_stream_error_event() {
         json!({"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}),
     )]);
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
-    let p = Anthropic::new("k", Some(url));
+    let p = Anthropic::new("k", Some(url), &RUCKCODE);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let e = p.complete(request(), tx).await.unwrap_err().to_string();
     assert!(e.contains("Overloaded"), "{e}");
@@ -341,7 +342,7 @@ async fn openai_stream_ollama_complete_tool_calls_after_reasoning() {
     ]);
     body.push_str("data: [DONE]\n\n");
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
-    let p = OpenAi::new(None, Some(format!("{url}/v1")));
+    let p = OpenAi::new(None, Some(format!("{url}/v1")), &RUCKCODE);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let r = p.complete(request(), tx).await.unwrap();
     assert_eq!(r.stop_reason, StopReason::ToolUse);
@@ -384,7 +385,7 @@ async fn openai_stream_reasoning_only_stop_is_end_turn() {
     ]);
     body.push_str("data: [DONE]\n\n");
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
-    let p = OpenAi::new(None, Some(format!("{url}/v1")));
+    let p = OpenAi::new(None, Some(format!("{url}/v1")), &RUCKCODE);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let r = p.complete(request(), tx).await.unwrap();
     assert_eq!(r.stop_reason, StopReason::EndTurn);
@@ -448,7 +449,7 @@ async fn openai_stream_reasoning_text_and_tool_calls() {
     ]);
     body.push_str("data: [DONE]\n\n");
     let (url, cap) = serve("200 OK", "text/event-stream", body).await;
-    let p = OpenAi::new(Some("sk-test".into()), Some(format!("{url}/v1")));
+    let p = OpenAi::new(Some("sk-test".into()), Some(format!("{url}/v1")), &RUCKCODE);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut req = request();
     req.thinking = Some(json!("high"));
@@ -531,7 +532,7 @@ async fn openai_no_key_sends_no_auth_and_plain_text() {
     ]);
     body.push_str("data: [DONE]\n\n");
     let (url, cap) = serve("200 OK", "text/event-stream", body).await;
-    let p = OpenAi::new(None, Some(url));
+    let p = OpenAi::new(None, Some(url), &RUCKCODE);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let r = p.complete(request(), tx).await.unwrap();
     assert_eq!(r.stop_reason, StopReason::EndTurn);
@@ -545,7 +546,7 @@ async fn openai_no_key_sends_no_auth_and_plain_text() {
 async fn openai_error_surfaces_body() {
     let body = r#"{"error":{"message":"model not found","type":"invalid_request_error"}}"#;
     let (url, _cap) = serve("404 Not Found", "application/json", body.into()).await;
-    let p = OpenAi::new(None, Some(url));
+    let p = OpenAi::new(None, Some(url), &RUCKCODE);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let e = p.complete(request(), tx).await.unwrap_err().to_string();
     assert!(e.contains("404"), "{e}");
@@ -574,7 +575,7 @@ async fn anthropic_stream_without_usage_reports_none() {
     ]);
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let r = Anthropic::new("k", Some(url))
+    let r = Anthropic::new("k", Some(url), &RUCKCODE)
         .complete(request(), tx)
         .await
         .unwrap();
@@ -596,7 +597,7 @@ async fn anthropic_stream_usage_with_cache_writes() {
     ]);
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let r = Anthropic::new("k", Some(url))
+    let r = Anthropic::new("k", Some(url), &RUCKCODE)
         .complete(request(), tx)
         .await
         .unwrap();
@@ -625,7 +626,7 @@ async fn openai_stream_cached_tokens_and_missing_usage() {
     body.push_str("data: [DONE]\n\n");
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let r = OpenAi::new(None, Some(format!("{url}/v1")))
+    let r = OpenAi::new(None, Some(format!("{url}/v1")), &RUCKCODE)
         .complete(request(), tx)
         .await
         .unwrap();
@@ -647,7 +648,7 @@ async fn openai_stream_cached_tokens_and_missing_usage() {
     body.push_str("data: [DONE]\n\n");
     let (url, _cap) = serve("200 OK", "text/event-stream", body).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let r = OpenAi::new(None, Some(format!("{url}/v1")))
+    let r = OpenAi::new(None, Some(format!("{url}/v1")), &RUCKCODE)
         .complete(request(), tx)
         .await
         .unwrap();
@@ -710,7 +711,7 @@ async fn openai_empty_assistant_content_is_never_null() {
         },
     ];
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    OpenAi::new(None, Some(url))
+    OpenAi::new(None, Some(url), &RUCKCODE)
         .complete(req, tx)
         .await
         .unwrap();
@@ -757,7 +758,7 @@ async fn anthropic_empty_assistant_turns_send_no_empty_blocks() {
         Message::user_text("d"),
     ];
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    Anthropic::new("k", Some(url))
+    Anthropic::new("k", Some(url), &RUCKCODE)
         .complete(req, tx)
         .await
         .unwrap();
@@ -786,7 +787,7 @@ async fn openai_extra_body_is_sent_only_when_configured() {
         json!({"presence_penalty": 0.5, "options": {"repeat_penalty": 1.1, "repeat_last_n": 256}});
     let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    OpenAi::new(None, Some(url))
+    OpenAi::new(None, Some(url), &RUCKCODE)
         .with_extra_body(extra)
         .complete(request(), tx)
         .await
@@ -799,7 +800,7 @@ async fn openai_extra_body_is_sent_only_when_configured() {
 
     let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    OpenAi::new(None, Some(url))
+    OpenAi::new(None, Some(url), &RUCKCODE)
         .complete(request(), tx)
         .await
         .unwrap();
@@ -817,7 +818,7 @@ async fn openai_extra_body_is_sent_only_when_configured() {
 async fn openai_body(req: Request, extra: Option<Value>) -> Value {
     let (url, cap) = serve("200 OK", "text/event-stream", openai_ok_body()).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut p = OpenAi::new(None, Some(url));
+    let mut p = OpenAi::new(None, Some(url), &RUCKCODE);
     if let Some(e) = extra {
         p = p.with_extra_body(e);
     }
@@ -838,7 +839,7 @@ async fn anthropic_body(req: Request) -> Value {
     ]);
     let (url, cap) = serve("200 OK", "text/event-stream", body).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    Anthropic::new("k", Some(url))
+    Anthropic::new("k", Some(url), &RUCKCODE)
         .complete(req, tx)
         .await
         .unwrap();
@@ -914,4 +915,60 @@ async fn anthropic_sampling_rules() {
     let b = anthropic_body(req).await;
     assert!(b.get("temperature").is_none() && b.get("top_p").is_none());
     assert_eq!(b["thinking"]["type"], "enabled");
+}
+
+fn openai_stop_body() -> String {
+    let mut body = sse(&[(
+        "",
+        json!({"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}),
+    )]);
+    body.push_str("data: [DONE]\n\n");
+    body
+}
+
+#[tokio::test]
+async fn the_user_agent_comes_from_the_identity() {
+    for (id, want) in [
+        (RUCKCODE, format!("ruckcode/{}", env!("CARGO_PKG_VERSION"))),
+        (ACME, "acme/9.9.9".to_string()),
+    ] {
+        let (url, cap) = serve("200 OK", "text/event-stream", openai_stop_body()).await;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        OpenAi::new(None, Some(format!("{url}/v1")), &id)
+            .complete(request(), tx)
+            .await
+            .unwrap();
+        assert_eq!(cap.await.unwrap().header("user-agent"), Some(want.as_str()));
+        let (url, cap) = serve("200 OK", "text/event-stream", String::new()).await;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = Anthropic::new("k", Some(url), &id)
+            .complete(request(), tx)
+            .await;
+        assert_eq!(cap.await.unwrap().header("user-agent"), Some(want.as_str()));
+    }
+}
+
+#[tokio::test]
+async fn http_tracing_reads_the_identitys_env_var() {
+    let dir = std::env::temp_dir().join(format!("trace-http-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        (RUCKCODE, dir.join("ruckcode.log")),
+        (ACME, dir.join("acme.log")),
+    ];
+    // Safe: only these two variables, each read by providers of its own identity.
+    std::env::set_var("RUCKCODE_TRACE_HTTP", &files[0].1);
+    std::env::set_var("ACME_TRACE_HTTP", &files[1].1);
+    for (id, file) in &files {
+        let (url, _cap) = serve("200 OK", "text/event-stream", openai_stop_body()).await;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        OpenAi::new(None, Some(format!("{url}/v1")), id)
+            .complete(request(), tx)
+            .await
+            .unwrap();
+        let t = std::fs::read_to_string(file).unwrap();
+        assert!(t.starts_with("request\t"), "{file:?}: {t}");
+        assert!(t.contains("\nchunk\t"), "{file:?}: {t}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

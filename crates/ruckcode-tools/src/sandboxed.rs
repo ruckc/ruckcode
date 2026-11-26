@@ -1,6 +1,7 @@
 //! Glue between process-spawning tools and the command sandbox.
 
 use crate::ToolContext;
+use ruck_harness_ident::AppIdentity;
 use ruck_harness_sandbox::proxy::Gate;
 use ruck_harness_sandbox::{Prep, Prepared, Sandbox, SandboxConfig};
 use std::path::{Path, PathBuf};
@@ -62,7 +63,20 @@ impl SandboxHandle {
 }
 
 /// Error text for a refused in-process write.
-pub const PROTECTED_WRITE_MSG: &str = "refused: this path is ruckcode's own configuration (.ruckcode/, .mcp.json or the user config directory) or protected git state (.git/config, .git/hooks/, .git/info/, remote-tracking refs). The sandbox policy can only be changed by the user.";
+pub fn protected_write_msg(identity: &AppIdentity) -> String {
+    let mut paths = vec![format!("{}/", identity.project_dir)];
+    paths.extend(
+        identity
+            .extra_protected_project_paths
+            .iter()
+            .map(|p| p.to_string()),
+    );
+    format!(
+        "refused: this path is {}'s own configuration ({} or the user config directory) or protected git state (.git/config, .git/hooks/, .git/info/, remote-tracking refs). The sandbox policy can only be changed by the user.",
+        identity.name,
+        paths.join(", ")
+    )
+}
 
 /// A command about to be spawned, sandboxed when the call has a sandbox.
 pub struct Launch {

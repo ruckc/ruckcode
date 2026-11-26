@@ -312,7 +312,7 @@ impl Default for Config {
 }
 
 /// Environment variable overriding the user config directory (default `~/.config/ruckcode`).
-pub const CONFIG_DIR_ENV: &str = "RUCKCODE_CONFIG_DIR";
+pub const CONFIG_DIR_ENV: &str = crate::identity::RUCKCODE.config_dir_env;
 
 /// The user config directory: the explicit override, else `$RUCKCODE_CONFIG_DIR`, else
 /// `~/.config/ruckcode`.
@@ -321,7 +321,9 @@ pub fn user_config_dir(over: Option<&Path>) -> Option<PathBuf> {
         Some(p) => Some(p.to_path_buf()),
         None => match std::env::var_os(CONFIG_DIR_ENV).filter(|v| !v.is_empty()) {
             Some(d) => Some(PathBuf::from(d)),
-            None => dirs::config_dir().map(|d| d.join("ruckcode")),
+            None => {
+                dirs::config_dir().map(|d| d.join(crate::identity::RUCKCODE.user_config_subdir))
+            }
         },
     }
 }
@@ -537,12 +539,15 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
         )
     };
     Ok(match profile.provider {
-        ProviderKind::Mock => Arc::new(ruck_harness_llm::mock::MockProvider::demo()),
+        ProviderKind::Mock => Arc::new(
+            ruck_harness_llm::mock::MockProvider::demo().with_identity(crate::identity::RUCKCODE),
+        ),
         ProviderKind::Anthropic => {
             let key = key.ok_or_else(missing)?;
             Arc::new(ruck_harness_llm::anthropic::Anthropic::new(
                 key,
                 profile.base_url.clone(),
+                &crate::identity::RUCKCODE,
             ))
         }
         ProviderKind::Openai => {
@@ -553,7 +558,11 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
             if key.is_none() && !local {
                 return Err(missing());
             }
-            let mut p = ruck_harness_llm::openai::OpenAi::new(key, profile.base_url.clone());
+            let mut p = ruck_harness_llm::openai::OpenAi::new(
+                key,
+                profile.base_url.clone(),
+                &crate::identity::RUCKCODE,
+            );
             if let Some(extra) = profile.ollama.as_ref().and_then(OllamaOptions::extra_body) {
                 p = p.with_extra_body(extra);
             }

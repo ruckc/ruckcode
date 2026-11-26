@@ -1,5 +1,6 @@
 //! `list_models` against a local fake server that serves scripted responses in order.
 
+use ruck_harness_ident::testing::{ACME, RUCKCODE};
 use ruck_harness_llm::{list_models, ApiKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -68,9 +69,14 @@ async fn anthropic_follows_pagination_and_keeps_order() {
     let p1 = r#"{"data":[{"id":"claude-b","display_name":"B"},{"id":"claude-a","display_name":"A"}],"has_more":true,"last_id":"claude-a"}"#;
     let p2 = r#"{"data":[{"id":"claude-0"}],"has_more":false,"last_id":"claude-0"}"#;
     let (url, h) = serve_script(vec![("200 OK", p1.into()), ("200 OK", p2.into())]).await;
-    let m = list_models(ApiKind::Anthropic, &format!("{url}/"), Some("sk-test"))
-        .await
-        .unwrap();
+    let m = list_models(
+        ApiKind::Anthropic,
+        &format!("{url}/"),
+        Some("sk-test"),
+        &RUCKCODE,
+    )
+    .await
+    .unwrap();
     let ids: Vec<_> = m.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, ["claude-b", "claude-a", "claude-0"]);
     assert_eq!(m[0].display_name.as_deref(), Some("B"));
@@ -87,7 +93,7 @@ async fn openai_sorts_alphabetically_and_sends_bearer() {
     let body =
         r#"{"object":"list","data":[{"id":"zeta"},{"id":"alpha"},{"id":"mid"},{"id":"alpha"}]}"#;
     let (url, h) = serve_script(vec![("200 OK", body.into())]).await;
-    let m = list_models(ApiKind::Openai, &format!("{url}/v1"), Some("k"))
+    let m = list_models(ApiKind::Openai, &format!("{url}/v1"), Some("k"), &RUCKCODE)
         .await
         .unwrap();
     let ids: Vec<_> = m.iter().map(|m| m.id.as_str()).collect();
@@ -100,7 +106,9 @@ async fn openai_sorts_alphabetically_and_sends_bearer() {
 #[tokio::test]
 async fn openai_without_key_sends_no_auth() {
     let (url, h) = serve_script(vec![("200 OK", r#"{"data":[]}"#.into())]).await;
-    let m = list_models(ApiKind::Openai, &url, None).await.unwrap();
+    let m = list_models(ApiKind::Openai, &url, None, &RUCKCODE)
+        .await
+        .unwrap();
     assert!(m.is_empty());
     assert!(header(&h.await.unwrap()[0].1, "authorization").is_none());
 }
@@ -113,26 +121,45 @@ async fn error_bodies_are_surfaced() {
             .into(),
     )])
     .await;
-    let e = list_models(ApiKind::Anthropic, &url, Some("bad"))
+    let e = list_models(ApiKind::Anthropic, &url, Some("bad"), &RUCKCODE)
         .await
         .unwrap_err()
         .to_string();
     assert!(e.contains("401") && e.contains("invalid x-api-key"), "{e}");
 
     let (url, _h) = serve_script(vec![("500 Internal Server Error", "boom".into())]).await;
-    let e = list_models(ApiKind::Openai, &url, None)
+    let e = list_models(ApiKind::Openai, &url, None, &RUCKCODE)
         .await
         .unwrap_err()
         .to_string();
     assert!(e.contains("500") && e.contains("boom"), "{e}");
 
     let (url, _h) = serve_script(vec![("200 OK", "<html>".into())]).await;
-    assert!(list_models(ApiKind::Openai, &url, None).await.is_err());
+    assert!(list_models(ApiKind::Openai, &url, None, &RUCKCODE)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
 async fn connection_refused_is_an_error() {
-    assert!(list_models(ApiKind::Openai, "http://127.0.0.1:1", None)
-        .await
-        .is_err());
+    assert!(
+        list_models(ApiKind::Openai, "http://127.0.0.1:1", None, &RUCKCODE)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn the_user_agent_comes_from_the_identity() {
+    for (id, want) in [
+        (RUCKCODE, format!("ruckcode/{}", env!("CARGO_PKG_VERSION"))),
+        (ACME, "acme/9.9.9".to_string()),
+    ] {
+        let (url, h) = serve_script(vec![("200 OK", r#"{"data":[{"id":"m"}]}"#.into())]).await;
+        list_models(ApiKind::Openai, &format!("{url}/v1"), None, &id)
+            .await
+            .unwrap();
+        let seen = h.await.unwrap();
+        assert_eq!(header(&seen[0].1, "user-agent"), Some(want.as_str()));
+    }
 }

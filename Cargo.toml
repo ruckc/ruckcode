@@ -43,6 +43,7 @@ uuid = { version = "1", features = ["v4"] }
 
 ruckcode-acp = { path = "crates/ruckcode-acp" }
 ruckcode-core = { path = "crates/ruckcode-core" }
+ruck-harness-ident = { path = "crates/ruck-harness-ident" }
 ruck-harness-hooks = { path = "crates/ruck-harness-hooks" }
 ruck-harness-llm = { path = "crates/ruck-harness-llm" }
 ruckcode-mcp = { path = "crates/ruckcode-mcp" }

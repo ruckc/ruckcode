@@ -41,6 +41,7 @@ fn env() -> Env {
 async fn sandbox(e: &Env) -> Arc<Sandbox> {
     Sandbox::new(SandboxOptions {
         project_root: e.proj.clone(),
+        identity: ruck_harness_ident::testing::RUCKCODE,
         exe: LauncherExe::Path(PathBuf::from(env!("CARGO_BIN_EXE_rc-sandbox-exec"))),
         prompter: None,
         store: None,
@@ -616,6 +617,7 @@ async fn strict_refuses_without_enforcement() {
     let e = env();
     let sb = Sandbox::new(SandboxOptions {
         project_root: e.proj.clone(),
+        identity: ruck_harness_ident::testing::RUCKCODE,
         exe: LauncherExe::Path(PathBuf::from(env!("CARGO_BIN_EXE_rc-sandbox-exec"))),
         prompter: None,
         store: None,

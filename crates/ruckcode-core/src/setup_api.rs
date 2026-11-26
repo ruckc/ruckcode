@@ -475,7 +475,8 @@ pub async fn list_models(
         base_url.trim().to_string()
     };
     let mut key = resolve_models_auth(auth.as_ref(), user_dir)?;
-    let r = ruck_harness_llm::list_models(api, &base, key.as_deref()).await;
+    let r =
+        ruck_harness_llm::list_models(api, &base, key.as_deref(), &crate::identity::RUCKCODE).await;
     if let Some(k) = key.as_mut() {
         k.zeroize();
     }
@@ -601,7 +602,9 @@ pub async fn probe(
             ),
             _ => (ruck_harness_llm::ApiKind::Openai, format!("{base}/models")),
         };
-        match ruck_harness_llm::list_models(api, &base, key.as_deref()).await {
+        match ruck_harness_llm::list_models(api, &base, key.as_deref(), &crate::identity::RUCKCODE)
+            .await
+        {
             Ok(models) => {
                 attempts.push(ProbeAttempt {
                     kind: ks.clone(),

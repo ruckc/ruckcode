@@ -45,6 +45,7 @@ async fn launcher_works_when_pipe_lands_on_the_policy_fd() {
     std::fs::create_dir_all(&proj).unwrap();
     let sb = Sandbox::new(SandboxOptions {
         project_root: proj.clone(),
+        identity: ruck_harness_ident::testing::RUCKCODE,
         exe: LauncherExe::Path(PathBuf::from(env!("CARGO_BIN_EXE_rc-sandbox-exec"))),
         prompter: None,
         store: None,

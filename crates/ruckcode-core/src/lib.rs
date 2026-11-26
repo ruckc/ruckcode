@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod config;
 pub mod context;
+pub mod identity;
 pub mod init;
 pub mod keys;
 pub mod modes;

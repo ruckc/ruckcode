@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Context;
 use async_trait::async_trait;
 use futures::StreamExt;
+use ruck_harness_ident::AppIdentity;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tokio::sync::mpsc::UnboundedSender;
@@ -17,15 +18,18 @@ pub struct OpenAi {
     client: reqwest::Client,
     /// Extra top-level request fields (e.g. Ollama sampling options), merged into every body.
     extra: Option<Value>,
+    /// Names the `<PREFIX>_TRACE_HTTP` variable.
+    identity: AppIdentity,
 }
 
 impl OpenAi {
-    pub fn new(api_key: Option<String>, base_url: Option<String>) -> Self {
+    pub fn new(api_key: Option<String>, base_url: Option<String>, identity: &AppIdentity) -> Self {
         Self {
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),
-            client: http_client(),
+            client: http_client(identity),
             extra: None,
+            identity: *identity,
         }
     }
 
@@ -53,10 +57,11 @@ pub(crate) fn merge_extra(body: &mut Value, extra: &Value) {
     }
 }
 
-/// Append one line to the file named by `RUCKCODE_TRACE_HTTP` (request bodies and raw SSE
+/// Append one line to the file named by `<PREFIX>_TRACE_HTTP` (request bodies and raw SSE
 /// payloads), for debugging what a server receives and sends. A no-op when unset.
-pub(crate) fn trace_http(kind: &str, payload: &str) {
-    let Some(path) = std::env::var_os("RUCKCODE_TRACE_HTTP").filter(|v| !v.is_empty()) else {
+pub(crate) fn trace_http(identity: &AppIdentity, kind: &str, payload: &str) {
+    let Some(path) = std::env::var_os(identity.env_var("TRACE_HTTP")).filter(|v| !v.is_empty())
+    else {
         return;
     };
     use std::io::Write;
@@ -210,7 +215,7 @@ impl Provider for OpenAi {
             // The profile's `temperature` / `top_p` win over a duplicate in the extra body.
             apply_sampling(&mut body, &request);
         }
-        trace_http("request", &body.to_string());
+        trace_http(&self.identity, "request", &body.to_string());
         let mut rb = self
             .client
             .post(format!(
@@ -244,7 +249,7 @@ impl Provider for OpenAi {
             if ev.data.is_empty() {
                 continue;
             }
-            trace_http("chunk", &ev.data);
+            trace_http(&self.identity, "chunk", &ev.data);
             let v: Value = serde_json::from_str(&ev.data)
                 .with_context(|| format!("invalid SSE payload: {}", ev.data))?;
             if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {

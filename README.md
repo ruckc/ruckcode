@@ -997,6 +997,7 @@ release is deployed to the site). Everything is verified with the project's mini
 ```
 crates/
   ruckcode-core         agent loop, sessions, context assembly, modes, permissions, config
+  ruck-harness-ident    AppIdentity: the product name, env prefix, dirs and user agent the harness crates take
   ruck-harness-llm      Provider trait + Anthropic and OpenAI-compatible clients
   ruckcode-tools        Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, AskUserQuestion, TodoWrite, SwitchMode
   ruckcode-mise         mise task discovery, schema mapping, execution

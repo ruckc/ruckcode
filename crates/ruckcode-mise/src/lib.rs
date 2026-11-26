@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use ruck_harness_ident::AppIdentity;
 use ruckcode_tools::{truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -137,8 +138,24 @@ fn plain_ctx() -> ToolContext {
         cancel: CancellationToken::new(),
         tool_call_id: String::new(),
         sandbox: None,
+        identity: DISCOVERY_IDENTITY,
     }
 }
+
+/// The identity of the discovery context. Discovery runs `mise tasks ls` outside any sandbox and
+/// shows nothing to the model, so no product name is ever read from it.
+const DISCOVERY_IDENTITY: AppIdentity = AppIdentity {
+    name: "mise-discovery",
+    env_prefix: "MISE_DISCOVERY",
+    project_dir: ".mise-discovery",
+    config_dir_env: "MISE_DISCOVERY_CONFIG_DIR",
+    user_config_subdir: "mise-discovery",
+    data_dir_name: "mise-discovery",
+    user_agent: "mise-discovery",
+    homepage_url: "",
+    acp_namespace: "mise-discovery",
+    extra_protected_project_paths: &[],
+};
 
 /// Runs `mise tasks ls --json` in cwd. Returns an empty list if mise is missing or fails.
 pub async fn discover(cwd: &Path) -> Vec<MiseTask> {
@@ -243,7 +260,7 @@ async fn run_task(task: &str, args: &[String], ctx: &ToolContext) -> anyhow::Res
     .await
     {
         Ok(r) => {
-            let mut text = truncate_middle(&r.output, MAX_OUTPUT);
+            let mut text = truncate_middle(&r.output, MAX_OUTPUT, &ctx.identity);
             if let Some(n) = &r.notes {
                 text = format!("{text}\n\n{n}");
             }
@@ -477,6 +494,7 @@ mod tests {
             cancel: CancellationToken::new(),
             tool_call_id: String::new(),
             sandbox: None,
+            identity: ruck_harness_ident::testing::RUCKCODE,
         }
     }
 

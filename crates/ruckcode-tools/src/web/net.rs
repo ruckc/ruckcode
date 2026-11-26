@@ -3,6 +3,7 @@
 
 use crate::ToolContext;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use ruck_harness_ident::AppIdentity;
 use ruck_harness_sandbox::NetworkMode;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -151,13 +152,15 @@ impl Resolve for SafeResolver {
 
 /// Build the HTTP client: no proxies (they would resolve names themselves), no automatic
 /// redirects (every hop is re-validated by the caller), connect and total timeouts.
+/// The `User-Agent` identifies the product and carries nothing personal.
 pub fn client(
     policy: &NetPolicy,
+    identity: &AppIdentity,
     connect: Duration,
     total: Duration,
 ) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent(super::user_agent())
+        .user_agent(identity.web_user_agent())
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(connect)

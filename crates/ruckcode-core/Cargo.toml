@@ -13,6 +13,7 @@ dirs.workspace = true
 globset.workspace = true
 regex.workspace = true
 ruck-harness-hooks.workspace = true
+ruck-harness-ident.workspace = true
 ruck-harness-llm.workspace = true
 ruckcode-mcp.workspace = true
 ruckcode-mise.workspace = true
@@ -31,4 +32,5 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+ruck-harness-ident = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

@@ -1,6 +1,7 @@
 //! Model discovery: list the models an endpoint offers.
 
 use anyhow::{bail, Context, Result};
+use ruck_harness_ident::AppIdentity;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -56,9 +57,10 @@ pub async fn list_models(
     kind: ApiKind,
     base_url: &str,
     api_key: Option<&str>,
+    identity: &AppIdentity,
 ) -> Result<Vec<ModelInfo>> {
     let client = reqwest::Client::builder()
-        .user_agent(concat!("ruckcode/", env!("CARGO_PKG_VERSION")))
+        .user_agent(identity.user_agent)
         .timeout(Duration::from_secs(20))
         .build()?;
     let base = base_url.trim_end_matches('/');

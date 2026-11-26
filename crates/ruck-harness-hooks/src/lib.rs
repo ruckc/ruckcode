@@ -2,6 +2,7 @@
 
 use globset::Glob;
 use regex::Regex;
+use ruck_harness_ident::AppIdentity;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -143,11 +144,15 @@ impl HookOutcome {
 
 pub struct HookRunner {
     cwd: PathBuf,
+    identity: AppIdentity,
 }
 
 impl HookRunner {
-    pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        Self { cwd: cwd.into() }
+    pub fn new(cwd: impl Into<PathBuf>, identity: AppIdentity) -> Self {
+        Self {
+            cwd: cwd.into(),
+            identity,
+        }
     }
 
     /// Run all hooks for `event` whose matcher matches `tool_name`, sequentially.
@@ -284,17 +289,17 @@ impl HookRunner {
         c.arg("-c")
             .arg(&cmd)
             .current_dir(&self.cwd)
-            .env("RUCKCODE_EVENT", event.as_str())
-            .env("RUCKCODE_PROJECT_DIR", &self.cwd)
+            .env(self.identity.env_var("EVENT"), event.as_str())
+            .env(self.identity.env_var("PROJECT_DIR"), &self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         if let Some(s) = session_id {
-            c.env("RUCKCODE_SESSION_ID", s);
+            c.env(self.identity.env_var("SESSION_ID"), s);
         }
         if let Some(f) = files_env {
-            c.env("RUCKCODE_FILES", f);
+            c.env(self.identity.env_var("FILES"), f);
         }
         let mut child = match c.spawn() {
             Ok(c) => c,
@@ -391,6 +396,7 @@ pub fn fix_turn_prompt(outcomes: &[HookOutcome]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ruck_harness_ident::testing::{ACME, RUCKCODE};
 
     fn spec(run: &str) -> HookSpec {
         HookSpec {
@@ -438,7 +444,7 @@ mod tests {
             pre_tool_use: vec![a, b, spec("echo c")],
             ..Default::default()
         };
-        let r = HookRunner::new(dir.path());
+        let r = HookRunner::new(dir.path(), RUCKCODE);
         let p = json!({"session_id": "s1"});
         let o = r.run(&cfg, HookEvent::PreToolUse, Some("Bash"), &p).await;
         let outs: Vec<_> = o.iter().map(|o| o.output.trim().to_string()).collect();
@@ -458,7 +464,7 @@ mod tests {
             stop: vec![spec("cat; echo $RUCKCODE_EVENT $RUCKCODE_SESSION_ID")],
             ..Default::default()
         };
-        let r = HookRunner::new(dir.path());
+        let r = HookRunner::new(dir.path(), RUCKCODE);
         let o = r
             .run(&cfg, HookEvent::Stop, None, &json!({"session_id": "abc"}))
             .await;
@@ -475,7 +481,7 @@ mod tests {
             post_edit: vec![s],
             ..Default::default()
         };
-        let r = HookRunner::new(dir.path());
+        let r = HookRunner::new(dir.path(), RUCKCODE);
         let files = vec![
             dir.path().join("src/a.rs"),
             dir.path().join("b.txt"),
@@ -500,7 +506,7 @@ mod tests {
             stop: vec![spec("echo oops >&2; exit 3")],
             ..Default::default()
         };
-        let r = HookRunner::new(dir.path());
+        let r = HookRunner::new(dir.path(), RUCKCODE);
         let o = r.run(&cfg, HookEvent::Stop, None, &json!({})).await;
         assert!(!o[0].success);
         assert_eq!(o[0].exit_code, Some(3));
@@ -516,7 +522,7 @@ mod tests {
             stop: vec![s],
             ..Default::default()
         };
-        let o = HookRunner::new(dir.path())
+        let o = HookRunner::new(dir.path(), RUCKCODE)
             .run(&cfg, HookEvent::Stop, None, &json!({}))
             .await;
         assert!(!o[0].success);
@@ -551,5 +557,53 @@ mod tests {
         let s = format!("{}{}", "a".repeat(30_000), "z".repeat(30_000));
         let t = truncate_middle(&s, MAX_OUTPUT);
         assert!(t.starts_with('a') && t.ends_with('z') && t.len() < 21_000);
+    }
+
+    /// What a hook sees: every environment variable the runner exports, sorted.
+    async fn exported(id: AppIdentity) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = HooksConfig {
+            post_edit: vec![spec("env")],
+            ..Default::default()
+        };
+        let o = HookRunner::new(dir.path(), id)
+            .run_post_edit(&cfg, "s1", &[dir.path().join("a.rs")])
+            .await;
+        assert!(o[0].success, "{}", o[0].output);
+        let prefix = format!("{}_", id.env_prefix);
+        let mut vars: Vec<String> = o[0]
+            .output
+            .lines()
+            .filter(|l| l.starts_with(&prefix))
+            .map(|l| l.replace(&dir.path().display().to_string(), "<dir>"))
+            .collect();
+        vars.sort();
+        vars
+    }
+
+    #[tokio::test]
+    async fn ruckcode_exports_the_ruckcode_variables() {
+        assert_eq!(
+            exported(RUCKCODE).await,
+            [
+                "RUCKCODE_EVENT=post_edit",
+                "RUCKCODE_FILES=a.rs",
+                "RUCKCODE_PROJECT_DIR=<dir>",
+                "RUCKCODE_SESSION_ID=s1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn another_identity_exports_its_own_prefix() {
+        assert_eq!(
+            exported(ACME).await,
+            [
+                "ACME_EVENT=post_edit",
+                "ACME_FILES=a.rs",
+                "ACME_PROJECT_DIR=<dir>",
+                "ACME_SESSION_ID=s1",
+            ]
+        );
     }
 }

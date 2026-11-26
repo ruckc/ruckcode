@@ -12,6 +12,7 @@ path = "src/bin/rc-sandbox-exec.rs"
 
 [dependencies]
 anyhow.workspace = true
+ruck-harness-ident.workspace = true
 async-trait.workspace = true
 dirs.workspace = true
 regex.workspace = true
@@ -27,3 +28,6 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
 seccompiler = "0.5"
+
+[dev-dependencies]
+ruck-harness-ident = { workspace = true, features = ["testing"] }

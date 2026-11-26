@@ -1074,7 +1074,7 @@ impl Agent {
         if hooks.get(event).is_empty() {
             return vec![];
         }
-        let out = HookRunner::new(&s.cwd)
+        let out = HookRunner::new(&s.cwd, crate::identity::RUCKCODE)
             .run(&hooks, event, tool, payload)
             .await;
         s.record_hooks(event, &out);
@@ -1091,7 +1091,7 @@ impl Agent {
         if configs.is_empty() {
             return;
         }
-        let manager = McpManager::start(configs, &s.cwd).await;
+        let manager = McpManager::start(configs, &s.cwd, &crate::identity::RUCKCODE).await;
         let mut records = vec![];
         for (name, result) in manager.statuses() {
             match result {
@@ -1501,7 +1501,7 @@ impl Agent {
         if hooks.post_edit.is_empty() {
             return None;
         }
-        let out = HookRunner::new(&s.cwd)
+        let out = HookRunner::new(&s.cwd, crate::identity::RUCKCODE)
             .run_post_edit(&hooks, &s.id, &files)
             .await;
         s.record_hooks(HookEvent::PostEdit, &out);
@@ -1701,6 +1701,7 @@ impl Agent {
                 cancel: cancel.clone(),
                 tool_call_id: id.to_string(),
                 sandbox,
+                identity: crate::identity::RUCKCODE,
             };
             match tool.call(input.clone(), &ctx).await {
                 Ok(out) => {
@@ -1814,6 +1815,7 @@ impl Agent {
                     let sb =
                         ruck_harness_sandbox::Sandbox::new(ruck_harness_sandbox::SandboxOptions {
                             project_root: s.cwd.clone(),
+                            identity: crate::identity::RUCKCODE,
                             exe: self
                                 .options
                                 .sandbox_exe
@@ -1823,7 +1825,10 @@ impl Agent {
                                 client: client.clone(),
                                 session_id: s.id.clone(),
                             })),
-                            store: ruck_harness_sandbox::DomainStore::for_project(&s.cwd),
+                            store: ruck_harness_sandbox::DomainStore::for_project(
+                                &s.cwd,
+                                &crate::identity::RUCKCODE,
+                            ),
                             config_dir: config_dir.clone(),
                             home: None,
                             caps: None,

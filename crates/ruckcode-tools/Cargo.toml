@@ -15,6 +15,7 @@ ignore.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 url = "2"
+ruck-harness-ident.workspace = true
 ruck-harness-llm.workspace = true
 ruck-harness-sandbox.workspace = true
 serde.workspace = true
@@ -26,5 +27,6 @@ tokio-util.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+ruck-harness-ident = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 toml.workspace = true

@@ -149,7 +149,7 @@ pub async fn run_shell(
         }
         text.push_str(&String::from_utf8_lossy(&e));
     }
-    let text = truncate_middle(&text, MAX_OUTPUT);
+    let text = truncate_middle(&text, MAX_OUTPUT, &ctx.identity);
     let code = status.code().unwrap_or(-1);
     let notes = launch.notes(&text, status.success());
     let with_notes = |t: String| match &notes {
