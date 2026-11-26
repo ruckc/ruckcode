@@ -1,121 +1,22 @@
 //! Layered configuration: built-in defaults, user config, then project config.
+//!
+//! The generic half lives in [`harness`] ([`HarnessConfig`], [`ConfigLoader`], [`Profile`], ...)
+//! and knows nothing about the ruckcode product. [`Config`] adds the product sections
+//! (`[update]`, `[mise]`, `check_updates`) and derefs to the [`HarnessConfig`], so
+//! `config.sandbox`, `config.profiles` and the rest keep working unchanged.
 
-use anyhow::{bail, Context, Result};
-use ruck_harness_hooks::HooksConfig;
+use anyhow::{Context, Result};
 use ruck_harness_llm::Provider;
-use ruck_harness_mcp::McpServerConfig;
 use serde::Deserialize;
-use serde_json::Value;
-use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::context::{ContextConfig, ContextOverride};
-use crate::permissions::Permission;
-use crate::retry::RateLimitConfig;
-use crate::thinking_guard::{OllamaOptions, ThinkingGuardConfig, ThinkingGuardOverride};
-use crate::tool_loop_guard::{ToolLoopGuardConfig, ToolLoopGuardOverride};
+use crate::identity::RUCKCODE;
+use crate::thinking_guard::OllamaOptions;
 
-const DEFAULTS: &str = r#"
-default_profile = "anthropic"
-
-[profiles.anthropic]
-provider = "anthropic"
-model = "claude-opus-5-5"
-max_tokens = 32000
-context_window = 200000
-
-[profiles.openai]
-provider = "openai"
-model = "gpt-5"
-"#;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderKind {
-    Anthropic,
-    Openai,
-    Mock,
-}
-
-impl ProviderKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ProviderKind::Anthropic => "anthropic",
-            ProviderKind::Openai => "openai",
-            ProviderKind::Mock => "mock",
-        }
-    }
-}
-
-fn default_max_tokens() -> u32 {
-    32_000
-}
-
-fn default_context_window() -> u64 {
-    200_000
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Profile {
-    /// The profile's key in `[profiles.<name>]`; filled in when the config is loaded.
-    #[serde(skip)]
-    pub name: String,
-    pub provider: ProviderKind,
-    pub model: String,
-    /// Models offered by `/model` and the setup wizard (the default `model` need not be listed).
-    #[serde(default)]
-    pub models: Vec<String>,
-    /// Reference to a named key in `credentials.toml` (`[keys.<name>]`). Not a secret.
-    #[serde(default)]
-    pub api_key_name: Option<String>,
-    #[serde(default)]
-    pub api_key_env: Option<String>,
-    #[serde(default)]
-    pub base_url: Option<String>,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: u32,
-    #[serde(default = "default_context_window")]
-    pub context_window: u64,
-    /// Passed through as `Request.thinking`.
-    #[serde(default)]
-    pub thinking: Option<Value>,
-    /// Prices of the profile's models; when set, `usage_update` carries a running `cost`.
-    #[serde(default)]
-    pub pricing: Option<Pricing>,
-    /// Per-model prices (`[profiles.<name>.model_pricing."<model>"]`) that replace `pricing` for
-    /// that model, for profiles whose `models` differ in price.
-    #[serde(default)]
-    pub model_pricing: BTreeMap<String, Pricing>,
-    /// Overrides of the global `[thinking_guard]` for this profile.
-    #[serde(default)]
-    pub thinking_guard: Option<ThinkingGuardOverride>,
-    /// Overrides of the global `[context]` for this profile.
-    #[serde(default)]
-    pub context: Option<ContextOverride>,
-    /// Overrides of the global `[tool_loop_guard]` for this profile.
-    #[serde(default)]
-    pub tool_loop_guard: Option<ToolLoopGuardOverride>,
-    /// Ollama sampling options (`[profiles.<name>.ollama]`); sent only when this section is set.
-    #[serde(default)]
-    pub ollama: Option<OllamaOptions>,
-    /// Sampling temperature (0.0 to 2.0); sent only when set. Not sent to Anthropic while
-    /// extended thinking is enabled.
-    #[serde(default)]
-    pub temperature: Option<f64>,
-    /// Nucleus sampling `top_p` (0.0 to 1.0); sent only when set.
-    #[serde(default)]
-    pub top_p: Option<f64>,
-    /// Allowlist of built-in tool names offered to the model with this profile (MCP and mise
-    /// tools are unaffected). Unset offers every built-in tool the mode allows.
-    #[serde(default)]
-    pub tools: Option<Vec<String>>,
-    /// Lean tool set for small local models: leave out the built-in tools whose nested
-    /// array-of-object arguments some servers fail to parse (`TodoWrite`, `AskUserQuestion`), and
-    /// the prompt lines about them. Off by default.
-    #[serde(default)]
-    pub lean_tools: bool,
-}
+mod harness;
+pub use harness::{ConfigLoader, HarnessConfig, McpConfig, Pricing, Profile, ProviderKind};
 
 impl Profile {
     /// Whether the built-in tool `name` is offered with this profile. A tool's
@@ -126,72 +27,6 @@ impl Profile {
             .map(|t| t.lean_class())
             .unwrap_or_default();
         self.allows_class(name, class)
-    }
-
-    /// Whether `tool` is offered with this profile (see [`allows_builtin`](Self::allows_builtin)).
-    pub fn allows_tool(&self, tool: &dyn ruck_harness_tools::Tool) -> bool {
-        self.allows_class(tool.name(), tool.lean_class())
-    }
-
-    fn allows_class(&self, name: &str, class: ruck_harness_tools::LeanClass) -> bool {
-        use ruck_harness_tools::LeanClass;
-        if self.lean_tools && class == LeanClass::DropWhenLean {
-            return false;
-        }
-        let listed = self
-            .tools
-            .as_ref()
-            .map(|l| l.iter().any(|n| n.eq_ignore_ascii_case(name)));
-        if self.lean_tools && class == LeanClass::OptInWhenLean {
-            return listed == Some(true);
-        }
-        listed.unwrap_or(true)
-    }
-
-    /// The prices for `model`, if any are configured.
-    pub fn pricing_for(&self, model: &str) -> Option<&Pricing> {
-        self.model_pricing.get(model).or(self.pricing.as_ref())
-    }
-}
-
-/// USD per million tokens. `input` is the rate for uncached prompt tokens. `cache_read` and
-/// `cache_write` default to the `input` rate when omitted, so cached tokens are never free by
-/// accident.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
-pub struct Pricing {
-    pub input: f64,
-    pub output: f64,
-    #[serde(default)]
-    pub cache_read: Option<f64>,
-    #[serde(default)]
-    pub cache_write: Option<f64>,
-}
-
-impl Pricing {
-    /// Cost in USD of one request's usage; `None` when the provider reported no usage.
-    pub fn cost(&self, u: &ruck_harness_llm::Usage) -> Option<f64> {
-        if !u.is_reported() {
-            return None;
-        }
-        let read = u.cache_read_tokens.unwrap_or(0) as f64;
-        let write = u.cache_write_tokens.unwrap_or(0) as f64;
-        let usd = u.uncached_input_tokens() as f64 * self.input
-            + u.output_tokens as f64 * self.output
-            + read * self.cache_read.unwrap_or(self.input)
-            + write * self.cache_write.unwrap_or(self.input);
-        Some(usd / 1_000_000.0)
-    }
-
-    fn valid(&self) -> bool {
-        [
-            Some(self.input),
-            Some(self.output),
-            self.cache_read,
-            self.cache_write,
-        ]
-        .into_iter()
-        .flatten()
-        .all(|p| p.is_finite() && p >= 0.0)
     }
 }
 
@@ -234,84 +69,49 @@ impl Default for MiseConfig {
     }
 }
 
-fn default_mcp_lazy_threshold() -> usize {
-    ruck_harness_mcp::DEFAULT_LAZY_THRESHOLD
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct McpConfig {
-    /// Above this many selected MCP tools in a mode, expose `McpListTools`/`McpCall` instead.
-    #[serde(default = "default_mcp_lazy_threshold")]
-    pub lazy_threshold: usize,
-}
-
-impl Default for McpConfig {
-    fn default() -> Self {
-        Self {
-            lazy_threshold: default_mcp_lazy_threshold(),
-        }
-    }
-}
-
-fn default_compaction_threshold() -> f64 {
-    0.8
-}
-
-fn default_max_turn_requests() -> u32 {
-    100
-}
-
 fn default_true() -> bool {
     true
 }
 
+/// The ruckcode product's own top-level keys, read from the same table as the harness's.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Config {
-    pub default_profile: String,
-    #[serde(default = "default_compaction_threshold")]
-    pub compaction_threshold: f64,
-    #[serde(default = "default_max_turn_requests")]
-    pub max_turn_requests: u32,
+struct ProductSections {
     /// Show a once-a-day "update available" hint (`rc` TUI and headless). Never contacts
     /// anything but the release site; `RUCKCODE_NO_UPDATE_CHECK=1` also disables it.
     #[serde(default = "default_true")]
+    check_updates: bool,
+    #[serde(default)]
+    update: UpdateConfig,
+    #[serde(default)]
+    mise: MiseConfig,
+}
+
+/// `config.toml` as `rc` reads it: the harness's sections plus the product's.
+///
+/// Both halves are deserialised from the same merged table rather than with
+/// `#[serde(flatten)]`, which keeps the error messages of the harness half exactly as they were
+/// (flatten buffers the input and rewrites type errors). Deref gives `config.sandbox` etc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+    pub harness: HarnessConfig,
+    /// Show a once-a-day "update available" hint (`rc` TUI and headless). Never contacts
+    /// anything but the release site; `RUCKCODE_NO_UPDATE_CHECK=1` also disables it.
     pub check_updates: bool,
-    #[serde(default)]
-    pub profiles: BTreeMap<String, Profile>,
-    #[serde(default)]
     pub update: UpdateConfig,
-    #[serde(default)]
     pub mise: MiseConfig,
-    #[serde(default)]
-    pub mcp: McpConfig,
-    /// MCP servers by name (`[mcp_servers.<name>]`), merged from user config, project
-    /// `.mcp.json` and project config.
-    #[serde(default)]
-    pub mcp_servers: BTreeMap<String, McpServerConfig>,
-    /// Tool name or glob (`mise__*`) to permission.
-    #[serde(default)]
-    pub permissions: BTreeMap<String, Permission>,
-    #[serde(default)]
-    pub hooks: HooksConfig,
-    /// Retry and wait behaviour for 429 / overloaded / transient API failures (`[rate_limit]`).
-    #[serde(default)]
-    pub rate_limit: RateLimitConfig,
-    /// Detection of a model looping in its reasoning (`[thinking_guard]`).
-    #[serde(default)]
-    pub thinking_guard: ThinkingGuardConfig,
-    /// Detection of repeated no-progress tool calls (`[tool_loop_guard]`).
-    #[serde(default)]
-    pub tool_loop_guard: ToolLoopGuardConfig,
-    /// Context-window management: compaction, tool result caps, output reserve (`[context]`).
-    #[serde(default)]
-    pub context: ContextConfig,
-    /// Command sandbox (`[sandbox]`). `enabled` is only honoured from the user's config.
-    #[serde(default)]
-    pub sandbox: ruck_harness_sandbox::SandboxConfig,
-    /// The `WebFetch` and `WebSearch` tools (`[web]`). A project's own config may only set
-    /// `enabled`.
-    #[serde(default)]
-    pub web: ruck_harness_web::WebConfig,
+}
+
+impl Deref for Config {
+    type Target = HarnessConfig;
+    fn deref(&self) -> &HarnessConfig {
+        &self.harness
+    }
+}
+
+impl DerefMut for Config {
+    fn deref_mut(&mut self) -> &mut HarnessConfig {
+        &mut self.harness
+    }
 }
 
 impl Default for Config {
@@ -321,212 +121,61 @@ impl Default for Config {
 }
 
 /// Environment variable overriding the user config directory (default `~/.config/ruckcode`).
-pub const CONFIG_DIR_ENV: &str = crate::identity::RUCKCODE.config_dir_env;
+pub const CONFIG_DIR_ENV: &str = RUCKCODE.config_dir_env;
 
 /// The user config directory: the explicit override, else `$RUCKCODE_CONFIG_DIR`, else
 /// `~/.config/ruckcode`.
 pub fn user_config_dir(over: Option<&Path>) -> Option<PathBuf> {
-    match over {
-        Some(p) => Some(p.to_path_buf()),
-        None => match std::env::var_os(CONFIG_DIR_ENV).filter(|v| !v.is_empty()) {
-            Some(d) => Some(PathBuf::from(d)),
-            None => {
-                dirs::config_dir().map(|d| d.join(crate::identity::RUCKCODE.user_config_subdir))
-            }
-        },
-    }
+    harness::user_config_dir(&RUCKCODE, over)
 }
 
 /// Path of the credentials file (`credentials.toml`) in the user config directory.
 pub fn credentials_path(user_dir: Option<&Path>) -> Option<PathBuf> {
-    user_config_dir(user_dir).map(|d| d.join("credentials.toml"))
+    harness::credentials_path(&RUCKCODE, user_dir)
 }
 
 /// The secret of named key `name` in `credentials.toml` (`[keys.<name>] api_key`).
 pub fn named_key(user_dir: Option<&Path>, name: &str) -> Option<String> {
-    let text = std::fs::read_to_string(credentials_path(user_dir)?).ok()?;
-    let t: toml::Table = text.parse().ok()?;
-    t.get("keys")?
-        .get(name)?
-        .get("api_key")?
-        .as_str()
-        .filter(|k| !k.is_empty())
-        .map(String::from)
+    harness::named_key(&RUCKCODE, user_dir, name)
 }
 
 /// Resolve a profile's API key: the named key (`api_key_name`, an error if it is missing from
 /// `credentials.toml`), else (legacy, hand-written configs only) the env var named by
 /// `api_key_env`, else none.
 pub fn resolve_api_key(profile: &Profile, user_dir: Option<&Path>) -> Result<Option<String>> {
-    if let Some(name) = profile.api_key_name.as_deref() {
-        return match named_key(user_dir, name) {
-            Some(k) => Ok(Some(k)),
-            None => bail!(
-                "named key `{name}` (profile `{}`) not found in credentials.toml: run `rc keys add {name}`",
-                profile.name
-            ),
-        };
-    }
-    Ok(profile
-        .api_key_env
-        .as_deref()
-        .and_then(|v| std::env::var(v).ok())
-        .filter(|k| !k.is_empty()))
-}
-
-/// Recursively merge `over` into `base`: tables merge by key, everything else is replaced.
-fn merge(base: &mut toml::Table, over: toml::Table) {
-    for (k, v) in over {
-        match (base.get_mut(&k), v) {
-            (Some(toml::Value::Table(b)), toml::Value::Table(o)) => merge(b, o),
-            (_, v) => {
-                base.insert(k, v);
-            }
-        }
-    }
-}
-
-fn parse_table(text: &str, what: &str) -> Result<toml::Table> {
-    text.parse::<toml::Table>()
-        .with_context(|| format!("parsing {what}"))
-}
-
-/// Merge `[mcp_servers]` entries by server name: a later definition replaces the whole entry.
-fn merge_mcp_servers(base: &mut toml::Table, over: &mut toml::Table) {
-    let Some(toml::Value::Table(servers)) = over.remove("mcp_servers") else {
-        return;
-    };
-    let entry = base
-        .entry("mcp_servers")
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    if let toml::Value::Table(t) = entry {
-        for (name, v) in servers {
-            t.insert(name, v);
-        }
-    }
-}
-
-/// Servers declared in `<project>/.mcp.json` (Claude Code format), as a config layer.
-fn mcp_json_layer(project_dir: &Path) -> Result<Option<toml::Table>> {
-    let path = project_dir.join(".mcp.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Ok(None);
-    };
-    let servers = ruck_harness_mcp::parse_mcp_json(&text)
-        .with_context(|| format!("parsing {}", path.display()))?;
-    let mut t = toml::Table::new();
-    t.insert(
-        "mcp_servers".into(),
-        toml::Value::try_from(servers).context("converting .mcp.json servers")?,
-    );
-    Ok(Some(t))
-}
-
-fn from_tables(layers: Vec<toml::Table>) -> Result<Config> {
-    let mut merged = parse_table(DEFAULTS, "built-in defaults")?;
-    for mut l in layers {
-        merge_mcp_servers(&mut merged, &mut l);
-        merge(&mut merged, l);
-    }
-    let mut cfg: Config = toml::Value::Table(merged)
-        .try_into()
-        .context("invalid configuration")?;
-    for (name, p) in cfg.profiles.iter_mut() {
-        p.name = name.clone();
-    }
-    for p in cfg.profiles.values() {
-        if p.pricing
-            .iter()
-            .chain(p.model_pricing.values())
-            .any(|x| !x.valid())
-        {
-            bail!(
-                "profile `{}`: pricing rates must be non-negative numbers",
-                p.name
-            );
-        }
-    }
-    for p in cfg.profiles.values() {
-        if let Some(t) = p.temperature {
-            if !(0.0..=2.0).contains(&t) {
-                bail!(
-                    "profile `{}`: temperature must be between 0.0 and 2.0 (got {t})",
-                    p.name
-                );
-            }
-        }
-        if let Some(t) = p.top_p {
-            if !(0.0..=1.0).contains(&t) {
-                bail!(
-                    "profile `{}`: top_p must be between 0.0 and 1.0 (got {t})",
-                    p.name
-                );
-            }
-        }
-    }
-    if !cfg.profiles.contains_key(&cfg.default_profile) {
-        bail!("default_profile `{}` is not defined", cfg.default_profile);
-    }
-    Ok(cfg)
+    harness::resolve_api_key(&RUCKCODE, profile, user_dir)
 }
 
 impl Config {
+    /// Deserialise a merged config table (see [`ConfigLoader::load_table`]): the harness sections,
+    /// then the product's, then validation.
+    pub fn from_table(table: toml::Table) -> Result<Self> {
+        let harness = HarnessConfig::deserialize_table(&table)?;
+        let p: ProductSections = toml::Value::Table(table)
+            .try_into()
+            .context("invalid configuration")?;
+        harness.validate()?;
+        Ok(Self {
+            harness,
+            check_updates: p.check_updates,
+            update: p.update,
+            mise: p.mise,
+        })
+    }
+
     /// Parse a single TOML document on top of the built-in defaults.
     pub fn from_toml_str(text: &str) -> Result<Self> {
-        from_tables(vec![parse_table(text, "config")?])
+        Self::from_table(ConfigLoader::table_from_str(text)?)
     }
 
     /// Load user then project config; `RUCKCODE_PROFILE` overrides `default_profile`.
     pub fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
-        let mut layers = Vec::new();
-        let read = |path: PathBuf| -> Result<Option<toml::Table>> {
-            match std::fs::read_to_string(&path) {
-                Ok(text) => Ok(Some(parse_table(&text, &path.display().to_string())?)),
-                Err(_) => Ok(None),
-            }
-        };
-        if let Some(p) = user_config_dir(user_dir).map(|d| d.join("config.toml")) {
-            layers.extend(read(p)?);
-        }
-        // `.mcp.json` sits between user config and project config.toml.
-        layers.extend(mcp_json_layer(project_dir)?);
-        if let Some(mut t) = read(project_dir.join(".ruckcode/config.toml"))? {
-            // A project is writable by sandboxed commands, so nothing in its working tree may
-            // shape the sandbox: project `[sandbox]` settings are only honoured as committed on
-            // the remote (see `project_policy`), never from this file.
-            if t.remove("sandbox").is_some() {
-                tracing::debug!(
-                    "ignoring [sandbox] in the project config.toml (only the verified remote copy is honoured)"
-                );
-            }
-            // Likewise `[web]`: private-address access and search endpoints and keys are the
-            // user's call. A project may only switch the web tools off (or on).
-            if let Some(toml::Value::Table(w)) = t.get_mut("web") {
-                w.retain(|k, _| k == "enabled");
-            }
-            layers.push(t);
-        }
-        if let Ok(p) = std::env::var("RUCKCODE_PROFILE") {
-            if !p.is_empty() {
-                let mut t = toml::Table::new();
-                t.insert("default_profile".into(), toml::Value::String(p));
-                layers.push(t);
-            }
-        }
-        from_tables(layers)
+        Self::from_table(ConfigLoader::new(RUCKCODE).load_table(project_dir, user_dir)?)
     }
 
     /// The `[web]` settings with named search keys (`api_key_name`) read from `credentials.toml`.
     pub fn web_resolved(&self, user_dir: Option<&Path>) -> ruck_harness_web::WebConfig {
-        let mut w = self.web.clone();
-        w.search.resolve_named_keys(|n| named_key(user_dir, n));
-        w
-    }
-
-    pub fn profile(&self, name: &str) -> Result<&Profile> {
-        self.profiles
-            .get(name)
-            .with_context(|| format!("unknown profile `{name}`"))
+        self.harness.web_resolved(&RUCKCODE, user_dir)
     }
 }
 
@@ -583,9 +232,10 @@ pub fn make_provider_with(profile: &Profile, user_dir: Option<&Path>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::permissions::Permission;
 
     fn cfg(text: &str) -> Result<Config> {
-        from_tables(vec![parse_table(text, "test")?])
+        Config::from_toml_str(text)
     }
 
     #[test]

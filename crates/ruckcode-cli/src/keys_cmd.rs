@@ -196,6 +196,7 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
                 None => {
                     ruckcode_core::Config::load(&project, None)
                         .context("loading config")?
+                        .harness
                         .default_profile
                 }
             };

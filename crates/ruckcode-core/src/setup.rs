@@ -263,7 +263,8 @@ pub fn configured_profiles(project: &Path, user_dir: Option<&Path>) -> Vec<Profi
             }
         }
     }
-    cfg.profiles
+    cfg.harness
+        .profiles
         .into_values()
         .filter(|p| names.contains(&p.name))
         .collect()
