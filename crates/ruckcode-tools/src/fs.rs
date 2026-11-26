@@ -121,7 +121,7 @@ impl Tool for Write {
             return Ok(ToolOutput::error(format!(
                 "{}: {}",
                 path.display(),
-                crate::PROTECTED_WRITE_MSG
+                crate::protected_write_msg(&ctx.identity)
             )));
         }
         let content = str_arg(&input, "content")?.to_string();
@@ -190,7 +190,7 @@ impl Tool for Edit {
             return Ok(ToolOutput::error(format!(
                 "{}: {}",
                 path.display(),
-                crate::PROTECTED_WRITE_MSG
+                crate::protected_write_msg(&ctx.identity)
             )));
         }
         let old_string = str_arg(&input, "old_string")?;

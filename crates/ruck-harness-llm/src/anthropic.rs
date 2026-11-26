@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use futures::StreamExt;
+use ruck_harness_ident::AppIdentity;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -17,11 +18,15 @@ pub struct Anthropic {
 }
 
 impl Anthropic {
-    pub fn new(api_key: impl Into<String>, base_url: Option<String>) -> Self {
+    pub fn new(
+        api_key: impl Into<String>,
+        base_url: Option<String>,
+        identity: &AppIdentity,
+    ) -> Self {
         Self {
             api_key: api_key.into(),
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".into()),
-            client: http_client(),
+            client: http_client(identity),
         }
     }
 }

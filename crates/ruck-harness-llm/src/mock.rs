@@ -28,12 +28,14 @@
 //! A tool is only called when the request offers it; otherwise the reply is text saying so.
 //! After tool results arrive the model summarizes them ("You chose: ...",
 //! "Tool `X` returned: ...", "Tool failed: ...") and ends the turn.
-//! `RUCKCODE_MOCK_DELAY_MS` (default 0) delays each streamed chunk.
+//! `<PREFIX>_MOCK_DELAY_MS` (default 0; `RUCKCODE_MOCK_DELAY_MS` for ruckcode) delays each streamed
+//! chunk. It is only read once the provider knows its product ([`MockProvider::with_identity`]).
 
 use crate::{
     ContentBlock, Message, Provider, Request, Response, Role, StopReason, StreamEvent, Usage,
 };
 use async_trait::async_trait;
+use ruck_harness_ident::AppIdentity;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,6 +59,8 @@ pub struct MockProvider {
     limited: Mutex<std::collections::HashSet<String>>,
     demo: bool,
     counter: AtomicU64,
+    /// The product the demo model speaks for; none for a bare mock.
+    identity: Option<AppIdentity>,
 }
 
 impl MockProvider {
@@ -65,6 +69,12 @@ impl MockProvider {
             responses: Mutex::new(responses.into_iter().collect()),
             ..Default::default()
         }
+    }
+
+    /// Name the product in the help text and read its `<PREFIX>_MOCK_DELAY_MS`.
+    pub fn with_identity(mut self, identity: AppIdentity) -> Self {
+        self.identity = Some(identity);
+        self
     }
 
     /// Deterministic demo model; see the module docs for the command syntax.
@@ -159,7 +169,7 @@ impl MockProvider {
 
     fn demo_reply(&self, request: &Request) -> Message {
         let Some(last) = request.messages.iter().rev().find(|m| m.role == Role::User) else {
-            return Message::assistant_text(help_text(""));
+            return Message::assistant_text(help_text("", self.identity.as_ref()));
         };
         let results: Vec<&ContentBlock> = last
             .content
@@ -245,7 +255,7 @@ impl MockProvider {
                     Err(e) => Message::assistant_text(format!("invalid JSON for `{name}`: {e}")),
                 }
             }
-            _ => Message::assistant_text(help_text(trimmed)),
+            _ => Message::assistant_text(help_text(trimmed, self.identity.as_ref())),
         }
     }
 }
@@ -281,7 +291,7 @@ fn ask_input() -> Value {
     ]})
 }
 
-fn help_text(prompt: &str) -> String {
+fn help_text(prompt: &str, identity: Option<&AppIdentity>) -> String {
     let mut s = String::new();
     if !prompt.is_empty() {
         s.push_str(&format!(
@@ -290,8 +300,12 @@ fn help_text(prompt: &str) -> String {
 "
         ));
     }
+    match identity {
+        Some(i) => s.push_str(&format!("I am the {} mock model.", i.name)),
+        None => s.push_str("I am the mock model."),
+    }
     s.push_str(
-        "I am the ruckcode mock model. Try one of these commands:\n\
+        " Try one of these commands:\n\
          - mock:ask (or \"ask me\"): ask you two questions\n\
          - mock:write <path> <text>: write a file (permission prompt)\n\
          - mock:edit <path> <old> => <new>: edit a file\n\
@@ -343,9 +357,12 @@ fn chunks(text: &str) -> Vec<String> {
     chars.chunks(size).map(|c| c.iter().collect()).collect()
 }
 
-fn delay() -> Duration {
+fn delay(identity: Option<&AppIdentity>) -> Duration {
+    let Some(identity) = identity else {
+        return Duration::ZERO;
+    };
     Duration::from_millis(
-        std::env::var("RUCKCODE_MOCK_DELAY_MS")
+        std::env::var(identity.env_var("MOCK_DELAY_MS"))
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
@@ -378,7 +395,7 @@ impl Provider for MockProvider {
         });
         assert_eq!(message.role, Role::Assistant);
         if self.demo {
-            let d = delay();
+            let d = delay(self.identity.as_ref());
             for b in &message.content {
                 match b {
                     ContentBlock::Thinking { thinking, .. } => {
@@ -643,5 +660,34 @@ mod tests {
             .collect();
         assert!(deltas.len() >= 3);
         assert_eq!(deltas.concat(), text);
+    }
+
+    #[test]
+    fn help_text_names_the_product() {
+        use ruck_harness_ident::testing::{ACME, RUCKCODE};
+        let head = |id: Option<&AppIdentity>| help_text("", id).lines().next().unwrap().to_string();
+        assert_eq!(
+            head(Some(&RUCKCODE)),
+            "I am the ruckcode mock model. Try one of these commands:"
+        );
+        assert_eq!(
+            head(Some(&ACME)),
+            "I am the acme mock model. Try one of these commands:"
+        );
+        assert_eq!(
+            head(None),
+            "I am the mock model. Try one of these commands:"
+        );
+    }
+
+    #[test]
+    fn delay_reads_the_identitys_variable() {
+        use ruck_harness_ident::testing::{ACME, RUCKCODE};
+        // Safe: variables only these assertions read.
+        std::env::set_var("RUCKCODE_MOCK_DELAY_MS", "3");
+        std::env::set_var("ACME_MOCK_DELAY_MS", "7");
+        assert_eq!(delay(Some(&RUCKCODE)), Duration::from_millis(3));
+        assert_eq!(delay(Some(&ACME)), Duration::from_millis(7));
+        assert_eq!(delay(None), Duration::ZERO);
     }
 }

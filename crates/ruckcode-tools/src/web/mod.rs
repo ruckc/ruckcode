@@ -20,14 +20,6 @@ pub use search::WebSearch;
 pub const WEB_FETCH: &str = "WebFetch";
 pub const WEB_SEARCH: &str = "WebSearch";
 
-/// The `User-Agent` of every request: identifies ruckcode, carries nothing personal.
-pub fn user_agent() -> String {
-    format!(
-        "ruckcode/{} (+https://github.com/ruckc/ruckcode)",
-        env!("CARGO_PKG_VERSION")
-    )
-}
-
 /// Truncate to at most `max` characters on a char boundary. Returns the text and the total
 /// number of characters when it was cut.
 pub(crate) fn truncate_chars(s: &str, max: usize) -> (String, Option<usize>) {

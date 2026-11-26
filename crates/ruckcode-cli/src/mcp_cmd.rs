@@ -14,7 +14,12 @@ pub async fn list(cli: &Cli) -> Result<()> {
         println!("no MCP servers configured in {}", cwd.display());
         return Ok(());
     }
-    let manager = McpManager::start(config.mcp_servers.clone(), &cwd).await;
+    let manager = McpManager::start(
+        config.mcp_servers.clone(),
+        &cwd,
+        &ruckcode_core::identity::RUCKCODE,
+    )
+    .await;
     for s in manager.server_statuses() {
         match &s.result {
             Ok(n) => {

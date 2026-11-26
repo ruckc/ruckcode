@@ -199,7 +199,8 @@ impl WebFetch {
             Ok(u) => u,
             Err(e) => return ToolOutput::error(format!("invalid URL `{raw}`: {e}")),
         };
-        let client = match net::client(&self.policy, CONNECT_TIMEOUT, TOTAL_TIMEOUT) {
+        let client = match net::client(&self.policy, &ctx.identity, CONNECT_TIMEOUT, TOTAL_TIMEOUT)
+        {
             Ok(c) => c,
             Err(e) => return ToolOutput::error(e),
         };

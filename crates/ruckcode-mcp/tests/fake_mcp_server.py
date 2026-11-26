@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tiny MCP stdio server for tests: initialize, tools/list (paginated), tools/call."""
 import json
+import os
 import sys
 import time
 
@@ -54,6 +55,10 @@ for line in sys.stdin:
     if mid is None:
         continue  # notification
     if method == "initialize":
+        log = os.environ.get("FAKE_MCP_CLIENT_INFO_FILE")
+        if log:
+            with open(log, "w") as f:
+                json.dump(msg["params"].get("clientInfo"), f)
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": msg["params"]["protocolVersion"],
             "capabilities": {"tools": {}},

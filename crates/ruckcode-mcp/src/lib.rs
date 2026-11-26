@@ -8,6 +8,7 @@ use rmcp::service::RunningService;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{RoleClient, ServiceExt};
+use ruck_harness_ident::AppIdentity;
 use ruckcode_tools::{truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -193,7 +194,7 @@ impl McpTool {
         };
         let v = serde_json::to_value(&res)?;
         let text = render_result(&v);
-        let text = truncate_middle(&text, MAX_OUTPUT);
+        let text = truncate_middle(&text, MAX_OUTPUT, &ctx.identity);
         if v["isError"].as_bool() == Some(true) {
             Ok(ToolOutput::error(text))
         } else {
@@ -315,7 +316,7 @@ impl Tool for McpListTools {
         vec![]
     }
 
-    async fn call(&self, input: Value, _: &ToolContext) -> anyhow::Result<ToolOutput> {
+    async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput> {
         let server = input.get("server").and_then(Value::as_str);
         let lines: Vec<String> = self
             .tools
@@ -336,6 +337,7 @@ impl Tool for McpListTools {
         Ok(ToolOutput::ok(truncate_middle(
             &lines.join("\n"),
             MAX_OUTPUT,
+            &ctx.identity,
         )))
     }
 }
@@ -418,11 +420,16 @@ fn tail(buf: &Mutex<Vec<String>>) -> String {
     buf.lock().unwrap().join("\n")
 }
 
-async fn connect(name: &str, cfg: &McpServerConfig, cwd: &Path) -> Result<Connected, String> {
+async fn connect(
+    name: &str,
+    cfg: &McpServerConfig,
+    cwd: &Path,
+    identity: &AppIdentity,
+) -> Result<Connected, String> {
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::default();
     let info = ClientConfig::new(
         ClientCapabilities::default(),
-        Implementation::new("ruckcode", env!("CARGO_PKG_VERSION")),
+        Implementation::new(identity.name, env!("CARGO_PKG_VERSION")),
     );
     let client = match cfg.transport()? {
         TransportKind::Stdio => {
@@ -499,9 +506,15 @@ async fn connect(name: &str, cfg: &McpServerConfig, cwd: &Path) -> Result<Connec
 impl McpManager {
     /// Connect to all servers concurrently (30s timeout each). Failures are logged and recorded
     /// in [`statuses`](Self::statuses), never fatal.
-    pub async fn start(configs: BTreeMap<String, McpServerConfig>, cwd: &Path) -> McpManager {
+    pub async fn start(
+        configs: BTreeMap<String, McpServerConfig>,
+        cwd: &Path,
+        identity: &AppIdentity,
+    ) -> McpManager {
         let futs = configs.iter().map(|(name, cfg)| async move {
-            let r = match tokio::time::timeout(CONNECT_TIMEOUT, connect(name, cfg, cwd)).await {
+            let r = match tokio::time::timeout(CONNECT_TIMEOUT, connect(name, cfg, cwd, identity))
+                .await
+            {
                 Ok(r) => r,
                 Err(_) => Err(format!(
                     "timed out after {}s connecting",

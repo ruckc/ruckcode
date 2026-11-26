@@ -1,0 +1,10 @@
+[package]
+name = "ruck-harness-ident"
+description = "The product identity (name, env prefix, directories, user agent) every ruck-harness crate is parameterized by"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# `AppIdentity` fixtures for the tests of the crates that consume the identity.
+testing = []

@@ -11,12 +11,13 @@ pub mod web;
 pub use ask::{Answer, AskUserQuestion, Question, QuestionOption};
 pub use bash::Bash;
 pub use fs::{Edit, Read, Write};
-pub use sandboxed::{launch, Launch, SandboxHandle, PROTECTED_WRITE_MSG};
+pub use sandboxed::{launch, protected_write_msg, Launch, SandboxHandle};
 pub use search::{Glob, Grep};
 pub use todo::{TodoItem, TodoStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
 pub use web::{WebConfig, WebFetch, WebSearch};
 
 use async_trait::async_trait;
+use ruck_harness_ident::AppIdentity;
 use ruck_harness_llm::ToolSpec;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -116,6 +117,8 @@ pub struct ToolContext {
     pub tool_call_id: String,
     /// Set when commands run under the sandbox.
     pub sandbox: Option<SandboxHandle>,
+    /// The product the tools run for (names it in the messages they return).
+    pub identity: AppIdentity,
 }
 
 impl ToolContext {
@@ -196,7 +199,7 @@ pub(crate) fn str_arg<'a>(input: &'a Value, key: &str) -> anyhow::Result<&'a str
 }
 
 /// Truncate long output, keeping the head and tail, with a marker naming what was cut.
-pub fn truncate_middle(s: &str, max: usize) -> String {
+pub fn truncate_middle(s: &str, max: usize, identity: &AppIdentity) -> String {
     if s.len() <= max {
         return s.to_string();
     }
@@ -211,11 +214,12 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
     }
     let cut = &s[head_end..tail_start];
     format!(
-        "{}\n\n[... {} lines ({} bytes) truncated by ruckcode; re-run with a narrower command \
+        "{}\n\n[... {} lines ({} bytes) truncated by {}; re-run with a narrower command \
          or read a range ...]\n\n{}",
         &s[..head_end],
         cut.matches('\n').count() + 1,
         cut.len(),
+        identity.name,
         &s[tail_start..]
     )
 }
@@ -241,6 +245,7 @@ pub(crate) mod test_util {
             cancel: CancellationToken::new(),
             tool_call_id: String::new(),
             sandbox: None,
+            identity: ruck_harness_ident::testing::RUCKCODE,
         }
     }
 }
@@ -269,5 +274,35 @@ mod web_registration_tests {
         assert_eq!(fetch.kind(), ToolKind::Fetch);
         assert!(fetch.kind().is_read_only());
         assert_eq!(fetch.input_schema()["required"][0], "url");
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use ruck_harness_ident::testing::{ACME, RUCKCODE};
+
+    #[test]
+    fn truncation_marker_names_the_product() {
+        let long = format!("{}\n{}", "a".repeat(40), "b".repeat(40));
+        let cut = |id| truncate_middle(&long, 20, &id);
+        assert_eq!(
+            cut(RUCKCODE),
+            "aaaaaaaaaa\n\n[... 2 lines (61 bytes) truncated by ruckcode; re-run with a narrower command or read a range ...]\n\nbbbbbbbbbb"
+        );
+        assert!(cut(ACME).contains("truncated by acme; re-run"));
+        assert_eq!(truncate_middle("short", 20, &ACME), "short");
+    }
+
+    #[test]
+    fn protected_write_message_names_the_products_paths() {
+        assert_eq!(
+            protected_write_msg(&RUCKCODE),
+            "refused: this path is ruckcode's own configuration (.ruckcode/, .mcp.json or the user config directory) or protected git state (.git/config, .git/hooks/, .git/info/, remote-tracking refs). The sandbox policy can only be changed by the user."
+        );
+        assert_eq!(
+            protected_write_msg(&ACME),
+            "refused: this path is acme's own configuration (.acme/, .acme-tools.json or the user config directory) or protected git state (.git/config, .git/hooks/, .git/info/, remote-tracking refs). The sandbox policy can only be changed by the user."
+        );
     }
 }

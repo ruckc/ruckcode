@@ -1,6 +1,7 @@
 //! The concrete policy handed to the launcher (as JSON over an inherited fd) and its builder.
 
 use crate::config::{NetworkMode, SandboxConfig, DEFAULT_DENY_READ};
+use ruck_harness_ident::AppIdentity;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
@@ -58,8 +59,10 @@ pub struct BuildInput<'a> {
     pub cfg: &'a SandboxConfig,
     pub cwd: &'a Path,
     pub project_root: &'a Path,
+    /// The product whose config the policy protects.
+    pub identity: AppIdentity,
     pub home: Option<PathBuf>,
-    /// ruckcode's user config directory (its `credentials.toml` is never readable).
+    /// The product's user config directory (its `credentials.toml` is never readable).
     pub config_dir: Option<PathBuf>,
     pub layers: Layers,
     pub proxy_port: Option<u16>,
@@ -533,7 +536,7 @@ fn build_policy_with(i: &BuildInput, report: &[PathStatus]) -> Policy {
 
     // Config the model must not be able to rewrite.
     let mut protected_ro = Vec::new();
-    for rel in [".ruckcode", ".mcp.json"] {
+    for rel in i.identity.protected_project_paths() {
         let p = project.join(rel);
         if p.exists() {
             protected_ro.push(p);
@@ -606,6 +609,7 @@ mod tests {
             cfg,
             cwd,
             project_root: cwd,
+            identity: ruck_harness_ident::testing::RUCKCODE,
             home: Some(home.to_path_buf()),
             config_dir: None,
             layers: Layers::default(),
@@ -829,5 +833,65 @@ mod tests {
         let r = path_report(&cfg, Some(home.path()), proj.path(), false);
         assert_eq!(r[0].state, PathState::Missing);
         assert!(!home.path().join(".npm").exists());
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use ruck_harness_ident::testing::{ACME, RUCKCODE};
+
+    fn protected(id: AppIdentity, dirs: &[&str], files: &[&str]) -> Vec<PathBuf> {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        for d in dirs {
+            std::fs::create_dir_all(proj.path().join(d)).unwrap();
+        }
+        for f in files {
+            std::fs::write(proj.path().join(f), "{}").unwrap();
+        }
+        let cfg = SandboxConfig::default();
+        let p = build_policy(&BuildInput {
+            cfg: &cfg,
+            cwd: proj.path(),
+            project_root: proj.path(),
+            identity: id,
+            home: Some(home.path().to_path_buf()),
+            config_dir: None,
+            layers: Layers::default(),
+            proxy_port: None,
+            proxy_socket: None,
+            stage_dir: None,
+            private_tmp: None,
+        });
+        let root = canon(proj.path());
+        p.protected_ro
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
+            .collect()
+    }
+
+    #[test]
+    fn ruckcode_protects_dot_ruckcode_and_mcp_json() {
+        assert_eq!(
+            protected(
+                RUCKCODE,
+                &[".ruckcode", ".acme"],
+                &[".mcp.json", ".acme-tools.json"]
+            ),
+            [PathBuf::from(".ruckcode"), PathBuf::from(".mcp.json")]
+        );
+    }
+
+    #[test]
+    fn another_identity_protects_its_own_paths() {
+        assert_eq!(
+            protected(
+                ACME,
+                &[".ruckcode", ".acme"],
+                &[".mcp.json", ".acme-tools.json"]
+            ),
+            [PathBuf::from(".acme"), PathBuf::from(".acme-tools.json")]
+        );
     }
 }

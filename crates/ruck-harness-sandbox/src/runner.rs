@@ -5,6 +5,7 @@ use crate::config::{NetworkMode, SandboxConfig};
 use crate::policy::{build_policy_report, BuildInput, PathStatus, Policy};
 use crate::proxy::{self, DomainPrompter, DomainStore, Gate, Proxy};
 use crate::spawn::{launcher_command, Fd, LauncherExe};
+use ruck_harness_ident::AppIdentity;
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
@@ -13,10 +14,12 @@ use std::sync::Arc;
 
 pub struct SandboxOptions {
     pub project_root: PathBuf,
+    /// The product whose configuration the sandbox protects and whose name its messages use.
+    pub identity: AppIdentity,
     pub exe: LauncherExe,
     pub prompter: Option<Arc<dyn DomainPrompter>>,
     pub store: Option<DomainStore>,
-    /// ruckcode's user config dir (its credentials are never readable).
+    /// The product's user config dir (its credentials are never readable).
     pub config_dir: Option<PathBuf>,
     /// Home directory override (default: the user's home).
     pub home: Option<PathBuf>,
@@ -33,6 +36,7 @@ pub struct Sandbox {
     stage: Option<PathBuf>,
     stage_error: Option<String>,
     project_root: PathBuf,
+    identity: AppIdentity,
     config_dir: Option<PathBuf>,
     home: Option<PathBuf>,
     warned: AtomicBool,
@@ -58,6 +62,7 @@ pub struct Prepared {
     gate: Arc<Gate>,
     cfg: SandboxConfig,
     layers_note: String,
+    identity: AppIdentity,
     roots: Vec<PathBuf>,
     /// Path notes not yet shown this session (created cache dirs, missing write paths).
     fresh_notes: Vec<String>,
@@ -80,7 +85,7 @@ impl Prepared {
         c
     }
 
-    /// After the command finished: restore tampered ruckcode config and explain any blocking.
+    /// After the command finished: restore tampered product config and explain any blocking.
     pub fn finish(&self, output: &str, success: bool) -> String {
         let mut notes: Vec<String> = self.fresh_notes.clone();
         if !success {
@@ -92,8 +97,10 @@ impl Prepared {
         }
         for p in self.snapshot.restore() {
             notes.push(format!(
-                "[sandbox] The command modified ruckcode configuration ({}); the change was reverted. Sandboxed commands cannot change ruckcode's config or modes.",
-                p.display()
+                "[sandbox] The command modified {} configuration ({}); the change was reverted. Sandboxed commands cannot change {}'s config or modes.",
+                self.identity.name,
+                p.display(),
+                self.identity.name
             ));
         }
         for p in self.snapshot.restore_git() {
@@ -115,6 +122,7 @@ impl Prepared {
                 &self.cfg,
                 &self.layers_note,
                 &self.roots,
+                &self.identity,
             ));
             if denied.is_empty() && self.cfg.network == NetworkMode::Off && network_failure(output)
             {
@@ -144,6 +152,7 @@ fn fs_denial_note(
     cfg: &SandboxConfig,
     layers: &str,
     roots: &[PathBuf],
+    identity: &AppIdentity,
 ) -> Option<String> {
     use std::sync::OnceLock;
     static KW: OnceLock<regex::Regex> = OnceLock::new();
@@ -203,12 +212,13 @@ fn fs_denial_note(
         format!("access to {}", other.join(", "))
     };
     Some(format!(
-        "[sandbox] The command failed and the sandbox may have blocked {what}. Sandboxed commands can read most of the system but write only to the project directory, temp directories and tool caches ({} cache dirs configured); secrets such as ~/.ssh are unreadable; ruckcode's own config is read-only ({layers}). Do not try to work around the sandbox. If access is genuinely needed, tell the user they can widen the policy with `sandbox.extra_write_paths`, `sandbox.extra_read_paths` or `sandbox.deny_read_paths` in config.toml, or per mode under `[modes.<id>.sandbox]` in modes.toml.",
-        cfg.cache_paths.len()
+        "[sandbox] The command failed and the sandbox may have blocked {what}. Sandboxed commands can read most of the system but write only to the project directory, temp directories and tool caches ({} cache dirs configured); secrets such as ~/.ssh are unreadable; {}'s own config is read-only ({layers}). Do not try to work around the sandbox. If access is genuinely needed, tell the user they can widen the policy with `sandbox.extra_write_paths`, `sandbox.extra_read_paths` or `sandbox.deny_read_paths` in config.toml, or per mode under `[modes.<id>.sandbox]` in modes.toml.",
+        cfg.cache_paths.len(),
+        identity.name
     ))
 }
 
-/// Contents of ruckcode's own config files (and the protected parts of `.git`) before a command
+/// Contents of the product's own config files (and the protected parts of `.git`) before a command
 /// ran.
 struct ConfigSnapshot {
     files: Vec<(PathBuf, Option<Vec<u8>>)>,
@@ -216,12 +226,15 @@ struct ConfigSnapshot {
 }
 
 impl ConfigSnapshot {
-    fn take(project: &Path, config_dir: Option<&Path>) -> Self {
-        let mut paths = vec![
-            project.join(".ruckcode/config.toml"),
-            project.join(".ruckcode/modes.toml"),
-            project.join(".mcp.json"),
-        ];
+    fn take(project: &Path, config_dir: Option<&Path>, identity: &AppIdentity) -> Self {
+        let dir = identity.project_path(project);
+        let mut paths = vec![dir.join("config.toml"), dir.join("modes.toml")];
+        paths.extend(
+            identity
+                .extra_protected_project_paths
+                .iter()
+                .map(|p| project.join(p)),
+        );
         if let Some(d) = config_dir {
             paths.push(d.join("config.toml"));
             paths.push(d.join("modes.toml"));
@@ -360,6 +373,7 @@ impl Sandbox {
         let caps = opts.caps.clone().unwrap_or_else(|| caps::detect(&opts.exe));
         let SandboxOptions {
             project_root,
+            identity,
             exe,
             prompter,
             store,
@@ -386,14 +400,26 @@ impl Sandbox {
             }
             Ok(d)
         });
-        Self::with_stage(exe, caps, gate, project_root, config_dir, home, stage).await
+        Self::with_stage(
+            exe,
+            caps,
+            gate,
+            project_root,
+            identity,
+            config_dir,
+            home,
+            stage,
+        )
+        .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn with_stage(
         exe: LauncherExe,
         caps: Capabilities,
         gate: Arc<Gate>,
         project_root: PathBuf,
+        identity: AppIdentity,
         config_dir: Option<PathBuf>,
         home: Option<PathBuf>,
         stage: Result<PathBuf, String>,
@@ -406,13 +432,15 @@ impl Sandbox {
             }
         };
         let proxy = match &stage {
-            Some(st) => match proxy::start(gate.clone(), Some(st.join("proxy.sock"))).await {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    tracing::warn!("sandbox proxy failed to start: {e}");
-                    None
+            Some(st) => {
+                match proxy::start(gate.clone(), Some(st.join("proxy.sock")), &identity).await {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        tracing::warn!("sandbox proxy failed to start: {e}");
+                        None
+                    }
                 }
-            },
+            }
             None => None,
         };
         Arc::new(Self {
@@ -423,6 +451,7 @@ impl Sandbox {
             stage,
             stage_error,
             project_root,
+            identity,
             config_dir,
             home,
             warned: AtomicBool::new(false),
@@ -435,11 +464,11 @@ impl Sandbox {
     }
 
     pub fn plan(&self, cfg: &SandboxConfig) -> Plan {
-        caps::plan(&self.caps, cfg)
+        caps::plan(&self.caps, cfg, &self.identity)
     }
 
     pub fn report(&self, cfg: &SandboxConfig) -> String {
-        caps::report(&self.caps, cfg)
+        caps::report(&self.caps, cfg, &self.identity)
     }
 
     /// Domains the proxy allows without asking (from the effective config).
@@ -478,6 +507,7 @@ impl Sandbox {
             cfg,
             cwd,
             project_root: &self.project_root,
+            identity: self.identity,
             home: self.home.clone().or_else(dirs::home_dir),
             config_dir: self.config_dir.clone(),
             layers: plan.layers,
@@ -573,10 +603,15 @@ impl Sandbox {
             command: tokio::process::Command::from(std_cmd),
             fds,
             notice,
-            snapshot: ConfigSnapshot::take(&self.project_root, self.config_dir.as_deref()),
+            snapshot: ConfigSnapshot::take(
+                &self.project_root,
+                self.config_dir.as_deref(),
+                &self.identity,
+            ),
             gate: self.gate.clone(),
             cfg: cfg.clone(),
             layers_note,
+            identity: self.identity,
             fresh_notes,
             path_problems,
             roots: policy
@@ -601,10 +636,18 @@ mod tests {
             &cfg,
             "enforced by: landlock",
             &[],
+            &ruck_harness_ident::testing::RUCKCODE,
         )
         .unwrap();
         assert!(n.contains("/etc/foo") && n.contains("extra_write_paths"));
-        assert!(fs_denial_note("all fine", &cfg, "", &[]).is_none());
+        assert!(fs_denial_note(
+            "all fine",
+            &cfg,
+            "",
+            &[],
+            &ruck_harness_ident::testing::RUCKCODE
+        )
+        .is_none());
     }
 
     #[test]
@@ -631,7 +674,9 @@ mod tests {
     #[tokio::test]
     async fn proxy_listens_on_ipv4_loopback() {
         let gate = Arc::new(Gate::new(None, None));
-        let p = proxy::start(gate, None).await.unwrap();
+        let p = proxy::start(gate, None, &ruck_harness_ident::testing::RUCKCODE)
+            .await
+            .unwrap();
         // The port in the Seatbelt rule and in HTTP_PROXY is reachable at exactly 127.0.0.1.
         assert!(tokio::net::TcpStream::connect(("127.0.0.1", p.port))
             .await
@@ -644,7 +689,7 @@ mod tests {
         std::fs::create_dir_all(d.path().join(".ruckcode")).unwrap();
         let m = d.path().join(".ruckcode/modes.toml");
         std::fs::write(&m, "orig").unwrap();
-        let snap = ConfigSnapshot::take(d.path(), None);
+        let snap = ConfigSnapshot::take(d.path(), None, &ruck_harness_ident::testing::RUCKCODE);
         std::fs::write(&m, "evil").unwrap();
         std::fs::write(d.path().join(".ruckcode/config.toml"), "[sandbox]").unwrap();
         let ch = snap.restore();
@@ -713,6 +758,7 @@ mod tests {
             caps,
             Arc::new(Gate::new(None, None)),
             std::env::temp_dir(),
+            ruck_harness_ident::testing::RUCKCODE,
             None,
             None,
             establish_stage(|| Err(std::io::Error::other("boom"))),
@@ -723,6 +769,105 @@ mod tests {
         match r {
             Err(m) => assert!(m.contains("boom") && m.contains("not run"), "{m}"),
             Ok(_) => panic!("ran without a secure stage dir"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use ruck_harness_ident::testing::{ACME, RUCKCODE};
+
+    #[test]
+    fn denial_note_names_the_product() {
+        let note = |id| {
+            fs_denial_note(
+                "touch: cannot touch '/etc/foo': Permission denied",
+                &SandboxConfig::default(),
+                "enforced by: landlock",
+                &[],
+                &id,
+            )
+            .unwrap()
+        };
+        assert!(note(RUCKCODE).contains(
+            "secrets such as ~/.ssh are unreadable; ruckcode's own config is read-only (enforced by: landlock)."
+        ));
+        assert!(note(ACME).contains(
+            "secrets such as ~/.ssh are unreadable; acme's own config is read-only (enforced by: landlock)."
+        ));
+    }
+
+    fn snapshot_paths(id: AppIdentity) -> Vec<String> {
+        let d = tempfile::tempdir().unwrap();
+        let cfg_dir = tempfile::tempdir().unwrap();
+        ConfigSnapshot::take(d.path(), Some(cfg_dir.path()), &id)
+            .files
+            .into_iter()
+            .map(|(p, _)| {
+                p.strip_prefix(d.path())
+                    .or_else(|_| p.strip_prefix(cfg_dir.path()))
+                    .unwrap()
+                    .display()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn snapshot_covers_the_identitys_config_files() {
+        assert_eq!(
+            snapshot_paths(RUCKCODE),
+            [
+                ".ruckcode/config.toml",
+                ".ruckcode/modes.toml",
+                ".mcp.json",
+                "config.toml",
+                "modes.toml"
+            ]
+        );
+        assert_eq!(
+            snapshot_paths(ACME),
+            [
+                ".acme/config.toml",
+                ".acme/modes.toml",
+                ".acme-tools.json",
+                "config.toml",
+                "modes.toml"
+            ]
+        );
+    }
+
+    #[test]
+    fn restore_message_names_the_product() {
+        for (id, dir) in [(RUCKCODE, ".ruckcode"), (ACME, ".acme")] {
+            let d = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(d.path().join(dir)).unwrap();
+            let m = d.path().join(dir).join("modes.toml");
+            std::fs::write(&m, "orig").unwrap();
+            let snapshot = ConfigSnapshot::take(d.path(), None, &id);
+            std::fs::write(&m, "evil").unwrap();
+            let prepared = Prepared {
+                command: tokio::process::Command::new("true"),
+                fds: vec![],
+                notice: None,
+                snapshot,
+                gate: Arc::new(Gate::new(None, None)),
+                cfg: SandboxConfig::default(),
+                layers_note: String::new(),
+                identity: id,
+                roots: vec![],
+                fresh_notes: vec![],
+                path_problems: vec![],
+            };
+            assert_eq!(
+                prepared.finish("", true),
+                format!(
+                    "[sandbox] The command modified {n} configuration ({p}); the change was reverted. Sandboxed commands cannot change {n}'s config or modes.",
+                    n = id.name,
+                    p = m.display()
+                )
+            );
         }
     }
 }

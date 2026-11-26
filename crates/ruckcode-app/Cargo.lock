@@ -3257,11 +3257,16 @@ dependencies = [
  "anyhow",
  "globset",
  "regex",
+ "ruck-harness-ident",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "ruck-harness-ident"
+version = "0.1.0"
 
 [[package]]
 name = "ruck-harness-llm"
@@ -3272,6 +3277,7 @@ dependencies = [
  "chrono",
  "futures",
  "reqwest",
+ "ruck-harness-ident",
  "serde",
  "serde_json",
  "tokio",
@@ -3288,6 +3294,7 @@ dependencies = [
  "landlock",
  "libc",
  "regex",
+ "ruck-harness-ident",
  "seccompiler",
  "serde",
  "serde_json",
@@ -3346,6 +3353,7 @@ dependencies = [
  "globset",
  "regex",
  "ruck-harness-hooks",
+ "ruck-harness-ident",
  "ruck-harness-llm",
  "ruck-harness-sandbox",
  "ruckcode-mcp",
@@ -3374,6 +3382,7 @@ dependencies = [
  "globset",
  "http",
  "rmcp",
+ "ruck-harness-ident",
  "ruckcode-tools",
  "serde",
  "serde_json",
@@ -3389,6 +3398,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "globset",
+ "ruck-harness-ident",
  "ruckcode-tools",
  "serde",
  "serde_json",
@@ -3410,6 +3420,7 @@ dependencies = [
  "libc",
  "regex",
  "reqwest",
+ "ruck-harness-ident",
  "ruck-harness-llm",
  "ruck-harness-sandbox",
  "serde",

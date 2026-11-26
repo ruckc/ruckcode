@@ -344,8 +344,8 @@ impl WebSearch {
                 .await
                 .map_err(SearchError::Failed)?;
         }
-        let client =
-            net::client(&policy, CONNECT_TIMEOUT, TOTAL_TIMEOUT).map_err(SearchError::Failed)?;
+        let client = net::client(&policy, &ctx.identity, CONNECT_TIMEOUT, TOTAL_TIMEOUT)
+            .map_err(SearchError::Failed)?;
         let mut resp = tokio::select! {
             r = req(&client).send() => r.map_err(|e| SearchError::Failed(format!("request to {} failed: {}", url.host_str().unwrap_or("?"), chain(&e))))?,
             _ = ctx.cancel.cancelled() => return failed("cancelled"),
@@ -876,6 +876,35 @@ mod tests {
             "{}",
             s[0].head
         );
+    }
+
+    #[tokio::test]
+    async fn the_user_agent_names_the_product_of_the_context() {
+        use ruck_harness_ident::testing::{ACME, RUCKCODE};
+        for (id, want) in [
+            (
+                RUCKCODE,
+                format!(
+                    "user-agent: ruckcode/{} (+https://github.com/ruckc/ruckcode)",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            ),
+            (
+                ACME,
+                "user-agent: acme/9.9.9 (+https://example.com/acme)".to_string(),
+            ),
+        ] {
+            let (port, seen) = mock(200, "text/html", DDG_FIXTURE.to_string()).await;
+            let t = tool(&format!(
+                "[search.duckduckgo]\nurl = \"http://127.0.0.1:{port}/html/\""
+            ));
+            let (_d, mut c) = cx();
+            c.identity = id;
+            let out = search(&t, json!({"query": "rust"}), &c).await;
+            assert!(!out.is_error, "{}", out.content);
+            let head = seen.lock().unwrap()[0].head.to_ascii_lowercase();
+            assert!(head.contains(&want), "{head}");
+        }
     }
 
     #[tokio::test]

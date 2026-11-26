@@ -623,7 +623,11 @@ async fn http_429_then_200_succeeds_without_duplicated_content() {
         body: sse(&["hello ", "world"]),
     });
     let env = Env::new("");
-    let agent = env.agent(Arc::new(OpenAi::new(None, Some(server.url.clone()))));
+    let agent = env.agent(Arc::new(OpenAi::new(
+        None,
+        Some(server.url.clone()),
+        &ruckcode_core::identity::RUCKCODE,
+    )));
     let info = agent.new_session(env.cwd(), None).await.unwrap();
     let client = TestClient::new();
     let r = agent
@@ -651,7 +655,11 @@ async fn http_daily_budget_429_ends_rate_limited_then_next_turn_works() {
         body: OWNER_BODY.into(),
     });
     let env = Env::new("");
-    let agent = env.agent(Arc::new(OpenAi::new(None, Some(server.url.clone()))));
+    let agent = env.agent(Arc::new(OpenAi::new(
+        None,
+        Some(server.url.clone()),
+        &ruckcode_core::identity::RUCKCODE,
+    )));
     let info = agent.new_session(env.cwd(), None).await.unwrap();
     let client = TestClient::new();
     let r = agent
@@ -682,7 +690,11 @@ async fn http_daily_budget_429_ends_rate_limited_then_next_turn_works() {
         headers: vec![],
         body: sse(&["back ", "again"]),
     });
-    let agent2 = env.agent(Arc::new(OpenAi::new(None, Some(server.url.clone()))));
+    let agent2 = env.agent(Arc::new(OpenAi::new(
+        None,
+        Some(server.url.clone()),
+        &ruckcode_core::identity::RUCKCODE,
+    )));
     agent2
         .load_session(&info.id, env.cwd(), TestClient::new())
         .await

@@ -200,7 +200,7 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
     let paths =
         ruck_harness_sandbox::path_report(&cfg, dirs::home_dir().as_deref(), &project, false);
     if json {
-        let plan = ruck_harness_sandbox::plan(&caps, &cfg);
+        let plan = ruck_harness_sandbox::plan(&caps, &cfg, &ruckcode_core::identity::RUCKCODE);
         let pol = policy.as_ref().map(|r| {
             serde_json::json!({
                 "status": r.status,
@@ -223,7 +223,10 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
         return Ok(());
     }
     println!("mode: {mode}");
-    print!("{}", ruck_harness_sandbox::report(&caps, &cfg));
+    print!(
+        "{}",
+        ruck_harness_sandbox::report(&caps, &cfg, &ruckcode_core::identity::RUCKCODE)
+    );
     for l in path_lines(&cfg, &paths) {
         println!("{l}");
     }

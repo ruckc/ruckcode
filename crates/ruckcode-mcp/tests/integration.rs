@@ -1,3 +1,4 @@
+use ruck_harness_ident::testing::{ACME, RUCKCODE};
 use ruckcode_mcp::{McpManager, McpServerConfig};
 use ruckcode_tools::{Answer, Question, ToolContext, ToolKind, UserBridge};
 use serde_json::json;
@@ -23,6 +24,7 @@ fn ctx(cancel: CancellationToken) -> ToolContext {
         cancel,
         tool_call_id: String::new(),
         sandbox: None,
+        identity: RUCKCODE,
     }
 }
 
@@ -41,7 +43,12 @@ fn all() -> Vec<String> {
 
 #[tokio::test]
 async fn discovery_naming_and_calls() {
-    let m = McpManager::start(configs(vec![("my srv", fake("0"))]), &std::env::temp_dir()).await;
+    let m = McpManager::start(
+        configs(vec![("my srv", fake("0"))]),
+        &std::env::temp_dir(),
+        &RUCKCODE,
+    )
+    .await;
     assert_eq!(m.statuses(), vec![("my srv".to_string(), Ok(5))]);
     let tools = m.tools_for(&all(), 20);
     let names: Vec<_> = tools.iter().map(|t| t.name().to_string()).collect();
@@ -103,6 +110,7 @@ async fn failing_server_does_not_block_others() {
             ("empty", McpServerConfig::default()),
         ]),
         &std::env::temp_dir(),
+        &RUCKCODE,
     )
     .await;
     let st = m.statuses();
@@ -120,6 +128,7 @@ async fn selection_and_lazy_mode() {
     let m = McpManager::start(
         configs(vec![("a", fake("30")), ("b", fake("0"))]),
         &std::env::temp_dir(),
+        &RUCKCODE,
     )
     .await;
     assert_eq!(m.statuses()[0].1, Ok(35));
@@ -148,4 +157,47 @@ async fn selection_and_lazy_mode() {
     // A selection under the threshold stays eager.
     assert_eq!(m.tools_for(&["mcp__b__*".to_string()], 5).len(), 5);
     assert_eq!(m.tools_for(&["mcp__b__*".to_string()], 4).len(), 2);
+}
+
+#[tokio::test]
+async fn client_info_names_the_product() {
+    for (id, name) in [(RUCKCODE, "ruckcode"), (ACME, "acme")] {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("client.json");
+        let mut cfg = fake("0");
+        cfg.env.insert(
+            "FAKE_MCP_CLIENT_INFO_FILE".into(),
+            file.display().to_string(),
+        );
+        let m = McpManager::start(configs(vec![("s", cfg)]), dir.path(), &id).await;
+        assert_eq!(m.statuses(), vec![("s".to_string(), Ok(5))]);
+        let info: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(info["name"], name);
+        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+    }
+}
+
+#[tokio::test]
+async fn truncation_marker_names_the_product() {
+    // The lazy `McpList` meta tool truncates its listing with the context's identity.
+    let m = McpManager::start(
+        configs(vec![("a", fake("400"))]),
+        &std::env::temp_dir(),
+        &RUCKCODE,
+    )
+    .await;
+    let tools = m.tools_for(&["mcp__*".to_string()], 20);
+    let list = tools.iter().find(|t| t.name() == "McpListTools").unwrap();
+    for (id, name) in [(RUCKCODE, "ruckcode"), (ACME, "acme")] {
+        let mut c = ctx(CancellationToken::new());
+        c.identity = id;
+        let out = list.call(json!({}), &c).await.unwrap();
+        assert!(
+            out.content
+                .contains(&format!("truncated by {name}; re-run")),
+            "{}",
+            &out.content[out.content.len().saturating_sub(300)..]
+        );
+    }
 }

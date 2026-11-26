@@ -3,7 +3,24 @@
 use crate::config::{NamespaceMode, NetworkMode, SandboxConfig};
 use crate::policy::Layers;
 use crate::spawn::LauncherExe;
+use ruck_harness_ident::AppIdentity;
 use serde::{Deserialize, Serialize};
+
+/// The identity of the capability probes: they run in an empty scratch directory, so no product
+/// path is protected and nothing of the product shows.
+#[cfg(unix)]
+const PROBE_IDENTITY: AppIdentity = AppIdentity {
+    name: "sandbox-probe",
+    env_prefix: "SANDBOX_PROBE",
+    project_dir: ".sandbox-probe",
+    config_dir_env: "SANDBOX_PROBE_CONFIG_DIR",
+    user_config_subdir: "sandbox-probe",
+    data_dir_name: "sandbox-probe",
+    user_agent: "sandbox-probe",
+    homepage_url: "",
+    acp_namespace: "sandbox-probe",
+    extra_protected_project_paths: &[],
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
@@ -39,7 +56,7 @@ pub const WINDOWS_NOTICE: &str =
     "sandbox unavailable on native Windows; commands run unsandboxed — use WSL";
 
 /// Work out which layers will run for `cfg` on a system with `caps`.
-pub fn plan(caps: &Capabilities, cfg: &SandboxConfig) -> Plan {
+pub fn plan(caps: &Capabilities, cfg: &SandboxConfig, identity: &AppIdentity) -> Plan {
     let mut p = Plan::default();
     let mut weak: Vec<String> = Vec::new();
     if let Some(e) = &caps.launcher_error {
@@ -89,8 +106,9 @@ pub fn plan(caps: &Capabilities, cfg: &SandboxConfig) -> Plan {
             }
             if cfg.namespaces != NamespaceMode::Off && !caps.namespaces {
                 p.warnings.push(format!(
-                    "namespaces unavailable ({}): using Landlock + seccomp only; project .env files are not masked and ruckcode's project config is only protected by restore-after-run",
-                    caps.namespaces_reason.as_deref().unwrap_or("unknown reason")
+                    "namespaces unavailable ({}): using Landlock + seccomp only; project .env files are not masked and {}'s project config is only protected by restore-after-run",
+                    caps.namespaces_reason.as_deref().unwrap_or("unknown reason"),
+                    identity.name
                 ));
             }
         }
@@ -198,6 +216,7 @@ fn probe_namespaces_uncached(exe: &LauncherExe) -> Result<(), String> {
         cfg: &cfg,
         cwd: &proj,
         project_root: &proj,
+        identity: PROBE_IDENTITY,
         home: None,
         config_dir: None,
         layers: Layers {
@@ -247,6 +266,7 @@ fn launcher_check(exe: &LauncherExe) -> Result<(), String> {
         cfg: &cfg,
         cwd: &dir,
         project_root: &dir,
+        identity: PROBE_IDENTITY,
         home: None,
         config_dir: None,
         layers: Layers::default(),
@@ -328,9 +348,9 @@ fn detect_with(exe: &LauncherExe, use_cache: bool) -> Capabilities {
 }
 
 /// Human-readable status for `rc sandbox status`.
-pub fn report(caps: &Capabilities, cfg: &SandboxConfig) -> String {
+pub fn report(caps: &Capabilities, cfg: &SandboxConfig, identity: &AppIdentity) -> String {
     use std::fmt::Write;
-    let plan = plan(caps, cfg);
+    let plan = plan(caps, cfg, identity);
     let mut s = String::new();
     let yn = |b: bool| if b { "yes" } else { "no" };
     let _ = writeln!(s, "platform: {}", caps.platform);
@@ -412,6 +432,8 @@ pub fn report(caps: &Capabilities, cfg: &SandboxConfig) -> String {
 mod tests {
     use super::*;
 
+    const ID: AppIdentity = ruck_harness_ident::testing::RUCKCODE;
+
     fn linux(ns: bool, abi: Option<u32>, seccomp: bool) -> Capabilities {
         Capabilities {
             platform: "linux".into(),
@@ -426,7 +448,7 @@ mod tests {
 
     #[test]
     fn full_linux_uses_everything() {
-        let p = plan(&linux(true, Some(4), true), &SandboxConfig::default());
+        let p = plan(&linux(true, Some(4), true), &SandboxConfig::default(), &ID);
         assert!(
             p.layers.namespaces && p.layers.netns && p.layers.landlock && !p.layers.landlock_net
         );
@@ -435,7 +457,7 @@ mod tests {
 
     #[test]
     fn ubuntu_2404_default_falls_back_to_landlock() {
-        let p = plan(&linux(false, Some(4), true), &SandboxConfig::default());
+        let p = plan(&linux(false, Some(4), true), &SandboxConfig::default(), &ID);
         assert!(!p.layers.namespaces && p.layers.landlock_net);
         assert!(p.refusal.is_none());
         assert!(p
@@ -447,21 +469,21 @@ mod tests {
     #[test]
     fn old_kernel_degraded_and_strict_refuses() {
         let caps = linux(false, Some(3), true);
-        let p = plan(&caps, &SandboxConfig::default());
+        let p = plan(&caps, &SandboxConfig::default(), &ID);
         assert!(p.refusal.is_none());
         assert!(p.warnings.iter().any(|w| w.contains("network isolation")));
         let strict = SandboxConfig {
             strict: true,
             ..Default::default()
         };
-        assert!(plan(&caps, &strict).refusal.is_some());
+        assert!(plan(&caps, &strict, &ID).refusal.is_some());
         // Network off is still not enforced without netns/landlock net.
         let full = SandboxConfig {
             network: NetworkMode::Full,
             strict: true,
             ..Default::default()
         };
-        assert!(plan(&caps, &full).refusal.is_none());
+        assert!(plan(&caps, &full, &ID).refusal.is_none());
     }
 
     #[test]
@@ -470,13 +492,13 @@ mod tests {
             namespaces: NamespaceMode::Required,
             ..Default::default()
         };
-        let p = plan(&linux(false, Some(4), true), &cfg);
+        let p = plan(&linux(false, Some(4), true), &cfg, &ID);
         assert!(p.refusal.unwrap().contains("restricted"));
         let off = SandboxConfig {
             namespaces: NamespaceMode::Off,
             ..Default::default()
         };
-        let p = plan(&linux(true, Some(4), true), &off);
+        let p = plan(&linux(true, Some(4), true), &off, &ID);
         assert!(!p.layers.namespaces && p.warnings.is_empty());
     }
 
@@ -486,19 +508,49 @@ mod tests {
             platform: "windows".into(),
             ..Default::default()
         };
-        let p = plan(&caps, &SandboxConfig::default());
+        let p = plan(&caps, &SandboxConfig::default(), &ID);
         assert!(p.unsandboxed && p.refusal.is_none());
         assert!(p.warnings[0].contains("use WSL"));
         let strict = SandboxConfig {
             strict: true,
             ..Default::default()
         };
-        assert!(plan(&caps, &strict).refusal.is_some());
+        assert!(plan(&caps, &strict, &ID).refusal.is_some());
     }
 
     #[test]
     fn report_mentions_layers() {
-        let r = report(&linux(true, Some(4), true), &SandboxConfig::default());
+        let r = report(&linux(true, Some(4), true), &SandboxConfig::default(), &ID);
         assert!(r.contains("landlock: yes (ABI v4") && r.contains("active layers:"));
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use ruck_harness_ident::testing::{ACME, RUCKCODE};
+
+    fn no_namespaces() -> Capabilities {
+        Capabilities {
+            platform: "linux".into(),
+            landlock_abi: Some(4),
+            seccomp: true,
+            namespaces: false,
+            namespaces_reason: Some("restricted".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn warning_names_the_product() {
+        let w = |id| plan(&no_namespaces(), &SandboxConfig::default(), &id).warnings;
+        assert_eq!(
+            w(RUCKCODE),
+            ["namespaces unavailable (restricted): using Landlock + seccomp only; project .env files are not masked and ruckcode's project config is only protected by restore-after-run"]
+        );
+        assert_eq!(
+            w(ACME),
+            ["namespaces unavailable (restricted): using Landlock + seccomp only; project .env files are not masked and acme's project config is only protected by restore-after-run"]
+        );
     }
 }

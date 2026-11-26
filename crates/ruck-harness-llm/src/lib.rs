@@ -11,6 +11,7 @@ pub use models::{list_models, ApiKind, ModelInfo};
 pub use ratelimit::{is_transport_error, ApiError, Bucket, LimitKind, RateLimitInfo};
 
 use async_trait::async_trait;
+use ruck_harness_ident::AppIdentity;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
@@ -227,9 +228,9 @@ impl PartialToolUse {
     }
 }
 
-pub(crate) fn http_client() -> reqwest::Client {
+pub(crate) fn http_client(identity: &AppIdentity) -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent(concat!("ruckcode/", env!("CARGO_PKG_VERSION")))
+        .user_agent(identity.user_agent)
         .build()
         .expect("http client")
 }

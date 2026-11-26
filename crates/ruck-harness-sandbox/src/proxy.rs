@@ -4,6 +4,7 @@
 
 use crate::config::domain_matches;
 use async_trait::async_trait;
+use ruck_harness_ident::AppIdentity;
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -47,8 +48,10 @@ pub fn project_key(project: &Path) -> String {
 }
 
 impl DomainStore {
-    pub fn for_project(project: &Path) -> Option<Self> {
-        let dir = dirs::data_dir()?.join("ruckcode").join("network");
+    pub fn for_project(project: &Path, identity: &AppIdentity) -> Option<Self> {
+        let dir = dirs::data_dir()?
+            .join(identity.data_dir_name)
+            .join("network");
         Some(Self {
             path: dir.join(format!("{}.json", project_key(project))),
         })
@@ -208,8 +211,13 @@ impl Drop for Proxy {
 }
 
 /// Listen on `127.0.0.1:<random>` and (optionally) a unix socket.
-pub async fn start(gate: Arc<Gate>, socket: Option<PathBuf>) -> io::Result<Proxy> {
+pub async fn start(
+    gate: Arc<Gate>,
+    socket: Option<PathBuf>,
+    identity: &AppIdentity,
+) -> io::Result<Proxy> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let product: &'static str = identity.name;
     let port = listener.local_addr()?.port();
     let mut tasks = Vec::new();
     let g = gate.clone();
@@ -219,7 +227,7 @@ pub async fn start(gate: Arc<Gate>, socket: Option<PathBuf>) -> io::Result<Proxy
                 break;
             };
             let g = g.clone();
-            tokio::spawn(async move { handle(g, s).await });
+            tokio::spawn(async move { handle(g, s, product).await });
         }
     }));
     #[cfg(unix)]
@@ -237,7 +245,7 @@ pub async fn start(gate: Arc<Gate>, socket: Option<PathBuf>) -> io::Result<Proxy
                     break;
                 };
                 let g = g.clone();
-                tokio::spawn(async move { handle(g, s).await });
+                tokio::spawn(async move { handle(g, s, product).await });
             }
         }));
         sock_path = Some(path);
@@ -256,8 +264,8 @@ pub async fn start(gate: Arc<Gate>, socket: Option<PathBuf>) -> io::Result<Proxy
 
 const MAX_HEAD: usize = 64 * 1024;
 
-async fn deny<S: AsyncWrite + Unpin>(s: &mut S, status: &str, msg: &str) {
-    let body = format!("ruckcode sandbox: {msg}\n");
+async fn deny<S: AsyncWrite + Unpin>(s: &mut S, product: &str, status: &str, msg: &str) {
+    let body = format!("{product} sandbox: {msg}\n");
     let resp = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -313,7 +321,11 @@ async fn connect_upstream(host: &str, port: u16) -> io::Result<TcpStream> {
     Err(last)
 }
 
-async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(gate: Arc<Gate>, mut s: S) {
+async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(
+    gate: Arc<Gate>,
+    mut s: S,
+    product: &str,
+) {
     let mut buf = Vec::with_capacity(2048);
     let mut tmp = [0u8; 4096];
     let head_end = loop {
@@ -323,6 +335,7 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(gate: Arc<Gate>, mut s
         if buf.len() > MAX_HEAD {
             return deny(
                 &mut s,
+                product,
                 "431 Request Header Fields Too Large",
                 "request too large",
             )
@@ -340,14 +353,14 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(gate: Arc<Gate>, mut s
     let mut parts = first.split_whitespace();
     let (Some(method), Some(target), Some(version)) = (parts.next(), parts.next(), parts.next())
     else {
-        return deny(&mut s, "400 Bad Request", "malformed request").await;
+        return deny(&mut s, product, "400 Bad Request", "malformed request").await;
     };
     if method.eq_ignore_ascii_case("CONNECT") {
         let Some((host, port)) = split_host_port(target, 443) else {
-            return deny(&mut s, "400 Bad Request", "bad CONNECT target").await;
+            return deny(&mut s, product, "400 Bad Request", "bad CONNECT target").await;
         };
         if !gate.decide(&host).await {
-            return deny(&mut s, "403 Forbidden", &blocked_msg(&host)).await;
+            return deny(&mut s, product, "403 Forbidden", &blocked_msg(&host)).await;
         }
         match connect_upstream(&host, port).await {
             Ok(mut up) => {
@@ -365,6 +378,7 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(gate: Arc<Gate>, mut s
             Err(e) => {
                 deny(
                     &mut s,
+                    product,
                     "502 Bad Gateway",
                     &format!("cannot reach {host}:{port}: {e}"),
                 )
@@ -377,6 +391,7 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(gate: Arc<Gate>, mut s
     let Some(url) = target.strip_prefix("http://") else {
         return deny(
             &mut s,
+            product,
             "400 Bad Request",
             "only http:// absolute URIs and CONNECT are proxied",
         )
@@ -388,16 +403,17 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin + Send>(gate: Arc<Gate>, mut s
     };
     let authority = authority.rsplit('@').next().unwrap_or(authority);
     let Some((host, port)) = split_host_port(authority, 80) else {
-        return deny(&mut s, "400 Bad Request", "bad URI").await;
+        return deny(&mut s, product, "400 Bad Request", "bad URI").await;
     };
     if !gate.decide(&host).await {
-        return deny(&mut s, "403 Forbidden", &blocked_msg(&host)).await;
+        return deny(&mut s, product, "403 Forbidden", &blocked_msg(&host)).await;
     }
     let mut up = match connect_upstream(&host, port).await {
         Ok(u) => u,
         Err(e) => {
             return deny(
                 &mut s,
+                product,
                 "502 Bad Gateway",
                 &format!("cannot reach {host}:{port}: {e}"),
             )
@@ -490,7 +506,9 @@ mod tests {
         });
         let gate = Arc::new(Gate::new(None, None));
         gate.set_allowed(vec!["127.0.0.1".into()]);
-        let proxy = start(gate.clone(), None).await.unwrap();
+        let proxy = start(gate.clone(), None, &ruck_harness_ident::testing::RUCKCODE)
+            .await
+            .unwrap();
         let fetch = |req: String| async move {
             let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).await.unwrap();
             c.write_all(req.as_bytes()).await.unwrap();
@@ -521,5 +539,55 @@ mod tests {
             "{tunnel}"
         );
         assert_eq!(gate.take_denials(), ["blocked.invalid"]);
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use ruck_harness_ident::testing::{ACME, RUCKCODE};
+
+    async fn denial_body(id: AppIdentity) -> String {
+        let gate = Arc::new(Gate::new(None, None));
+        let proxy = start(gate, None, &id).await.unwrap();
+        let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).await.unwrap();
+        c.write_all(b"GET http://blocked.invalid/ HTTP/1.1\r\nHost: blocked.invalid\r\n\r\n")
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        let _ = c.read_to_end(&mut out).await;
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    #[tokio::test]
+    async fn denial_body_is_prefixed_with_the_product_name() {
+        assert!(denial_body(RUCKCODE).await.contains(
+            "\r\n\r\nruckcode sandbox: network access to blocked.invalid is not allowed"
+        ));
+        assert!(denial_body(ACME)
+            .await
+            .contains("\r\n\r\nacme sandbox: network access to blocked.invalid is not allowed"));
+    }
+
+    #[test]
+    fn domain_store_lives_under_the_data_dir_name() {
+        let p = Path::new("/some/project");
+        let tail = |id| {
+            DomainStore::for_project(p, &id).map(|s| {
+                s.path
+                    .strip_prefix(dirs::data_dir().unwrap())
+                    .unwrap()
+                    .to_path_buf()
+            })
+        };
+        let key = project_key(p);
+        assert_eq!(
+            tail(RUCKCODE),
+            Some(PathBuf::from(format!("ruckcode/network/{key}.json")))
+        );
+        assert_eq!(
+            tail(ACME),
+            Some(PathBuf::from(format!("acme-data/network/{key}.json")))
+        );
     }
 }

@@ -9,6 +9,7 @@ license.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 globset.workspace = true
+ruck-harness-ident.workspace = true
 ruckcode-tools.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -17,4 +18,5 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+ruck-harness-ident = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
