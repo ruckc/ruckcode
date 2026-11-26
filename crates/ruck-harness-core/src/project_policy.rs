@@ -2,7 +2,7 @@
 //!
 //! A sandboxed command can write the project, including `.git`, so nothing in the working tree,
 //! the index, local commits, `refs/remotes/*` or `.git/config` can be trusted as the source of
-//! sandbox policy. Instead, at session start ruckcode itself (outside the sandbox):
+//! sandbox policy. Instead, at session start the product itself (outside the sandbox):
 //!
 //! 1. reads the `origin` URL and pins it (trust on first use) in the user data directory, which
 //!    sandboxed commands cannot write; a later URL change disables the project policy until the

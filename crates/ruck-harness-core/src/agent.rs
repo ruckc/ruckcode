@@ -208,9 +208,9 @@ pub struct AgentOptions {
     pub model_override: Option<String>,
     /// Use this provider for every request (tests).
     pub provider_override: Option<Arc<dyn Provider>>,
-    /// Write transcripts to `<project>/.ruckcode/sessions`.
+    /// Write transcripts to `<project>/<project_dir>/sessions`.
     pub persist: bool,
-    /// Directory holding user `config.toml` / `modes.toml`; `None` means `~/.config/ruckcode`.
+    /// Directory holding user `config.toml` / `modes.toml`; `None` means the identity's default user config directory.
     pub user_config_dir: Option<PathBuf>,
     /// The binary that acts as the sandbox launcher (`__sandbox-exec`); `None` re-executes the
     /// running binary. Tests whose binary does not embed the launcher set this.
@@ -235,7 +235,7 @@ struct SessionState {
     cwd: PathBuf,
     config: HarnessConfig,
     modes: ModeSet,
-    /// The product's per-session state (for ruckcode: the mise tasks).
+    /// The product's per-session state (e.g. discovered project tasks).
     ext: Box<dyn SessionExt>,
     /// MCP servers passed by the client (ACP `mcpServers`); override same-named config entries.
     extra_mcp: BTreeMap<String, McpServerConfig>,
@@ -254,7 +254,7 @@ struct SessionState {
     request_counter: u64,
     /// Model chosen with `/model` for this session; wins over mode, profile and `--model`.
     model_pin: Option<String>,
-    /// Client instructions appended to the system prompt (ACP `_meta.ruckcode.systemPrompt`).
+    /// Client instructions appended to the system prompt (ACP `_meta.<namespace>.systemPrompt`).
     client_instructions: Option<String>,
     /// Whether the "profile isn't configured" notices were already sent.
     warned_profiles: bool,
@@ -1838,7 +1838,7 @@ impl Agent {
         );
         // Process-spawning tools need the sandbox itself (and its proxy), and the in-process
         // network tools (WebFetch, WebSearch) its network gate; the others get the path guards
-        // for ruckcode's config and secrets.
+        // for the product's config and secrets.
         let sb = if matches!(kind, ToolKind::Execute | ToolKind::Fetch) {
             Some(match &s.sandbox {
                 Some(sb) => sb.clone(),

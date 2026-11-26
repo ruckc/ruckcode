@@ -1,10 +1,10 @@
-//! Machine-readable face of the transcript browser, shared by `rc sessions ... --json` (used
+//! Machine-readable face of the transcript browser, shared by the product CLI's `sessions ... --json` (used
 //! inside WSL by the desktop app) and the desktop app's local Tauri commands, so both produce the
 //! same camelCase JSON.
 //!
 //! Transcripts are streamed line by line (never held in memory whole), tolerate truncated or
 //! corrupt lines (counted in `skippedLines`) and are only ever read from
-//! `<project>/.ruckcode/sessions/`; session ids are validated so they cannot name another path.
+//! `<project>/<project_dir>/sessions/`; session ids are validated so they cannot name another path.
 
 use std::collections::HashMap;
 use std::fs::File;

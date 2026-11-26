@@ -14,7 +14,7 @@
 //! Two further detectors catch loops whose arguments keep changing:
 //!
 //! * **Repeated search**: the search pattern of the calls that [`GuardHints::search_tool`]
-//!   recognises (ruckcode: `Grep`/`Glob` and `Bash` commands running grep, rg, ag, ack, `git grep`
+//!   recognises (for a coding agent: `Grep`/`Glob` and `Bash` commands running grep, rg, ag, ack, `git grep`
 //!   or `find -name`, see [`crate::guard_ext`]) is counted per turn, whatever the paths, flags or trailing filters. It trips when the pattern has been
 //!   searched `search_repeat_count` times and the latest `search_repeat_count / 2` searches added
 //!   no new information. "No new information" means: every non-empty (trimmed) line of the result
@@ -147,7 +147,7 @@ pub enum TripKind {
 }
 
 impl TripKind {
-    /// `_meta.ruckcode.loopKind`: `repeat`, `search` or `oscillation`.
+    /// `_meta.<namespace>.loopKind`: `repeat`, `search` or `oscillation`.
     pub fn loop_kind(&self) -> &'static str {
         match self {
             TripKind::Repeat { .. } | TripKind::PlanNoop { .. } | TripKind::NoProgress { .. } => {

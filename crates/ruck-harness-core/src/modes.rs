@@ -48,7 +48,7 @@ pub struct ModeDef {
     /// Per-mode sandbox overrides (`[modes.<id>.sandbox]`); cannot turn the sandbox off.
     #[serde(default)]
     pub sandbox: Option<ruck_harness_sandbox::SandboxOverride>,
-    /// Product-specific keys (for ruckcode: `mise_tasks`), restricted to the keys the product's
+    /// Product-specific keys (e.g. a task selector list), restricted to the keys the product's
     /// [`ModeSchema`] declares. Never filled by serde, so other unknown keys stay ignored.
     #[serde(skip)]
     pub extra: BTreeMap<String, toml::Value>,

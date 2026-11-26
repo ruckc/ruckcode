@@ -168,7 +168,7 @@ pub enum Record {
         servers: Vec<McpServerRecord>,
     },
     /// Client-supplied instructions appended to the system prompt (ACP
-    /// `_meta.ruckcode.systemPrompt.append`). The last record wins; empty clears them.
+    /// `_meta.<namespace>.systemPrompt.append`). The last record wins; empty clears them.
     ClientInstructions {
         append: String,
     },
@@ -196,7 +196,7 @@ pub fn new_session_id() -> String {
     )
 }
 
-/// `<project>/<project_dir>/sessions`, e.g. `.ruckcode/sessions`.
+/// `<project>/<project_dir>/sessions`, e.g. `.myapp/sessions`.
 pub fn sessions_dir(identity: &AppIdentity, project: &Path) -> PathBuf {
     identity.project_path(project).join("sessions")
 }

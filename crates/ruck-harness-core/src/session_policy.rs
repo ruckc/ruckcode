@@ -2,7 +2,7 @@
 //! starts, before anything is built from them.
 //!
 //! The harness runs whatever [`SessionPolicy`] it is given, or none. [`RemoteSandboxPolicy`] is
-//! the one ruckcode uses: it lays the verified remote copy of the project's sandbox policy over
+//! the one the reference product uses: it lays the verified remote copy of the project's sandbox policy over
 //! the user's config (see [`crate::project_policy`]).
 
 use async_trait::async_trait;
