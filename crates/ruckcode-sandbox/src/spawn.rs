@@ -86,11 +86,26 @@ pub fn launcher_command(
     let rfd = std::os::fd::AsRawFd::as_raw_fd(&r);
     unsafe {
         cmd.pre_exec(move || {
-            if rfd != POLICY_FD && libc::dup2(rfd, POLICY_FD) < 0 {
+            // The sources are close-on-exec and may themselves sit on a target number (a process
+            // with ~200 open descriptors hands out 198/199 to a new pipe). `dup2(fd, fd)` is a
+            // no-op that leaves close-on-exec set, and dup2 onto the other target would clobber
+            // a source. Move both sources above the targets first, then dup2 (which clears
+            // close-on-exec) into place.
+            let floor = POLICY_FD.max(EXE_FD) + 1;
+            let hi = |fd: i32| -> io::Result<i32> {
+                let n = libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, floor);
+                if n < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(n)
+                }
+            };
+            let (p, e) = (hi(rfd)?, exe_fd.map(hi).transpose()?);
+            if libc::dup2(p, POLICY_FD) < 0 {
                 return Err(io::Error::last_os_error());
             }
-            if let Some(e) = exe_fd {
-                if e != EXE_FD && libc::dup2(e, EXE_FD) < 0 {
+            if let Some(e) = e {
+                if libc::dup2(e, EXE_FD) < 0 {
                     return Err(io::Error::last_os_error());
                 }
             }
