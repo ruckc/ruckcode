@@ -33,12 +33,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
+use ruck_harness_mcp::McpServerConfig;
+use ruck_harness_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
 use ruckcode_core::{
     Agent, Client, ModeInfo, PermissionDecision, PermissionRequest, RateLimitEvent, SessionEvent,
     SessionInfo as CoreSessionInfo, StopReason as CoreStop, ToolStatus, MAX_CLIENT_INSTRUCTIONS,
 };
-use ruckcode_mcp::McpServerConfig;
-use ruckcode_tools::{Answer, Question, ToolKind as CoreKind, UserBridge};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -318,9 +318,11 @@ fn convert_event(ev: SessionEvent) -> SessionUpdate {
                         i.content,
                         PlanEntryPriority::Medium,
                         match i.status {
-                            ruckcode_tools::PlanStatus::Pending => PlanEntryStatus::Pending,
-                            ruckcode_tools::PlanStatus::InProgress => PlanEntryStatus::InProgress,
-                            ruckcode_tools::PlanStatus::Completed => PlanEntryStatus::Completed,
+                            ruck_harness_tools::PlanStatus::Pending => PlanEntryStatus::Pending,
+                            ruck_harness_tools::PlanStatus::InProgress => {
+                                PlanEntryStatus::InProgress
+                            }
+                            ruck_harness_tools::PlanStatus::Completed => PlanEntryStatus::Completed,
                         },
                     )
                 })
@@ -508,7 +510,7 @@ fn acp_mcp_servers(servers: &[Value]) -> BTreeMap<String, McpServerConfig> {
     servers
         .iter()
         .filter_map(|v| {
-            let r = ruckcode_mcp::from_acp(v);
+            let r = ruck_harness_mcp::from_acp(v);
             if r.is_none() {
                 tracing::warn!("ignoring unsupported ACP MCP server entry: {v}");
             }

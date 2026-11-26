@@ -6,10 +6,10 @@ use ruck_harness_llm::{
     ContentBlock, Message, Provider, Request, Response, Role, StopReason as LlmStop, StreamEvent,
     Usage,
 };
+use ruck_harness_tools::{Answer, Question, UserBridge};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
-use ruckcode_tools::{Answer, Question, UserBridge};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

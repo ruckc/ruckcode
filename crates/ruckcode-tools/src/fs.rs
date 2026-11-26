@@ -1,5 +1,5 @@
-use crate::{str_arg, FileEdit, Tool, ToolContext, ToolKind, ToolOutput};
 use async_trait::async_trait;
+use ruck_harness_tools::{str_arg, FileEdit, Tool, ToolContext, ToolKind, ToolOutput};
 use serde_json::{json, Value};
 
 const MAX_LINE: usize = 2000;
@@ -121,7 +121,7 @@ impl Tool for Write {
             return Ok(ToolOutput::error(format!(
                 "{}: {}",
                 path.display(),
-                crate::protected_write_msg(&ctx.identity)
+                ruck_harness_tools::protected_write_msg(&ctx.identity)
             )));
         }
         let content = str_arg(&input, "content")?.to_string();
@@ -190,7 +190,7 @@ impl Tool for Edit {
             return Ok(ToolOutput::error(format!(
                 "{}: {}",
                 path.display(),
-                crate::protected_write_msg(&ctx.identity)
+                ruck_harness_tools::protected_write_msg(&ctx.identity)
             )));
         }
         let old_string = str_arg(&input, "old_string")?;

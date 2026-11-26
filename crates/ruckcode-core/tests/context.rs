@@ -4,12 +4,12 @@
 use async_trait::async_trait;
 use ruck_harness_llm::mock::MockProvider;
 use ruck_harness_llm::{ContentBlock, Message, Request, Role, StopReason as LlmStop, Usage};
+use ruck_harness_tools::{Answer, Question, UserBridge};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent, StopReason,
 };
 use ruckcode_core::context::estimate_tokens;
 use ruckcode_core::McpServerConfig;
-use ruckcode_tools::{Answer, Question, UserBridge};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -226,7 +226,7 @@ async fn huge_bash_result_is_truncated_head_and_tail() {
 async fn huge_mcp_result_is_truncated_head_and_tail() {
     let env = Env::new("", "");
     let script = format!(
-        "{}/../ruckcode-mcp/tests/fake_mcp_server.py",
+        "{}/../ruck-harness-mcp/tests/fake_mcp_server.py",
         env!("CARGO_MANIFEST_DIR")
     );
     env.mock.push(tool_use(

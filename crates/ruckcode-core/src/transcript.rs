@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use ruck_harness_llm::{ContentBlock, Message, Role, StopReason, Usage};
-use ruckcode_tools::PlanStatus;
+use ruck_harness_tools::PlanStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{File, OpenOptions};

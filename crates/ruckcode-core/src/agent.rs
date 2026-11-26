@@ -9,9 +9,9 @@ use ruck_harness_llm::{
     ContentBlock, LimitKind, Message, Provider, Request, Response, Role, StopReason as LlmStop,
     StreamEvent, Usage,
 };
-use ruckcode_mcp::{McpManager, McpServerConfig};
+use ruck_harness_mcp::{McpManager, McpServerConfig};
+use ruck_harness_tools::{FileEdit, PlanItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
 use ruckcode_mise::{MiseTask, TaskSelector};
-use ruckcode_tools::{FileEdit, PlanItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1633,7 +1633,7 @@ impl Agent {
                         let mut msg = tool_loop_guard::PLAN_UNCHANGED.to_string();
                         if !items.is_empty() && items.iter().all(|(_, st)| st == "completed") {
                             msg.push(' ');
-                            msg.push_str(ruckcode_tools::PLAN_ALL_DONE);
+                            msg.push_str(ruck_harness_tools::PLAN_ALL_DONE);
                         }
                         break 'run (msg, false);
                     }
@@ -1807,7 +1807,7 @@ impl Agent {
         client: &Arc<dyn Client>,
         name: &str,
         kind: ToolKind,
-    ) -> Option<ruckcode_tools::SandboxHandle> {
+    ) -> Option<ruck_harness_tools::SandboxHandle> {
         if name.starts_with("mcp__") || !s.config.sandbox.enabled {
             return None;
         }

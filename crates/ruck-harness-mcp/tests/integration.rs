@@ -1,6 +1,6 @@
 use ruck_harness_ident::testing::{ACME, RUCKCODE};
-use ruckcode_mcp::{McpManager, McpServerConfig};
-use ruckcode_tools::{Answer, Question, ToolContext, ToolKind, UserBridge};
+use ruck_harness_mcp::{McpManager, McpServerConfig};
+use ruck_harness_tools::{Answer, Question, ToolContext, ToolKind, UserBridge};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::Path;

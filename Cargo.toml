@@ -46,7 +46,7 @@ ruckcode-core = { path = "crates/ruckcode-core" }
 ruck-harness-ident = { path = "crates/ruck-harness-ident" }
 ruck-harness-hooks = { path = "crates/ruck-harness-hooks" }
 ruck-harness-llm = { path = "crates/ruck-harness-llm" }
-ruckcode-mcp = { path = "crates/ruckcode-mcp" }
+ruck-harness-mcp = { path = "crates/ruck-harness-mcp" }
 ruckcode-mise = { path = "crates/ruckcode-mise" }
 ruck-harness-sandbox = { path = "crates/ruck-harness-sandbox" }
 ruck-harness-tools = { path = "crates/ruck-harness-tools" }

@@ -1,5 +1,5 @@
-use crate::{str_arg, truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
 use async_trait::async_trait;
+use ruck_harness_tools::{str_arg, truncate_middle, Tool, ToolContext, ToolKind, ToolOutput};
 use serde_json::{json, Value};
 use std::process::Stdio;
 use std::time::Duration;
@@ -110,7 +110,12 @@ pub async fn run_shell(
     timeout: Duration,
     ctx: &ToolContext,
 ) -> anyhow::Result<ToolOutput> {
-    let mut launch = match crate::launch(ctx, "sh", &["-c".to_string(), command.to_string()], cwd) {
+    let mut launch = match ruck_harness_tools::launch(
+        ctx,
+        "sh",
+        &["-c".to_string(), command.to_string()],
+        cwd,
+    ) {
         Ok(l) => l,
         Err(msg) => return Ok(ToolOutput::error(msg)),
     };
