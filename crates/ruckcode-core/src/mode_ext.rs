@@ -3,7 +3,9 @@
 use anyhow::{bail, Result};
 use std::collections::BTreeMap;
 
-use crate::modes::{ModeDef, ModeSchema};
+use std::path::Path;
+
+use crate::modes::{ModeDef, ModeSchema, ModeSet};
 
 const MISE_TASKS: &str = "mise_tasks";
 
@@ -33,7 +35,35 @@ pub static RUCKCODE_MODE_SCHEMA: ModeSchema = ModeSchema {
     extra_keys: &[MISE_TASKS],
     check_extra: check,
     implicit_extra: implicit,
+    is_builtin_tool: |name| {
+        ruckcode_tools::builtin_tools()
+            .iter()
+            .any(|t| t.name() == name)
+    },
 };
+
+/// The mode loaders with ruckcode's schema and identity.
+impl ModeSet {
+    /// A single permissive `default` mode, used when no modes file exists.
+    pub fn implicit() -> Self {
+        Self::implicit_with(&RUCKCODE_MODE_SCHEMA)
+    }
+
+    pub fn from_toml_str(text: &str) -> Result<Self> {
+        Self::from_toml_str_with(text, &RUCKCODE_MODE_SCHEMA)
+    }
+
+    /// Project `.ruckcode/modes.toml`, else the user's, else the implicit set (see
+    /// [`ModeSet::load_with`]).
+    pub fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
+        Self::load_with(
+            project_dir,
+            user_dir,
+            &crate::identity::RUCKCODE,
+            &RUCKCODE_MODE_SCHEMA,
+        )
+    }
+}
 
 /// Typed access to ruckcode's keys in [`ModeDef::extra`].
 pub trait RuckcodeModeExt {

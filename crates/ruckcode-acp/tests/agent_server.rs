@@ -88,7 +88,7 @@ impl Env {
             self.user.path().join("config.toml"),
             "[sandbox]\nenabled = false\n",
         );
-        Arc::new(Agent::new(AgentOptions {
+        Arc::new(Agent::ruckcode(AgentOptions {
             provider_override: Some(p),
             user_config_dir: Some(self.user.path().to_path_buf()),
             ..Default::default()

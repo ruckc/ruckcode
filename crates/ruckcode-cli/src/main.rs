@@ -177,7 +177,7 @@ impl Cli {
     }
 
     pub fn build_agent(&self) -> Arc<Agent> {
-        Arc::new(Agent::new(AgentOptions {
+        Arc::new(Agent::ruckcode(AgentOptions {
             profile_override: self.profile.clone(),
             model_override: self.model.clone(),
             ..Default::default()

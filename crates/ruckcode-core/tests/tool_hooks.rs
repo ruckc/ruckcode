@@ -9,9 +9,8 @@ use ruck_harness_tools::{Answer, Question, UserBridge};
 use ruckcode_core::agent::{
     Agent, AgentOptions, Client, PermissionDecision, PermissionRequest, SessionEvent,
 };
-use ruckcode_core::transcript::{
-    assess_unfinished, Metrics, Record, TranscriptReader, TranscriptWriter, UserSource,
-};
+use ruckcode_core::extension::assess_unfinished;
+use ruckcode_core::transcript::{Metrics, Record, TranscriptReader, TranscriptWriter, UserSource};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -60,7 +59,7 @@ impl Env {
         self.proj.path().to_path_buf()
     }
     fn agent(&self, p: Arc<dyn Provider>) -> Agent {
-        Agent::new(AgentOptions {
+        Agent::ruckcode(AgentOptions {
             provider_override: Some(p),
             user_config_dir: Some(self.user.path().to_path_buf()),
             ..Default::default()

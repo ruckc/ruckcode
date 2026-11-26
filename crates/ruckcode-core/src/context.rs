@@ -9,6 +9,7 @@
 //! * a hard ceiling: prompt estimate plus the output reserve never exceeds the window; the
 //!   largest tool results of the turn are truncated until the request fits.
 
+use ruck_harness_ident::AppIdentity;
 use ruck_harness_llm::{ContentBlock, Message, Role, ToolSpec};
 use serde::Deserialize;
 
@@ -118,8 +119,8 @@ pub fn estimate_tokens(system: &str, tools: &[ToolSpec], messages: &[Message]) -
 }
 
 /// Keep the head and tail of `s` within `max` bytes, with a marker naming what was cut.
-pub fn truncate_head_tail(s: &str, max: usize) -> String {
-    ruck_harness_tools::truncate_middle(s, max, &crate::identity::RUCKCODE)
+pub fn truncate_head_tail(s: &str, max: usize, identity: &AppIdentity) -> String {
+    ruck_harness_tools::truncate_middle(s, max, identity)
 }
 
 /// Index of the first message of the in-flight exchange: the last assistant tool calls and the
@@ -159,7 +160,11 @@ pub fn turn_start(messages: &[Message]) -> usize {
 
 /// Truncate the largest tool result at or after `from` to half its size (never below
 /// [`MIN_RESULT_BYTES`]). Returns false when nothing can shrink further.
-pub fn shrink_largest_result(messages: &mut [Message], from: usize) -> bool {
+pub fn shrink_largest_result(
+    messages: &mut [Message],
+    from: usize,
+    identity: &AppIdentity,
+) -> bool {
     let mut best: Option<(usize, usize, usize)> = None;
     for (mi, m) in messages.iter().enumerate().skip(from) {
         for (bi, b) in m.content.iter().enumerate() {
@@ -176,7 +181,7 @@ pub fn shrink_largest_result(messages: &mut [Message], from: usize) -> bool {
         return false;
     };
     if let ContentBlock::ToolResult { content, .. } = &mut messages[mi].content[bi] {
-        *content = truncate_head_tail(content, (len / 2).max(MIN_RESULT_BYTES));
+        *content = truncate_head_tail(content, (len / 2).max(MIN_RESULT_BYTES), identity);
     }
     true
 }
@@ -187,6 +192,7 @@ pub fn fit_to_ceiling(
     messages: &mut [Message],
     limits: &Limits,
     turn_from: usize,
+    identity: &AppIdentity,
     estimate: impl Fn(&[Message]) -> u64,
 ) -> (usize, bool) {
     let mut steps = 0;
@@ -195,7 +201,7 @@ pub fn fit_to_ceiling(
         if limits.fits(estimate(messages)) {
             return (steps, true);
         }
-        if shrink_largest_result(messages, from) {
+        if shrink_largest_result(messages, from, identity) {
             steps += 1;
         } else if from > 0 {
             from = 0;

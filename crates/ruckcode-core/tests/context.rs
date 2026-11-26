@@ -89,7 +89,7 @@ impl Env {
     }
 
     fn agent(&self) -> Agent {
-        Agent::new(AgentOptions {
+        Agent::ruckcode(AgentOptions {
             provider_override: Some(self.mock.clone()),
             user_config_dir: Some(self.user.path().to_path_buf()),
             ..Default::default()
@@ -235,7 +235,7 @@ async fn huge_mcp_result_is_truncated_head_and_tail() {
         json!({"text": format!("HEAD{}TAIL", "x".repeat(20_000))}),
     ));
     env.mock.push(Message::assistant_text("ok"));
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(env.mock.clone()),
         user_config_dir: Some(env.user.path().to_path_buf()),
         ..Default::default()

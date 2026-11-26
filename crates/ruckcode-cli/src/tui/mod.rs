@@ -387,7 +387,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
         None if cli.continue_last => ctx.continue_last(),
         None if initial_prompt.is_none() => {
             // Offer to pick up interrupted sessions or ones with open tasks; esc starts fresh.
-            let unfinished = ruckcode_core::transcript_api::find_unfinished(&cwd, None);
+            let unfinished = ruckcode_core::extension::find_unfinished(&cwd, None);
             if unfinished.is_empty() {
                 ctx.start(None, true)
             } else {

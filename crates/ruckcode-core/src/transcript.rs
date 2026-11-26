@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use ruck_harness_llm::{ContentBlock, Message, Role, StopReason, Usage};
-use ruck_harness_tools::PlanStatus;
+use ruck_harness_tools::{PlanItem, PlanStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
@@ -373,7 +373,11 @@ pub fn interrupted_results(tool_use_ids: &[String]) -> Message {
     }
 }
 
-/// What a transcript says was left undone. See [`assess_unfinished`].
+/// Decodes a tool call into the plan it writes, if the tool is a plan tool (a transcript keeps no
+/// tools, so replay and [`assess_unfinished_with`] decode by name).
+pub type PlanDecoder<'a> = &'a dyn Fn(&str, &Value) -> Option<Vec<PlanItem>>;
+
+/// What a transcript says was left undone. See [`assess_unfinished_with`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Unfinished {
     /// The last turn never completed (killed, crashed, provider error, rate limited) or work was recorded
@@ -398,7 +402,7 @@ impl Unfinished {
 /// cancelled on purpose is not interrupted. Independently, the last plan with items
 /// that are not `completed` counts as open tasks. `session_dismissed` clears both until newer
 /// records appear.
-pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
+pub fn assess_unfinished_with(records: &[Stamped], decode_plan: PlanDecoder<'_>) -> Unfinished {
     let mut work_after_end = false;
     let mut bad_end = false;
     let mut open: Vec<String> = vec![];
@@ -430,7 +434,7 @@ pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
         }
         if let Record::ToolCall { name, input, .. } = &r.record {
             // A plan tool's call replaces the plan (decoded by name: a transcript keeps no tools).
-            if let Some(items) = ruckcode_tools::decode_builtin_plan(name, input) {
+            if let Some(items) = decode_plan(name, input) {
                 open.clear();
                 in_progress = None;
                 for t in items {
@@ -619,7 +623,7 @@ mod tests {
         let a = |rs: Vec<Stamped>| {
             let mut v = vec![start.clone()];
             v.extend(rs);
-            assess_unfinished(&v)
+            crate::extension::assess_unfinished(&v)
         };
         // Completed turn, cancelled turn: settled.
         assert!(!a(vec![user("x"), turn_end("end_turn")]).is_unfinished());

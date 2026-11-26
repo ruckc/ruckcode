@@ -2,11 +2,12 @@
 
 use anyhow::{bail, Context, Result};
 use ruck_harness_hooks::HooksConfig;
+use ruck_harness_ident::AppIdentity;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::config::user_config_dir;
+use crate::config::user_config_dir_for;
 use crate::permissions::Permission;
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -61,6 +62,9 @@ pub struct ModeSchema {
     pub check_extra: fn(&str, &toml::Value) -> Result<()>,
     /// `extra` of the implicit `default` mode.
     pub implicit_extra: fn() -> BTreeMap<String, toml::Value>,
+    /// Whether `name` is one of the product's built-in tools (a mode listing another name that
+    /// is not `SwitchMode`, `mise__*` or `mcp__*` gets a warning).
+    pub is_builtin_tool: fn(&str) -> bool,
 }
 
 impl ModeDef {
@@ -95,10 +99,6 @@ fn capitalize(s: &str) -> String {
 
 impl ModeSet {
     /// A single permissive `default` mode, used when no modes file exists.
-    pub fn implicit() -> Self {
-        Self::implicit_with(&crate::mode_ext::RUCKCODE_MODE_SCHEMA)
-    }
-
     pub fn implicit_with(schema: &ModeSchema) -> Self {
         let def = ModeDef {
             description: "General-purpose mode with all tools".into(),
@@ -110,10 +110,6 @@ impl ModeSet {
             default_mode: "default".into(),
             modes: vec![("default".into(), def)],
         }
-    }
-
-    pub fn from_toml_str(text: &str) -> Result<Self> {
-        Self::from_toml_str_with(text, &crate::mode_ext::RUCKCODE_MODE_SCHEMA)
     }
 
     pub fn from_toml_str_with(text: &str, schema: &ModeSchema) -> Result<Self> {
@@ -138,24 +134,30 @@ impl ModeSet {
             default_mode,
             modes,
         };
-        set.validate()?;
+        set.validate(schema)?;
         Ok(set)
     }
 
-    /// Project `.ruckcode/modes.toml`, else the user's, else the implicit set.
+    /// The project's `modes.toml` (in the identity's project directory), else the user's, else the
+    /// implicit set.
     ///
     /// Sandbox overrides in the *project* file are dropped: they are only honoured as committed
     /// on the remote (`project_policy::apply`). The user's own `[modes.<id>.sandbox]` overrides
     /// still apply to the modes of the same id.
-    pub fn load(project_dir: &Path, user_dir: Option<&Path>) -> Result<Self> {
-        let user_path = user_config_dir(user_dir).map(|d| d.join("modes.toml"));
-        let project_path = project_dir.join(".ruckcode/modes.toml");
+    pub fn load_with(
+        project_dir: &Path,
+        user_dir: Option<&Path>,
+        identity: &AppIdentity,
+        schema: &ModeSchema,
+    ) -> Result<Self> {
+        let user_path = user_config_dir_for(identity, user_dir).map(|d| d.join("modes.toml"));
+        let project_path = identity.project_path(project_dir).join("modes.toml");
         if let Ok(text) = std::fs::read_to_string(&project_path) {
-            let mut set = Self::from_toml_str(&text)
+            let mut set = Self::from_toml_str_with(&text, schema)
                 .with_context(|| format!("loading {}", project_path.display()))?;
             let user = user_path
                 .and_then(|p| std::fs::read_to_string(p).ok())
-                .and_then(|t| Self::from_toml_str(&t).ok());
+                .and_then(|t| Self::from_toml_str_with(&t, schema).ok());
             for (id, def) in &mut set.modes {
                 def.sandbox = user
                     .as_ref()
@@ -166,14 +168,14 @@ impl ModeSet {
         }
         if let Some(path) = user_path {
             if let Ok(text) = std::fs::read_to_string(&path) {
-                return Self::from_toml_str(&text)
+                return Self::from_toml_str_with(&text, schema)
                     .with_context(|| format!("loading {}", path.display()));
             }
         }
-        Ok(Self::implicit())
+        Ok(Self::implicit_with(schema))
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, schema: &ModeSchema) -> Result<()> {
         if self.get(&self.default_mode).is_none() {
             bail!("default_mode `{}` is not defined", self.default_mode);
         }
@@ -184,7 +186,7 @@ impl ModeSet {
                 }
             }
             for t in m.tools.iter().flatten() {
-                if !is_known_tool(t) {
+                if !is_known_tool(t, schema) {
                     tracing::warn!("mode `{id}` lists unknown tool `{t}`");
                 }
             }
@@ -218,13 +220,11 @@ impl ModeSet {
     }
 }
 
-fn is_known_tool(name: &str) -> bool {
+fn is_known_tool(name: &str, schema: &ModeSchema) -> bool {
     name == "SwitchMode"
         || name.starts_with("mise__")
         || name.starts_with("mcp__")
-        || ruckcode_tools::builtin_tools()
-            .iter()
-            .any(|t| t.name() == name)
+        || (schema.is_builtin_tool)(name)
 }
 
 #[cfg(test)]

@@ -161,7 +161,7 @@ async fn run(steps: Vec<Step>, config: &str) -> Run {
         steps: Mutex::new(steps.into()),
         ..Default::default()
     });
-    let agent = Agent::new(AgentOptions {
+    let agent = Agent::ruckcode(AgentOptions {
         provider_override: Some(provider.clone()),
         user_config_dir: Some(user.path().to_path_buf()),
         ..Default::default()

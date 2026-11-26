@@ -112,7 +112,7 @@ pub async fn unfinished(t: &Target, project: &str) -> Result<Value, String> {
     match t {
         Target::Local => {
             let p = PathBuf::from(project);
-            json(local(move || Ok(transcript_api::find_unfinished(&p, None))).await?)
+            json(local(move || Ok(ruckcode_core::extension::find_unfinished(&p, None))).await?)
         }
         Target::Wsl(d) => via_wsl(d, project, unfinished_call(), 60).await,
     }

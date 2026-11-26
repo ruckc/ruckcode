@@ -1,8 +1,10 @@
 //! Agent core: configuration, lifecycle modes, permissions, transcripts and the agent loop.
 
 pub mod agent;
+pub mod agent_ext;
 pub mod config;
 pub mod context;
+pub mod extension;
 pub mod guard_ext;
 pub mod identity;
 pub mod init;
@@ -31,7 +33,9 @@ pub use agent::{
     Agent, AgentOptions, Client, Command, ModeInfo, PermissionDecision, PermissionRequest,
     RateLimitEvent, SessionEvent, SessionInfo, StopReason, ToolStatus,
 };
+pub use agent_ext::{AgentExtension, SessionExt};
 pub use config::{Config, Pricing, Profile, ProviderKind};
+pub use extension::RuckcodeExtension;
 pub use modes::{ModeDef, ModeSchema, ModeSet};
 pub use permissions::Permission;
 pub use prompt::MAX_CLIENT_INSTRUCTIONS;
