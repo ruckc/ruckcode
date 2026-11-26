@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use ruck_harness_llm::{ContentBlock, Message, Role, StopReason, Usage};
+use ruckcode_tools::PlanStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
@@ -378,7 +379,7 @@ pub struct Unfinished {
     /// The last turn never completed (killed, crashed, provider error, rate limited) or work was recorded
     /// after the last turn ended.
     pub interrupted: bool,
-    /// Content of the last `TodoWrite` plan's items that are not completed.
+    /// Content of the last plan's items that are not completed.
     pub open_tasks: Vec<String>,
     /// The plan item that was in progress, if any.
     pub in_progress: Option<String>,
@@ -394,7 +395,7 @@ impl Unfinished {
 ///
 /// A session is interrupted when conversation records (user/assistant message, tool call or
 /// result) follow the last `turn_end`, or the last turn ended in an error or a rate limit. A turn the user
-/// cancelled on purpose is not interrupted. Independently, the last `TodoWrite` plan with items
+/// cancelled on purpose is not interrupted. Independently, the last plan with items
 /// that are not `completed` counts as open tasks. `session_dismissed` clears both until newer
 /// records appear.
 pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
@@ -428,18 +429,18 @@ pub fn assess_unfinished(records: &[Stamped]) -> Unfinished {
             _ => {}
         }
         if let Record::ToolCall { name, input, .. } = &r.record {
-            if name == "TodoWrite" {
+            // A plan tool's call replaces the plan (decoded by name: a transcript keeps no tools).
+            if let Some(items) = ruckcode_tools::decode_builtin_plan(name, input) {
                 open.clear();
                 in_progress = None;
-                for t in input["todos"].as_array().into_iter().flatten() {
-                    let content = t["content"].as_str().unwrap_or_default().to_string();
-                    match t["status"].as_str() {
-                        Some("completed") => {}
-                        Some("in_progress") => {
-                            in_progress = Some(content.clone());
-                            open.push(content);
+                for t in items {
+                    match t.status {
+                        PlanStatus::Completed => {}
+                        PlanStatus::InProgress => {
+                            in_progress = Some(t.content.clone());
+                            open.push(t.content);
                         }
-                        _ => open.push(content),
+                        PlanStatus::Pending => open.push(t.content),
                     }
                 }
             }

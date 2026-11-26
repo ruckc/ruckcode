@@ -25,9 +25,10 @@
 //!   earlier in the turn counts as one return; `oscillation_count` returns trip the detector.
 //!
 //! Plan updates that change nothing (`plan_noop_count` in a row) trip it as well; the plan tool
-//! answers those locally (see [`plan_items`]).
+//! answers those locally (see [`normalise_plan`]).
 
 use ruck_harness_llm::{ContentBlock, Message};
+use ruckcode_tools::PlanItem;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
@@ -596,20 +597,19 @@ fn similar(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// The plan's (content, status) pairs from `TodoWrite` input, normalised for comparison
-/// (whitespace collapsed, case ignored). `None` if the input is not a valid plan.
-pub fn plan_items(input: &Value) -> Option<Vec<(String, String)>> {
-    input["todos"]
-        .as_array()?
+/// The plan's (content, status) pairs, normalised for comparison (whitespace collapsed, case
+/// ignored). The agent takes the items from the plan tool's [`ruckcode_tools::Tool::plan`] hook.
+pub fn normalise_plan(items: &[PlanItem]) -> Vec<(String, String)> {
+    items
         .iter()
         .map(|t| {
-            let content = t["content"]
-                .as_str()?
+            let content = t
+                .content
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
                 .to_lowercase();
-            Some((content, t["status"].as_str()?.to_string()))
+            (content, t.status.as_str().to_string())
         })
         .collect()
 }

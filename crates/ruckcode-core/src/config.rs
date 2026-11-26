@@ -117,23 +117,32 @@ pub struct Profile {
     pub lean_tools: bool,
 }
 
-/// Built-in tools that `lean_tools` leaves out.
-pub const LEAN_DROPPED_TOOLS: [&str; 2] = ["TodoWrite", "AskUserQuestion"];
-
-/// Built-in tools that `lean_tools` leaves out unless the profile's `tools` allowlist names them.
-pub const LEAN_OPT_IN_TOOLS: [&str; 2] = ["WebFetch", "WebSearch"];
-
 impl Profile {
-    /// Whether the built-in tool `name` is offered with this profile.
+    /// Whether the built-in tool `name` is offered with this profile. A tool's
+    /// [`LeanClass`](ruckcode_tools::LeanClass) says how `lean_tools` treats it; a name that is
+    /// not a built-in tool is treated as [`LeanClass::Keep`](ruckcode_tools::LeanClass::Keep).
     pub fn allows_builtin(&self, name: &str) -> bool {
-        if self.lean_tools && LEAN_DROPPED_TOOLS.contains(&name) {
+        let class = ruckcode_tools::builtin_tool(name)
+            .map(|t| t.lean_class())
+            .unwrap_or_default();
+        self.allows_class(name, class)
+    }
+
+    /// Whether `tool` is offered with this profile (see [`allows_builtin`](Self::allows_builtin)).
+    pub fn allows_tool(&self, tool: &dyn ruckcode_tools::Tool) -> bool {
+        self.allows_class(tool.name(), tool.lean_class())
+    }
+
+    fn allows_class(&self, name: &str, class: ruckcode_tools::LeanClass) -> bool {
+        use ruckcode_tools::LeanClass;
+        if self.lean_tools && class == LeanClass::DropWhenLean {
             return false;
         }
         let listed = self
             .tools
             .as_ref()
             .map(|l| l.iter().any(|n| n.eq_ignore_ascii_case(name)));
-        if self.lean_tools && LEAN_OPT_IN_TOOLS.contains(&name) {
+        if self.lean_tools && class == LeanClass::OptInWhenLean {
             return listed == Some(true);
         }
         listed.unwrap_or(true)

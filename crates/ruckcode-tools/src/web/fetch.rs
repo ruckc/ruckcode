@@ -336,6 +336,10 @@ impl Tool for WebFetch {
         })
     }
 
+    fn lean_class(&self) -> crate::LeanClass {
+        crate::LeanClass::OptInWhenLean
+    }
+
     fn kind(&self) -> ToolKind {
         ToolKind::Fetch
     }

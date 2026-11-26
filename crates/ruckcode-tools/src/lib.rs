@@ -13,7 +13,9 @@ pub use bash::Bash;
 pub use fs::{Edit, Read, Write};
 pub use sandboxed::{launch, protected_write_msg, Launch, SandboxHandle};
 pub use search::{Glob, Grep};
-pub use todo::{TodoItem, TodoStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
+pub use todo::{PlanItem, PlanStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
+#[allow(deprecated)]
+pub use todo::{TodoItem, TodoStatus};
 pub use web::{WebConfig, WebFetch, WebSearch};
 
 use async_trait::async_trait;
@@ -77,7 +79,7 @@ pub struct ToolOutput {
     pub content: String,
     pub is_error: bool,
     pub edits: Vec<FileEdit>,
-    pub plan: Option<Vec<TodoItem>>,
+    pub plan: Option<Vec<PlanItem>>,
 }
 
 impl ToolOutput {
@@ -132,6 +134,18 @@ impl ToolContext {
     }
 }
 
+/// How a profile's `lean_tools` setting treats a built-in tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LeanClass {
+    /// Offered as usual.
+    #[default]
+    Keep,
+    /// Left out when `lean_tools` is on, even if the profile's `tools` allowlist names it.
+    DropWhenLean,
+    /// Left out when `lean_tools` is on unless the profile's `tools` allowlist names it.
+    OptInWhenLean,
+}
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
@@ -152,6 +166,25 @@ pub trait Tool: Send + Sync {
             .filter_map(|k| input.get(*k).and_then(Value::as_str).map(str::to_string))
             .take(1)
             .collect()
+    }
+
+    /// The plan this call writes, for tools that maintain the session's plan (the agent shows
+    /// it to the client, skips updates that change nothing and carries it into the compaction
+    /// summary). `None` for every other tool, and for input that is not a valid plan.
+    fn plan(&self, input: &Value) -> Option<Vec<PlanItem>> {
+        let _ = input;
+        None
+    }
+
+    /// Whether the tool runs without a permission prompt when no mode or config rule applies,
+    /// regardless of its [`ToolKind`].
+    fn auto_allow(&self) -> bool {
+        false
+    }
+
+    /// How the `lean_tools` profile setting treats this tool.
+    fn lean_class(&self) -> LeanClass {
+        LeanClass::Keep
     }
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput>;
@@ -189,6 +222,23 @@ pub fn builtin_tools_with(web: &WebConfig) -> Vec<Arc<dyn Tool>> {
         v.push(Arc::new(WebSearch::new(web)));
     }
     v
+}
+
+/// The built-in tool called `name`, from a registry built once. For looking up what a tool
+/// says about itself (its [`LeanClass`], how it decodes a plan) without a session's tool set.
+pub fn builtin_tool(name: &str) -> Option<&'static Arc<dyn Tool>> {
+    static TOOLS: std::sync::OnceLock<Vec<Arc<dyn Tool>>> = std::sync::OnceLock::new();
+    TOOLS
+        .get_or_init(builtin_tools)
+        .iter()
+        .find(|t| t.name() == name)
+}
+
+/// The plan a recorded call to the built-in tool `name` wrote, if that tool maintains a plan.
+/// Transcripts keep only tool names and inputs, so replaying one decodes plans through here
+/// when the session's own tool set (the preferred source) does not offer the tool.
+pub fn decode_builtin_plan(name: &str, input: &Value) -> Option<Vec<PlanItem>> {
+    builtin_tool(name)?.plan(input)
 }
 
 pub(crate) fn str_arg<'a>(input: &'a Value, key: &str) -> anyhow::Result<&'a str> {
@@ -304,5 +354,98 @@ mod identity_tests {
             protected_write_msg(&ACME),
             "refused: this path is acme's own configuration (.acme/, .acme-tools.json or the user config directory) or protected git state (.git/config, .git/hooks/, .git/info/, remote-tracking refs). The sandbox policy can only be changed by the user."
         );
+    }
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A tool that overrides none of the hooks.
+    struct Plain;
+
+    #[async_trait]
+    impl Tool for Plain {
+        fn name(&self) -> &str {
+            "Plain"
+        }
+        fn description(&self) -> String {
+            String::new()
+        }
+        fn input_schema(&self) -> Value {
+            json!({})
+        }
+        fn kind(&self) -> ToolKind {
+            ToolKind::Other
+        }
+        async fn call(&self, _: Value, _: &ToolContext) -> anyhow::Result<ToolOutput> {
+            Ok(ToolOutput::ok(""))
+        }
+    }
+
+    #[test]
+    fn hook_defaults() {
+        let input = json!({"todos": [{"content": "a", "status": "pending"}]});
+        assert_eq!(Plain.plan(&input), None);
+        assert!(!Plain.auto_allow());
+        assert_eq!(Plain.lean_class(), LeanClass::Keep);
+        assert_eq!(LeanClass::default(), LeanClass::Keep);
+    }
+
+    #[test]
+    fn builtin_hook_overrides() {
+        let input = json!({"todos": [
+            {"content": "a", "status": "pending"},
+            {"content": "b", "status": "completed"}
+        ]});
+        let items = TodoWrite.plan(&input).unwrap();
+        assert_eq!(
+            items,
+            vec![
+                PlanItem {
+                    content: "a".into(),
+                    status: PlanStatus::Pending
+                },
+                PlanItem {
+                    content: "b".into(),
+                    status: PlanStatus::Completed
+                }
+            ]
+        );
+        assert_eq!(TodoWrite.plan(&json!({"todos": "x"})), None);
+        assert_eq!(TodoWrite.plan(&json!({})), None);
+        let class = |n: &str| {
+            let t = builtin_tool(n).unwrap();
+            (t.auto_allow(), t.lean_class())
+        };
+        assert_eq!(class("TodoWrite"), (true, LeanClass::DropWhenLean));
+        assert_eq!(class("AskUserQuestion"), (true, LeanClass::DropWhenLean));
+        assert_eq!(class("WebFetch"), (false, LeanClass::OptInWhenLean));
+        assert_eq!(class("WebSearch"), (false, LeanClass::OptInWhenLean));
+        for n in ["Read", "Write", "Edit", "Glob", "Grep", "Bash"] {
+            assert_eq!(class(n), (false, LeanClass::Keep), "{n}");
+        }
+    }
+
+    #[test]
+    fn decode_builtin_plan_by_name() {
+        let input = json!({"todos": [{"content": "a", "status": "in_progress"}]});
+        assert_eq!(decode_builtin_plan("TodoWrite", &input).unwrap().len(), 1);
+        assert_eq!(decode_builtin_plan("Read", &input), None);
+        assert_eq!(decode_builtin_plan("Nope", &input), None);
+    }
+
+    #[test]
+    fn plan_serde_is_unchanged() {
+        let item: PlanItem =
+            serde_json::from_value(json!({"content": "x", "status": "in_progress"})).unwrap();
+        assert_eq!(item.status.as_str(), "in_progress");
+        assert_eq!(
+            serde_json::to_value(&item).unwrap(),
+            json!({"content": "x", "status": "in_progress"})
+        );
+        #[allow(deprecated)]
+        let _alias: TodoItem = item;
     }
 }
