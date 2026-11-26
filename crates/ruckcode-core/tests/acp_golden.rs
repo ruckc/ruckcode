@@ -1,10 +1,10 @@
 //! Golden wire tests.
 //!
-//! `golden/baseline.json` was captured from the hand-written schema (before the migration to the
+//! `golden/acp-baseline.json` was captured from the hand-written schema (before the migration to the
 //! official `agent-client-protocol-schema` crate). The migrated agent must produce the same JSON,
 //! except for the differences listed in [`intended_differences`].
 //!
-//! `GOLDEN_UPDATE=1 cargo test -p ruckcode-acp --test golden` writes the current output to
+//! `GOLDEN_UPDATE=1 cargo test -p ruckcode-core --test acp_golden` writes the current output to
 //! `golden/current.json` for inspection; `GOLDEN_UPDATE=baseline` overwrites the baseline (only
 //! do that when the wire format changes on purpose).
 
@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use ruck_harness_acp::{spawn_in_process, Handler, RpcError};
 use ruck_harness_llm::mock::MockProvider;
 use ruck_harness_llm::{ContentBlock as LlmBlock, Message, Role};
-use ruckcode_acp::{spawn_in_process, Handler, RpcError};
 use ruckcode_core::{Agent, AgentOptions};
 use serde_json::{json, Value};
 
@@ -59,7 +59,7 @@ fn harness(
     proj: &std::path::Path,
     user: &std::path::Path,
     script: Vec<Message>,
-) -> (ruckcode_acp::Connection, Arc<Recorder>) {
+) -> (ruck_harness_acp::Connection, Arc<Recorder>) {
     let rec = Arc::new(Recorder::default());
     // These tests run in a binary without the sandbox launcher: turn the sandbox off (user config only).
     let _ = std::fs::write(user.join("config.toml"), "[sandbox]\nenabled = false\n");
@@ -69,7 +69,7 @@ fn harness(
         ..Default::default()
     }));
     let _ = proj;
-    (spawn_in_process(agent, rec.clone()), rec)
+    (spawn_in_process(agent, info(), rec.clone()), rec)
 }
 
 /// Replace volatile values (session id, temp dirs, timestamps) with placeholders.
@@ -269,7 +269,7 @@ async fn wire_matches_baseline_except_intended_differences() {
     if std::env::var_os("GOLDEN_UPDATE").is_some() {
         let name = std::env::var("GOLDEN_UPDATE").unwrap();
         let name = if name == "baseline" {
-            "baseline"
+            "acp-baseline"
         } else {
             "current"
         };
@@ -281,7 +281,8 @@ async fn wire_matches_baseline_except_intended_differences() {
         return;
     }
     let baseline: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("baseline.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.join("acp-baseline.json")).unwrap())
+            .unwrap();
     let expected = intended_differences(baseline);
     let actual = strip_additions(actual);
     for key in expected.as_object().unwrap().keys() {
@@ -297,4 +298,8 @@ async fn wire_matches_baseline_except_intended_differences() {
         }
         assert_eq!(actual[key], expected[key], "golden mismatch in `{key}`");
     }
+}
+
+fn info() -> ruck_harness_acp::AcpInfo {
+    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION)
 }

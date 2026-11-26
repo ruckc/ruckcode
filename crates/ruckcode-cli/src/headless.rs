@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use ruckcode_acp::schema::{
+use ruck_harness_acp::schema::{
     self, ContentBlock, ContentChunk, RequestPermissionRequest, RequestPermissionResponse,
     SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallStatus,
 };
-use ruckcode_acp::{Handler, RpcError};
+use ruck_harness_acp::{Handler, RpcError};
 use serde_json::{json, Value};
 
 use crate::client::{self, AskResponse};
@@ -67,7 +67,7 @@ impl Handler for HeadlessHandler {
                 let outcome = client::pick_option(&req, allow);
                 Ok(serde_json::to_value(RequestPermissionResponse::new(outcome)).unwrap())
             }
-            schema::ASK_USER_QUESTION => {
+            m if m == client::ext_methods().ask_user_question => {
                 Ok(serde_json::to_value(AskResponse::cancelled()).unwrap())
             }
             m => Err(RpcError::method_not_found(m)),
@@ -78,7 +78,7 @@ impl Handler for HeadlessHandler {
         if self.quiet.load(Ordering::Relaxed) {
             return;
         }
-        if method == schema::RATE_LIMIT {
+        if method == client::ext_methods().rate_limit {
             // Same envelope as `session/update` so stream-json consumers read one stream.
             if self.format == OutputFormat::StreamJson {
                 println!("{}", rate_limit_stream_line(&params));

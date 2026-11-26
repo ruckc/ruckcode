@@ -25,7 +25,7 @@ use crate::wsl;
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum HostKind {
-    /// `ruckcode_core::Agent` embedded in this process behind `ruckcode_acp`.
+    /// `ruckcode_core::Agent` embedded in this process behind `ruck_harness_acp`.
     #[default]
     Local,
     /// `rc acp` as a child process.
@@ -91,7 +91,10 @@ impl Hosts {
             HostKind::Local => {
                 check_dir(&params.cwd)?;
                 let agent = Arc::new(Agent::ruckcode(AgentOptions::default()));
-                let (tx, rx) = ruckcode_acp::spawn_in_process_raw(agent);
+                let (tx, rx) = ruck_harness_acp::spawn_in_process_raw(
+                    agent,
+                    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION),
+                );
                 Spawned {
                     to_agent: tx,
                     from_agent: rx,

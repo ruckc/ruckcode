@@ -287,15 +287,16 @@ async fn real_main() -> ExitCode {
 }
 
 async fn run_acp(cli: &Cli) -> Result<()> {
-    ruckcode_acp::agent::serve_stdio(cli.build_agent()).await
+    ruck_harness_acp::agent::serve_stdio(cli.build_agent(), client::acp_info()).await
 }
 
 /// Connect an in-process agent with a client handler and run the ACP handshake.
 pub async fn connect(
     cli: &Cli,
-    handler: Arc<dyn ruckcode_acp::Handler>,
-) -> Result<ruckcode_acp::Connection> {
-    let conn = ruckcode_acp::agent::spawn_in_process(cli.build_agent(), handler);
+    handler: Arc<dyn ruck_harness_acp::Handler>,
+) -> Result<ruck_harness_acp::Connection> {
+    let conn =
+        ruck_harness_acp::agent::spawn_in_process(cli.build_agent(), client::acp_info(), handler);
     client::initialize(&conn).await?;
     Ok(conn)
 }
@@ -303,13 +304,13 @@ pub async fn connect(
 struct NoHandler;
 
 #[async_trait::async_trait]
-impl ruckcode_acp::Handler for NoHandler {
+impl ruck_harness_acp::Handler for NoHandler {
     async fn request(
         &self,
         method: &str,
         _params: serde_json::Value,
-    ) -> Result<serde_json::Value, ruckcode_acp::RpcError> {
-        Err(ruckcode_acp::RpcError::method_not_found(method))
+    ) -> Result<serde_json::Value, ruck_harness_acp::RpcError> {
+        Err(ruck_harness_acp::RpcError::method_not_found(method))
     }
     async fn notification(&self, _method: &str, _params: serde_json::Value) {}
 }

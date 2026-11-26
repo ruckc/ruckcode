@@ -8,6 +8,9 @@
 
 use ruck_harness_ident::AppIdentity;
 
+/// The product version (every workspace crate shares it); reported as the ACP `agentInfo` version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub const RUCKCODE: AppIdentity = AppIdentity {
     name: "ruckcode",
     env_prefix: "RUCKCODE",

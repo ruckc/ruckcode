@@ -1,12 +1,12 @@
 //! ACP wire types.
 //!
 //! The protocol types are the official [`agent_client_protocol_schema`] crate (v1, stable
-//! surface plus `unstable_end_turn_token_usage` for `PromptResponse.usage`), re-exported here so that `ruckcode_acp::schema::*`
+//! surface plus `unstable_end_turn_token_usage` for `PromptResponse.usage`), re-exported here so that `ruck_harness_acp::schema::*`
 //! is the one import for everything on the wire. On top of that this module holds:
 //!
 //! - method-name constants usable in `match` arms (the crate only exposes them as struct fields;
 //!   a unit test keeps the two in sync),
-//! - the `_ruckcode/*` extension types,
+//! - the `_{ns}/*` extension types,
 //! - small helpers: capability checks and lenient inbound parsing.
 //!
 //! Note: the official types are `#[non_exhaustive]`; build them with `Type::new(..)` plus the
@@ -27,7 +27,7 @@ pub fn round_usd(amount: f64) -> f64 {
 /// `totalTokens = inputTokens + outputTokens + cachedReadTokens + cachedWriteTokens` and cost can
 /// be computed per bucket without double counting. The cache fields are omitted when the provider
 /// does not report them.
-pub fn prompt_usage(u: &ruckcode_core::TokenUsage) -> Usage {
+pub fn prompt_usage(u: &ruck_harness_llm::Usage) -> Usage {
     let read = u.cache_read_tokens;
     let write = u.cache_write_tokens;
     let input = u.uncached_input_tokens();
@@ -61,17 +61,34 @@ pub const SESSION_REQUEST_PERMISSION: &str = "session/request_permission";
 pub const FS_READ_TEXT_FILE: &str = "fs/read_text_file";
 pub const FS_WRITE_TEXT_FILE: &str = "fs/write_text_file";
 
-// ---- ruckcode extension method names ---------------------------------------------------------
+// ---- extension method names -------------------------------------------------------------------
 
-pub const ASK_USER_QUESTION: &str = "_ruckcode/ask_user_question";
-/// Deprecated alias of the standard `session/list`.
-pub const LIST_SESSIONS: &str = "_ruckcode/list_sessions";
-/// Pins the model for a session; also reachable as `session/set_config_option` with `model`.
-pub const SET_MODEL: &str = "_ruckcode/set_model";
+/// The names of the product's extension methods: `_{ns}/ask_user_question` and so on, where
+/// `ns` is the identity's `acp_namespace`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtMethods {
+    /// Agent -> client request: ask the user a question.
+    pub ask_user_question: String,
+    /// Client -> agent request. Deprecated alias of the standard `session/list`.
+    pub list_sessions: String,
+    /// Client -> agent request. Pins the model for a session; also reachable as
+    /// `session/set_config_option` with `model`.
+    pub set_model: String,
+    /// Notification (agent -> client) about a model request that is waiting out a rate limit or
+    /// transient failure, or was given up on. See `rate_limit_params`.
+    pub rate_limit: String,
+}
 
-/// Notification (agent -> client) about a model request that is waiting out a rate limit or
-/// transient failure, or was given up on. See `rate_limit_params`.
-pub const RATE_LIMIT: &str = "_ruckcode/rate_limit";
+impl ExtMethods {
+    pub fn new(ns: &str) -> Self {
+        Self {
+            ask_user_question: format!("_{ns}/ask_user_question"),
+            list_sessions: format!("_{ns}/list_sessions"),
+            set_model: format!("_{ns}/set_model"),
+            rate_limit: format!("_{ns}/rate_limit"),
+        }
+    }
+}
 
 /// Id of the `model` session config option.
 pub const MODEL_CONFIG_ID: &str = "model";
@@ -124,36 +141,37 @@ pub struct SetModelRequest {
 
 // ---- helpers ----------------------------------------------------------------------------------
 
-fn ruckcode_meta_flag(caps: &ClientCapabilities, flag: &str) -> bool {
+fn meta_flag(caps: &ClientCapabilities, ns: &str, flag: &str) -> bool {
     caps.meta
         .as_ref()
-        .and_then(|m| m.get("ruckcode"))
+        .and_then(|m| m.get(ns))
         .and_then(|r| r.get(flag))
         .and_then(Value::as_bool)
         == Some(true)
 }
 
-/// Client advertised `_meta.ruckcode.askUserQuestion = true`.
-pub fn supports_ask_user_question(caps: &ClientCapabilities) -> bool {
-    ruckcode_meta_flag(caps, "askUserQuestion")
+/// Client advertised `_meta.{ns}.askUserQuestion = true`.
+pub fn supports_ask_user_question(caps: &ClientCapabilities, ns: &str) -> bool {
+    meta_flag(caps, ns, "askUserQuestion")
 }
 
 /// Client can render the standard `notice` session update: it advertised
-/// `clientCapabilities.session.notices`, or `_meta.ruckcode.notices = true`.
-pub fn supports_notices(caps: &ClientCapabilities) -> bool {
-    caps.session.as_ref().is_some_and(|s| s.notices.is_some())
-        || ruckcode_meta_flag(caps, "notices")
+/// `clientCapabilities.session.notices`, or `_meta.{ns}.notices = true`.
+pub fn supports_notices(caps: &ClientCapabilities, ns: &str) -> bool {
+    caps.session.as_ref().is_some_and(|s| s.notices.is_some()) || meta_flag(caps, ns, "notices")
 }
 
-/// Client advertised `_meta.ruckcode.rateLimit = true`: it renders `_ruckcode/rate_limit`
+/// Client advertised `_meta.{ns}.rateLimit = true`: it renders `_{ns}/rate_limit`
 /// notifications (a live countdown). Others get the status as a plain notice.
-pub fn supports_rate_limit(caps: &ClientCapabilities) -> bool {
-    ruckcode_meta_flag(caps, "rateLimit")
+pub fn supports_rate_limit(caps: &ClientCapabilities, ns: &str) -> bool {
+    meta_flag(caps, ns, "rateLimit")
 }
 
-/// Capabilities `rc` itself advertises: no fs/terminal, notices, and the ask-user extension.
-pub fn ruckcode_client_capabilities() -> ClientCapabilities {
-    let Value::Object(meta) = serde_json::json!({"ruckcode": {"askUserQuestion": true, "notices": true, "rateLimit": true}})
+/// Capabilities the product's own client advertises: no fs/terminal, notices, and the
+/// ask-user and rate-limit extensions under `_meta.{ns}`.
+pub fn client_capabilities(ns: &str) -> ClientCapabilities {
+    let Value::Object(meta) =
+        serde_json::json!({ns: {"askUserQuestion": true, "notices": true, "rateLimit": true}})
     else {
         unreachable!()
     };
@@ -245,25 +263,25 @@ mod tests {
     #[test]
     fn capability_helpers() {
         let none = ClientCapabilities::new();
-        assert!(!supports_ask_user_question(&none));
-        assert!(!supports_notices(&none));
-        let ours = ruckcode_client_capabilities();
-        assert!(supports_ask_user_question(&ours));
-        assert!(supports_notices(&ours));
+        assert!(!supports_ask_user_question(&none, "acme"));
+        assert!(!supports_notices(&none, "acme"));
+        let ours = client_capabilities("acme");
+        assert!(supports_ask_user_question(&ours, "acme"));
+        assert!(supports_notices(&ours, "acme"));
         let i: InitializeRequest = serde_json::from_value(json!({
             "protocolVersion":1,
             "clientCapabilities":{"fs":{"readTextFile":true},"session":{"notices":{}}}
         }))
         .unwrap();
         assert!(i.client_capabilities.fs.read_text_file);
-        assert!(supports_notices(&i.client_capabilities));
-        assert!(!supports_ask_user_question(&i.client_capabilities));
+        assert!(supports_notices(&i.client_capabilities, "acme"));
+        assert!(!supports_ask_user_question(&i.client_capabilities, "acme"));
         let j: InitializeRequest = serde_json::from_value(json!({
             "protocolVersion":1,
-            "clientCapabilities":{"_meta":{"ruckcode":{"notices":true}}}
+            "clientCapabilities":{"_meta":{"acme":{"notices":true}}}
         }))
         .unwrap();
-        assert!(supports_notices(&j.client_capabilities));
+        assert!(supports_notices(&j.client_capabilities, "acme"));
     }
 
     #[test]

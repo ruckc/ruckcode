@@ -35,5 +35,6 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+ruck-harness-acp.workspace = true
 ruck-harness-ident = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

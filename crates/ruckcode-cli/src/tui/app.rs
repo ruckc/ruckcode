@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use ruckcode_acp::schema::{
+use ruck_harness_acp::schema::{
     ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind, PlanEntry,
     RequestPermissionOutcome, RequestPermissionRequest, SelectedPermissionOutcome, SessionMode,
     SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
@@ -448,7 +448,7 @@ impl App {
         let all_done = !entries.is_empty()
             && entries
                 .iter()
-                .all(|e| e.status == ruckcode_acp::schema::PlanEntryStatus::Completed);
+                .all(|e| e.status == ruck_harness_acp::schema::PlanEntryStatus::Completed);
         if all_done {
             self.plan_complete = Some(entries.len());
             self.plan.clear();
@@ -1269,7 +1269,7 @@ mod tests {
     use super::*;
     use crate::client::QuestionOption;
     use crossterm::event::KeyEventKind;
-    use ruckcode_acp::schema::{
+    use ruck_harness_acp::schema::{
         CurrentModeUpdate, Diff, Notice, NoticeSeverity, Plan, PlanEntryPriority, PlanEntryStatus,
         ToolCallUpdateFields, UsageUpdate,
     };

@@ -1,12 +1,12 @@
 # ACP support
 
-`ruckcode-acp` serves the agent over the Agent Client Protocol (v1, newline-delimited JSON-RPC 2.0).
+`ruck-harness-acp` serves the agent over the Agent Client Protocol (v1, newline-delimited JSON-RPC 2.0).
 `rc acp` serves on stdio; `rc` itself talks to an in-process agent over an in-memory byte pipe, so
 the wire is the same in both cases.
 
 Wire types are the official [`agent-client-protocol-schema`](https://crates.io/crates/agent-client-protocol-schema)
 crate, pinned to `=1.12.0` with `default-features = false` (no `schemars`) and **no `unstable_*`
-features**. `ruckcode_acp::schema` re-exports its `v1` types plus our extension types and helpers.
+features**. `ruck_harness_acp::schema` re-exports its `v1` types plus our extension types and helpers.
 The JSON-RPC layer (framing, request ids, response routing, error replies, the dispatch loop) is
 the official [`agent-client-protocol`](https://crates.io/crates/agent-client-protocol) SDK (3.4,
 `default-features = false`; it depends on the same `agent-client-protocol-schema =1.12.0`, so there
@@ -273,7 +273,7 @@ that also arrives as `current_mode_update`.
 
 ## Compatibility with the previous hand-written schema
 
-Intended wire differences, all covered by `crates/ruckcode-acp/tests/golden.rs` (baseline captured
+Intended wire differences, all covered by `crates/ruckcode-core/tests/acp_golden.rs` (baseline captured
 before the migration): `sessionCapabilities`/`auth` in the `initialize` response; `configOptions` in
 session responses; `tool_call_update` without `content` instead of `content: []`; diffs without
 `"oldText": null`; `tool_call` without default `status`/`kind`; new `usage_update`,
