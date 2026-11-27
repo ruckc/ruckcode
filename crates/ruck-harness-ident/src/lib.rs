@@ -25,6 +25,9 @@ pub struct AppIdentity {
     pub user_config_subdir: &'static str,
     /// The product's subdirectory of the platform user data directory ("ruckcode").
     pub data_dir_name: &'static str,
+    /// The product's release version ("0.26.1", or "0.1.0-dev+<sha>" for dev builds); reported to
+    /// ACP clients and MCP servers.
+    pub version: &'static str,
     /// The HTTP `User-Agent` of provider and model-listing requests ("ruckcode/0.1.0").
     pub user_agent: &'static str,
     /// Where the product is documented; appended to the user agent of web tool requests.
@@ -78,6 +81,7 @@ pub mod testing {
         config_dir_env: "RUCKCODE_CONFIG_DIR",
         user_config_subdir: "ruckcode",
         data_dir_name: "ruckcode",
+        version: env!("CARGO_PKG_VERSION"),
         user_agent: concat!("ruckcode/", env!("CARGO_PKG_VERSION")),
         homepage_url: "https://github.com/ruckc/ruckcode",
         acp_namespace: "ruckcode",
@@ -93,6 +97,7 @@ pub mod testing {
         config_dir_env: "ACME_CONFIG_DIR",
         user_config_subdir: "acme-agent",
         data_dir_name: "acme-data",
+        version: "9.9.9",
         user_agent: "acme/9.9.9",
         homepage_url: "https://example.com/acme",
         acp_namespace: "acme",
@@ -112,6 +117,7 @@ mod tests {
         config_dir_env: "X_CONFIG_DIR",
         user_config_subdir: "x",
         data_dir_name: "x",
+        version: "1",
         user_agent: "x/1",
         homepage_url: "https://x.test",
         acp_namespace: "x",

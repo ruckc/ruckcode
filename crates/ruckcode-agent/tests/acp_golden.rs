@@ -301,5 +301,5 @@ async fn wire_matches_baseline_except_intended_differences() {
 }
 
 fn info() -> ruck_harness_acp::AcpInfo {
-    ruck_harness_acp::AcpInfo::new(ruckcode_agent::identity::VERSION)
+    ruck_harness_acp::AcpInfo::new("0.1.0") // fixed: the baseline must not depend on the build
 }

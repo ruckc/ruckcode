@@ -23,7 +23,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ruck_harness_core::{Agent, AgentOptions};
 
 #[derive(Parser, Debug)]
-#[command(name = "rc", version = env!("RC_VERSION"), about = "ruckcode: a mode-driven coding agent")]
+#[command(name = "rc", version = ruckcode_agent::identity::VERSION, about = "ruckcode: a mode-driven coding agent")]
 pub struct Cli {
     /// Initial prompt (interactive) or the prompt to run (with --print).
     pub prompt: Option<String>,

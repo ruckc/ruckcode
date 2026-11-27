@@ -753,7 +753,7 @@ impl Agent {
                     id,
                     cwd: s.cwd.display().to_string(),
                     created_at: transcript::now_rfc3339(),
-                    ruckcode_version: env!("CARGO_PKG_VERSION").into(),
+                    ruckcode_version: self.ext.identity().version.into(),
                     profile: s.profile.clone(),
                     model,
                     mode: s.mode.clone(),
