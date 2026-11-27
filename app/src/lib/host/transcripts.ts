@@ -1,5 +1,5 @@
 /**
- * Transcript browser: types (mirroring the JSON of `ruckcode_agent::transcript_api`, camelCase) and
+ * Transcript browser: types (mirroring the JSON of `ruck_harness_core::transcript_api`, camelCase) and
  * the API the UI uses. Implementations: Tauri commands (local core, or `rc sessions --json` inside
  * WSL) and a seeded in-memory fake for browser mock mode.
  */
