@@ -169,9 +169,9 @@ impl Tool for ContextTool {
          the stated mark: compacting earlier loses detail for nothing. \
          action=collapse replaces the events `from`..`to` (inclusive) with your own `summary`, \
          which must keep what you still need (decisions, file paths, results, open questions); \
-         the originals are archived, not deleted. A range must hold whole exchanges (a tool call \
-         and its result together) and cannot include the first message or the latest request; \
-         it returns the summary tag, e.g. e3..e17. \
+         the originals are archived, not deleted. A range is widened to whole exchanges (a tool \
+         call is never separated from its result); the first message and the latest request \
+         stay. It returns the summary tag, e.g. e3..e17. \
          action=recall reads the archived originals of `tag` (an event tag like e9, or a summary \
          tag like e3..e17); it does not put them back into the history, and the text it returns \
          counts against your context."

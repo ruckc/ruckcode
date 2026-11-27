@@ -339,9 +339,6 @@ async fn bad_ranges_are_rejected_with_a_reason_and_change_nothing() {
     let env = Env::managed();
     env.mock.push(bash_lines("a", "AAAA", 3)); // e2, e3
     env.mock.push(bash_lines("b", "BBBB", 3)); // e4, e5
-    env.mock.push(collapse("x1", "e3", "e4", "splits a pair"));
-    env.mock
-        .push(collapse("x2", "e1", "e3", "includes the task"));
     env.mock.push(collapse("x3", "e2", "e99", "does not exist"));
     env.mock.push(collapse("x4", "e2", "e1", "backwards"));
     env.mock.push(tool_use(
@@ -366,12 +363,6 @@ async fn bad_ranges_are_rejected_with_a_reason_and_change_nothing() {
         assert!(e, "{id} should fail: {c}");
         c
     };
-    let c = err("x1");
-    assert!(
-        c.contains("splits a tool call") && c.contains("e2..e5"),
-        "{c}"
-    );
-    assert!(err("x2").contains("first message"));
     assert!(err("x3").contains("not in the history"));
     assert!(err("x4").contains("after"));
     let c = err("x5");
@@ -389,6 +380,52 @@ async fn bad_ranges_are_rejected_with_a_reason_and_change_nothing() {
 }
 
 #[tokio::test]
+async fn ranges_that_split_a_tool_pair_are_widened_and_the_task_stays() {
+    let env = Env::managed();
+    env.mock.push(bash_lines("a", "AAAA", 3)); // e2, e3
+    env.mock.push(bash_lines("b", "BBBB", 3)); // e4, e5
+                                               // e3 is a result, e4 a call: both pairs are split; the range is widened to e2..e5.
+    env.mock.push(collapse("x1", "e3", "e4", "both commands"));
+    env.mock.push(Message::assistant_text("done"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let client = Arc::new(TestClient::default());
+    prompt(&agent, &info.id, "do it", &client).await;
+    let last = env.requests().pop().unwrap();
+    let (c, e) = result_of(&last, "x1").unwrap();
+    assert!(!e, "{c}");
+    assert!(
+        c.contains("Collapsed e2..e5")
+            && c.contains("You asked for e3..e4")
+            && c.contains("widened"),
+        "{c}"
+    );
+    let t = all_text(&last);
+    assert!(!t.contains("AAAA") && !t.contains("BBBB"));
+    assert!(t.contains("[e1] do it"), "the task stays: {t}");
+    assert!(client
+        .notices()
+        .iter()
+        .any(|n| n.starts_with("the model collapsed e2..e5 (4 events")));
+
+    // A range starting at the task starts after it.
+    let env = Env::managed();
+    env.mock.push(bash_lines("a", "AAAA", 3));
+    env.mock.push(collapse("x1", "e1", "e3", "all of it"));
+    env.mock.push(Message::assistant_text("done"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    prompt(&agent, &info.id, "do it", &Arc::new(TestClient::default())).await;
+    let last = env.requests().pop().unwrap();
+    let (c, e) = result_of(&last, "x1").unwrap();
+    assert!(
+        !e && c.contains("Collapsed e2..e3") && c.contains("task"),
+        "{c}"
+    );
+    assert!(all_text(&last).contains("[e1] do it"));
+}
+
+#[tokio::test]
 async fn the_exchange_in_flight_cannot_be_collapsed() {
     let env = Env::managed();
     // The call being run (e2) is the exchange in flight.
@@ -400,7 +437,7 @@ async fn the_exchange_in_flight_cannot_be_collapsed() {
     let reqs = env.requests();
     let (c, e) = result_of(&reqs[1], "x1").unwrap();
     assert!(
-        e && (c.contains("in flight") || c.contains("splits")),
+        e && (c.contains("in flight") || c.contains("whole exchanges")),
         "{c}"
     );
 }

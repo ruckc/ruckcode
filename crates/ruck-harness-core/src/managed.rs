@@ -76,6 +76,8 @@ pub struct Collapse {
     pub replaced: usize,
     /// Estimated tokens the history shrank by.
     pub freed_tokens: u64,
+    /// Why the range differs from the one asked for, if it does.
+    pub note: Option<String>,
 }
 
 /// The history message standing for a collapsed range.
@@ -197,13 +199,8 @@ fn locate_end(tags: &[Tag], n: u64, what: &str) -> Result<usize, String> {
     ))
 }
 
-/// Resolve `from..=to` to message indices (tags and tool pairs only; see [`check_protected`]).
-pub fn locate(
-    messages: &[Message],
-    tags: &[Tag],
-    from: u64,
-    to: u64,
-) -> Result<(usize, usize), String> {
+/// Resolve the endpoints `from` and `to` to message indices.
+fn resolve(tags: &[Tag], from: u64, to: u64) -> Result<(usize, usize), String> {
     let i = locate_end(tags, from, "from")?;
     let j = locate_end(tags, to, "to")?;
     if i > j {
@@ -211,29 +208,23 @@ pub fn locate(
             "`from` e{from} comes after `to` e{to} in the history"
         ));
     }
-    if !is_closed(messages, i, j) {
-        let hint = expand(messages, i, j)
-            .and_then(|(a, b)| range_label(tags, a, b))
-            .map(|l| format!("; the nearest range with whole exchanges is {l}"))
-            .unwrap_or_default();
-        return Err(format!(
-            "e{from}..e{to} splits a tool call from its result; a range must hold whole \
-             exchanges (the call and its result together){hint}"
-        ));
-    }
     Ok((i, j))
 }
 
-fn range_label(tags: &[Tag], i: usize, j: usize) -> Option<String> {
-    let a = match tags[i] {
-        Tag::Event(e) | Tag::Summary(e, _) => e,
-        Tag::None => return None,
-    };
-    let b = match tags[j] {
-        Tag::Event(e) | Tag::Summary(_, e) => e,
-        Tag::None => return None,
-    };
-    Some(TagRef::parse(&format!("{a}..{b}")).ok()?.label())
+/// Resolve `from..=to` of a recorded collapse, which holds whole exchanges.
+fn locate(
+    messages: &[Message],
+    tags: &[Tag],
+    from: u64,
+    to: u64,
+) -> Result<(usize, usize), String> {
+    let (i, j) = resolve(tags, from, to)?;
+    if !is_closed(messages, i, j) {
+        return Err(format!(
+            "e{from}..e{to} splits a tool call from its result; cannot replay"
+        ));
+    }
+    Ok((i, j))
 }
 
 /// Refuse a range that touches what must stay: the first message, the current request and the
@@ -309,6 +300,7 @@ pub fn apply(
         to: b,
         replaced,
         freed_tokens: before.saturating_sub(after),
+        note: None,
     }
 }
 
@@ -327,9 +319,45 @@ pub fn collapse(
     if tags.len() != messages.len() {
         return Err("the history is not tagged; collapse is unavailable".into());
     }
-    let (i, j) = locate(messages, tags, from, to)?;
-    check_protected(messages, i, j)?;
-    Ok(apply(messages, tags, archive, i, j, summary))
+    let (mut i, j) = resolve(tags, from, to)?;
+    let mut notes = vec![];
+    // The task (the first message) always stays: a range that starts at it starts after it.
+    if i == 0 {
+        i = 1;
+        if i > j {
+            return Err(
+                "the first message of the history (the task) cannot be collapsed and nothing \
+                 else is in that range"
+                    .into(),
+            );
+        }
+        notes.push("the first message (the task) always stays, so the range starts after it");
+    }
+    // Whole exchanges only: a range that splits a tool call from its result is widened.
+    let (i2, j2) = expand(messages, i, j).ok_or_else(|| {
+        format!("e{from}..e{to} cannot be made of whole exchanges: a tool call has no result")
+    })?;
+    if (i2, j2) != (i, j) {
+        notes.push(
+            "it was widened to whole exchanges (a tool call is never separated from its result)",
+        );
+    }
+    check_protected(messages, i2, j2)?;
+    let asked = if from == to {
+        TagRef::Event(from)
+    } else {
+        TagRef::Range(from, to)
+    }
+    .label();
+    let mut c = apply(messages, tags, archive, i2, j2, summary);
+    if c.tag != asked {
+        c.note = Some(format!(
+            "You asked for {asked} but {}; the range collapsed is {}.",
+            notes.join(" and "),
+            c.tag
+        ));
+    }
+    Ok(c)
 }
 
 /// Re-apply a recorded collapse when a transcript is loaded (the rules held when it was made).
@@ -647,33 +675,48 @@ mod tests {
     }
 
     #[test]
-    fn a_range_splitting_a_tool_pair_is_rejected_with_a_suggestion() {
+    fn a_range_splitting_a_tool_pair_is_widened_to_whole_exchanges() {
         let (mut m, mut t) = history();
         let mut a = Archive::default();
-        let before = m.clone();
-        // e3 is a result whose call (e2) lies outside.
-        let e = collapse(&mut m, &mut t, &mut a, 3, 4, "x").unwrap_err();
+        // e3 is a result whose call (e2) lies outside; e4 is a call whose result (e5) does too.
+        let c = collapse(&mut m, &mut t, &mut a, 3, 4, "x").unwrap();
+        assert_eq!(c.tag, "e2..e5");
+        let note = c.note.unwrap();
         assert!(
-            e.contains("splits a tool call") && e.contains("e2..e5"),
-            "{e}"
+            note.contains("asked for e3..e4") && note.contains("widened"),
+            "{note}"
         );
-        let e = collapse(&mut m, &mut t, &mut a, 2, 2, "x").unwrap_err();
-        assert!(e.contains("e2..e3"), "{e}");
-        assert_eq!(m, before);
-        assert!(a.is_empty());
+        assert_eq!(m.len(), 5);
+        // No tool call is left without its result, or the other way round.
+        assert!(is_closed(&m, 0, m.len() - 2));
+        assert_eq!(a.len(), 4);
+        // A single call widens to its exchange.
+        let (mut m, mut t) = history();
+        let c = collapse(&mut m, &mut t, &mut Archive::default(), 4, 4, "x").unwrap();
+        assert_eq!(c.tag, "e4..e5");
     }
 
     #[test]
-    fn the_task_the_request_and_the_exchange_in_flight_are_protected() {
+    fn a_range_starting_at_the_task_starts_after_it() {
+        let (mut m, mut t) = history();
+        let c = collapse(&mut m, &mut t, &mut Archive::default(), 1, 3, "x").unwrap();
+        assert_eq!(c.tag, "e2..e3");
+        assert!(c.note.unwrap().contains("task"));
+        assert_eq!(m[0].text(), "task");
+        let (mut m, mut t) = history();
+        let e = collapse(&mut m, &mut t, &mut Archive::default(), 1, 1, "x").unwrap_err();
+        assert!(e.contains("first message"), "{e}");
+    }
+
+    #[test]
+    fn the_request_and_the_exchange_in_flight_are_protected() {
         let (mut m, mut t) = history();
         let mut a = Archive::default();
-        let e = collapse(&mut m, &mut t, &mut a, 1, 3, "x").unwrap_err();
-        assert!(e.contains("first message"), "{e}");
         let e = collapse(&mut m, &mut t, &mut a, 6, 7, "x").unwrap_err();
         assert!(e.contains("current request"), "{e}");
-        // A call still running has no result yet: the range would split it.
+        // A call still running has no result yet: widening reaches into the exchange in flight.
         let e = collapse(&mut m, &mut t, &mut a, 4, 8, "x").unwrap_err();
-        assert!(e.contains("splits"), "{e}");
+        assert!(e.contains("cannot be made of whole exchanges"), "{e}");
         assert_eq!(m.len(), 8);
         // The final exchange (a call and its result) is in flight.
         let mut m = vec![user("task"), user("req"), call("c"), result("c", "CC")];
@@ -681,6 +724,7 @@ mod tests {
         let e = collapse(&mut m, &mut t, &mut a, 3, 4, "x").unwrap_err();
         assert!(e.contains("in flight"), "{e}");
         assert_eq!(m.len(), 4);
+        assert!(a.is_empty());
     }
 
     #[test]

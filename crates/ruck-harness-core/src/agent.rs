@@ -1950,9 +1950,10 @@ impl Agent {
                             format!(
                                 "Collapsed {tag} ({} events -> 1 summary, about {} tokens \
                                  freed). The originals are archived; read them with \
-                                 action=recall, tag={tag}.",
+                                 action=recall, tag={tag}.{}",
                                 c.replaced,
                                 c.freed_tokens,
+                                c.note.as_ref().map(|n| format!(" {n}")).unwrap_or_default(),
                                 tag = c.tag
                             ),
                             false,

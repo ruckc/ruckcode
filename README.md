@@ -248,10 +248,11 @@ When on, every request carries (and the transcript does not):
 - the **`Context` tool**, with a flat schema (`action` = `collapse` | `recall`, and the optional
   strings `from`, `to`, `summary`, `tag`):
   - `collapse` (`from`, `to`, `summary`) replaces the events `from..to` with the model's own
-    summary and returns its tag (`e3..e17`). The originals are archived, not deleted. The range
-    must hold **whole exchanges**: a range that splits a tool call from its result is rejected
-    with the nearest valid range. The first message (the task), the current request and the
-    exchange in flight can never be collapsed. A collapse is recorded as a `collapsed` transcript
+    summary and returns its tag (`e3..e17`). The originals are archived, not deleted. A tool call
+    is never separated from its result: a range that would split a pair is **widened** to whole
+    exchanges, and the result tells the model the range it actually collapsed. The first message
+    (the task, a range starting there starts after it), the current request and the exchange in
+    flight are never collapsed (an error). A collapse is recorded as a `collapsed` transcript
     record, so resume rebuilds the same history.
   - `recall` (`tag`: an event like `e9`, or a summary tag like `e3..e17`) returns the archived
     originals as the tool result (head and tail kept past the per-result cap). It is a read: the
@@ -282,7 +283,9 @@ managed_fallback_threshold = 0.95  # harness compaction, when compact_threshold 
 Profiles with `lean_tools = true` leave the tool out unless their `tools` allowlist names
 `Context` (then `model_managed` has no effect on them, including the raised threshold). The paper
 reports large gains at tight budgets and harm from compacting too early, and that models differ a
-lot in how much they use it, so enable it per profile after trying it on that model. In the demo
+lot in how much they use it, so enable it per profile after trying it on that model. (Measured on
+`gemma4:26b`: offering the tool does not lower its first-turn tool-call rate, but it never compacts
+on its own under pressure; asked to free context it calls the tool correctly most of the time.) In the demo
 provider, `mock:collapse` collapses the earlier exchanges.
 
 ## Tool-loop guard
