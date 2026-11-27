@@ -1,6 +1,6 @@
 [package]
 name = "ruck-harness-llm"
-description = "LLM provider abstraction for ruckcode (Anthropic + OpenAI-compatible)"
+description = "LLM provider abstraction for agent harnesses (Anthropic + OpenAI-compatible)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

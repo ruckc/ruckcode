@@ -1,6 +1,6 @@
 [package]
 name = "ruck-harness-mcp"
-description = "MCP (Model Context Protocol) client support for the ruckcode agent"
+description = "MCP (Model Context Protocol) client support for agent harnesses"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

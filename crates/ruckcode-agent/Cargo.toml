@@ -1,6 +1,6 @@
 [package]
 name = "ruckcode-agent"
-description = "Agent loop, sessions, modes, permissions and config for ruckcode"
+description = "The ruckcode agent: coding extension (prompt, tools, modes, setup) on top of ruck-harness-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

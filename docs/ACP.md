@@ -4,6 +4,8 @@
 `rc acp` serves on stdio; `rc` itself talks to an in-process agent over an in-memory byte pipe, so
 the wire is the same in both cases.
 
+The extension namespace is not fixed: `ruck-harness-acp` takes it from the agent's `AppIdentity` (`acp_namespace`). For ruckcode it is `ruckcode`, hence the `_ruckcode/*` methods and `_meta.ruckcode.*` documented below; another product on the harness gets its own prefix (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+
 Wire types are the official [`agent-client-protocol-schema`](https://crates.io/crates/agent-client-protocol-schema)
 crate, pinned to `=1.12.0` with `default-features = false` (no `schemars`) and **no `unstable_*`
 features**. `ruck_harness_acp::schema` re-exports its `v1` types plus our extension types and helpers.

@@ -1,6 +1,6 @@
 [package]
 name = "ruckcode-cli"
-description = "`rc`: terminal UI and headless ACP client for ruckcode"
+description = "ruckcode front-end: `rc`, the terminal UI and headless ACP client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
