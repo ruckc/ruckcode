@@ -1,9 +1,9 @@
 //! `rc modes`: read, validate and write `.ruckcode/modes.toml` as JSON (one line, camelCase; see
-//! `ruckcode_core::modes_api`). Used by the desktop app inside WSL; the document goes in on stdin.
+//! `ruckcode_agent::modes_api`). Used by the desktop app inside WSL; the document goes in on stdin.
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
-use ruckcode_core::modes_api::{self, ModesDoc};
+use ruckcode_agent::modes_api::{self, ModesDoc};
 
 use crate::Cli;
 

@@ -12,7 +12,7 @@ use ruck_harness_acp::schema::{
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use ruckcode_core::transcript_api::UnfinishedSession;
+use ruck_harness_core::transcript_api::UnfinishedSession;
 
 use crate::client::{Answer, AskRequest, AskResponse, Question, SessionEntry};
 
@@ -181,7 +181,7 @@ impl RateWait {
         format!(
             "{} \u{2014} retrying in {}{retry}",
             self.reason,
-            ruckcode_core::retry::format_wait(std::time::Duration::from_secs(left))
+            ruck_harness_core::retry::format_wait(std::time::Duration::from_secs(left))
         )
     }
 }

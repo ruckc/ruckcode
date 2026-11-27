@@ -1,10 +1,10 @@
-//! Mode/hook editor commands. On the local host they call `ruckcode_core::modes_api` directly; on
+//! Mode/hook editor commands. On the local host they call `ruckcode_agent::modes_api` directly; on
 //! WSL2 they run `rc modes ... --json` inside the distro (the document goes in on stdin), so both
 //! produce the same JSON.
 
 use std::path::PathBuf;
 
-use ruckcode_core::modes_api::{self, ModesDoc};
+use ruckcode_agent::modes_api::{self, ModesDoc};
 use serde_json::Value;
 use zeroize::Zeroizing;
 

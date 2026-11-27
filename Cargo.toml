@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 ruck-harness-acp = { path = "crates/ruck-harness-acp" }
-ruckcode-core = { path = "crates/ruckcode-core" }
+ruckcode-agent = { path = "crates/ruckcode-agent" }
 ruck-harness-ident = { path = "crates/ruck-harness-ident" }
 ruck-harness-core = { path = "crates/ruck-harness-core" }
 ruck-harness-hooks = { path = "crates/ruck-harness-hooks" }

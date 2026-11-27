@@ -3,10 +3,12 @@
 use crate::Cli;
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use ruck_harness_core::project_policy::{self, Resolution, Status};
 use ruck_harness_sandbox::{LauncherExe, ProjectPolicy, SandboxConfig};
-use ruckcode_core::mode_ext::RuckcodeModeSet as _;
-use ruckcode_core::project_policy::{self, Resolution, Status};
-use ruckcode_core::{Config, ModeSet};
+use ruckcode_agent::mode_ext::RuckcodeModeSet as _;
+use ruckcode_agent::Config;
+
+use ruck_harness_core::ModeSet;
 use std::io::IsTerminal;
 
 #[derive(Subcommand, Debug)]
@@ -42,8 +44,13 @@ pub fn effective_config(cli: &Cli) -> Result<Effective> {
     let mut modes = ModeSet::load(&cwd, None)?;
     let mut policy = None;
     if config.sandbox.project_policy == ProjectPolicy::Remote {
-        if let Some(data) = ruckcode_core::extension::data_dir() {
-            let res = project_policy::resolve(&cwd, &data, config.sandbox.project_policy);
+        if let Some(data) = ruckcode_agent::extension::data_dir() {
+            let res = project_policy::resolve(
+                &ruckcode_agent::identity::RUCKCODE,
+                &cwd,
+                &data,
+                config.sandbox.project_policy,
+            );
             project_policy::apply(&res, &mut config.sandbox, &mut modes);
             policy = Some(res);
         }
@@ -166,7 +173,7 @@ fn trust_remote(cli: &Cli, yes: bool) -> Result<()> {
     let Some(url) = project_policy::origin_url(&root) else {
         bail!("no `origin` remote is configured");
     };
-    let Some(data) = ruckcode_core::extension::data_dir() else {
+    let Some(data) = ruckcode_agent::extension::data_dir() else {
         bail!("cannot locate the user data directory");
     };
     if let Some(old) = project_policy::pinned_url(&cwd, &data) {
@@ -201,7 +208,7 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
     let paths =
         ruck_harness_sandbox::path_report(&cfg, dirs::home_dir().as_deref(), &project, false);
     if json {
-        let plan = ruck_harness_sandbox::plan(&caps, &cfg, &ruckcode_core::identity::RUCKCODE);
+        let plan = ruck_harness_sandbox::plan(&caps, &cfg, &ruckcode_agent::identity::RUCKCODE);
         let pol = policy.as_ref().map(|r| {
             serde_json::json!({
                 "status": r.status,
@@ -226,7 +233,7 @@ fn status(cli: &Cli, json: bool) -> Result<()> {
     println!("mode: {mode}");
     print!(
         "{}",
-        ruck_harness_sandbox::report(&caps, &cfg, &ruckcode_core::identity::RUCKCODE)
+        ruck_harness_sandbox::report(&caps, &cfg, &ruckcode_agent::identity::RUCKCODE)
     );
     for l in path_lines(&cfg, &paths) {
         println!("{l}");

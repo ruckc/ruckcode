@@ -2866,44 +2866,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruckcode-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.23.1",
- "clap",
- "crossterm",
- "dirs",
- "flate2",
- "futures",
- "minisign",
- "minisign-verify",
- "ratatui",
- "reqwest",
- "ruck-harness-acp",
- "ruck-harness-llm",
- "ruck-harness-mcp",
- "ruck-harness-sandbox",
- "ruckcode-core",
- "ruckcode-mise",
- "self-replace",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "similar",
- "tar",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "zeroize",
- "zip",
-]
-
-[[package]]
-name = "ruckcode-core"
+name = "ruckcode-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2935,6 +2898,44 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "ruckcode-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "clap",
+ "crossterm",
+ "dirs",
+ "flate2",
+ "futures",
+ "minisign",
+ "minisign-verify",
+ "ratatui",
+ "reqwest",
+ "ruck-harness-acp",
+ "ruck-harness-core",
+ "ruck-harness-llm",
+ "ruck-harness-mcp",
+ "ruck-harness-sandbox",
+ "ruckcode-agent",
+ "ruckcode-mise",
+ "self-replace",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "similar",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zeroize",
+ "zip",
 ]
 
 [[package]]

@@ -3409,26 +3409,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruckcode-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ruck-harness-acp",
- "ruckcode-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-updater",
- "tempfile",
- "tokio",
- "zeroize",
- "zip",
-]
-
-[[package]]
-name = "ruckcode-core"
+name = "ruckcode-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3458,6 +3439,28 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "ruckcode-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ruck-harness-acp",
+ "ruck-harness-core",
+ "ruck-harness-mcp",
+ "ruck-harness-sandbox",
+ "ruckcode-agent",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-updater",
+ "tempfile",
+ "tokio",
+ "zeroize",
+ "zip",
 ]
 
 [[package]]

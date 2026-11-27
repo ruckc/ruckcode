@@ -70,7 +70,7 @@ impl AppIdentity {
 pub mod testing {
     use super::AppIdentity;
 
-    /// What `ruckcode_core::identity::RUCKCODE` must equal (all workspace crates share a version).
+    /// What `ruckcode_agent::identity::RUCKCODE` must equal (all workspace crates share a version).
     pub const RUCKCODE: AppIdentity = AppIdentity {
         name: "ruckcode",
         env_prefix: "RUCKCODE",

@@ -10,7 +10,7 @@ mod update;
 mod wsl;
 
 use host::{AgentEvent, ConnectParams, HostKind, Hosts};
-use ruckcode_core::setup_api::{InitInput, ModelsAuth, PlanInput};
+use ruckcode_agent::setup_api::{InitInput, ModelsAuth, PlanInput};
 use serde_json::Value;
 use setup::Target;
 use tauri::ipc::Channel;
@@ -336,7 +336,7 @@ async fn transcripts_dismiss(
 
 // ---- mode/hook editor ---------------------------------------------------------------------------
 //
-// `doc` is the camelCase modes document of `ruckcode_core::modes_api`; saving keeps comments.
+// `doc` is the camelCase modes document of `ruckcode_agent::modes_api`; saving keeps comments.
 
 #[tauri::command]
 async fn modes_get(project: String, distro: Option<String>) -> Result<Value, String> {

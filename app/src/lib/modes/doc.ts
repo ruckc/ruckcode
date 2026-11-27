@@ -175,7 +175,7 @@ export function toggle(list: string[], v: string, on: boolean): string[] {
   return list;
 }
 
-// ----- validation (mirrors `ruckcode_core::modes_api::validate_doc`; the host is authoritative) -----
+// ----- validation (mirrors `ruckcode_agent::modes_api::validate_doc`; the host is authoritative) -----
 
 export function validateDoc(doc: ModesDoc, catalog?: Catalog | null): Issue[] {
   const out: Issue[] = [];

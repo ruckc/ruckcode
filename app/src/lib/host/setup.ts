@@ -1,5 +1,5 @@
 /**
- * Setup and keys: types (mirroring the JSON of `ruckcode_core::setup_api`, camelCase) and the API
+ * Setup and keys: types (mirroring the JSON of `ruckcode_agent::setup_api`, camelCase) and the API
  * the UI uses. Implementations: Tauri commands (local host, or `rc ... --json` inside WSL) and an
  * in-memory fake for browser mock mode. Secrets only go *into* `listModels`, `apply`/`preview`
  * (`plan.newKey.secret`) and `keysAdd`; nothing here ever returns one.

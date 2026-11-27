@@ -273,7 +273,7 @@ that also arrives as `current_mode_update`.
 
 ## Compatibility with the previous hand-written schema
 
-Intended wire differences, all covered by `crates/ruckcode-core/tests/acp_golden.rs` (baseline captured
+Intended wire differences, all covered by `crates/ruckcode-agent/tests/acp_golden.rs` (baseline captured
 before the migration): `sessionCapabilities`/`auth` in the `initialize` response; `configOptions` in
 session responses; `tool_call_update` without `content` instead of `content: []`; diffs without
 `"oldText": null`; `tool_call` without default `status`/`kind`; new `usage_update`,

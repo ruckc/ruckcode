@@ -24,7 +24,7 @@ Agent connection ("agent host"), chosen per window and project:
 
 | Host | How |
 |------|-----|
-| Local (default) | The Tauri backend embeds `ruckcode_core::Agent` behind `ruck_harness_acp` over an in-process pipe. ACP JSON-RPC lines are relayed to the webview through a Tauri `Channel`, and outgoing lines go back through a Tauri command. |
+| Local (default) | The Tauri backend embeds `ruckcode_agent::Agent` behind `ruck_harness_acp` over an in-process pipe. ACP JSON-RPC lines are relayed to the webview through a Tauri `Channel`, and outgoing lines go back through a Tauri command. |
 | WSL2 (Windows) | The Tauri backend spawns `wsl.exe -d <distro> --cd <linux path> --exec sh -lc <script ending in exec rc acp>` and relays its stdio the same way. The app lists distros (`wsl.exe -l -v`, falling back to `-l -q`), checks for `rc` inside the distro (and installs the copy bundled in the MSI automatically), and translates `\\wsl$\...` paths to Linux paths. |
 | Subprocess (any OS, optional) | `rc acp` as a child process. Useful for running against a specific `rc` binary. |
 
@@ -34,7 +34,7 @@ set_model, list_sessions) become typed helpers. The client advertises `askUserQu
 `notices` capabilities.
 
 Non-ACP features (config, keys, modes.toml, transcripts) are Tauri commands backed by
-`ruckcode-core` (`setup`, `keys`, `modes`, `init`, `transcript` modules). When the host is
+`ruckcode-agent` (`setup`, `keys`, `modes`, `init`, `transcript` modules). When the host is
 WSL2, the same features run through `rc` subcommands inside the distro and need JSON output
 modes: `rc sessions --json`, `rc keys list --json`, `rc setup --non-interactive`, and
 `rc modes get/set --json` (new).
@@ -108,7 +108,7 @@ Built as planned, with these deviations and details:
   way to keep `--workspace` webkit-free was to exclude `crates/ruckcode-app` from the root
   workspace (`exclude` in the root `Cargo.toml`) and give it its own `[workspace]` and
   `Cargo.lock`. Use `--manifest-path crates/ruckcode-app/Cargo.toml` (CI does) instead of
-  `-p ruckcode-app`. It depends on `ruckcode-core` and `ruck-harness-acp` by path.
+  `-p ruckcode-app`. It depends on `ruckcode-agent` and `ruck-harness-acp` by path.
 - **SvelteKit 3.** Configuration lives in `vite.config.ts` (no `svelte.config.js`), and
   `$lib` is gone, so imports are relative. TypeScript is 6.x (svelte-check and typescript-eslint
   do not support 7 yet). The ACP SDK is `@agentclientprotocol/sdk` 2.0 (stable v1 entrypoint,
@@ -239,7 +239,7 @@ Built as planned, with these deviations and details:
 
 ## Milestone 4 notes
 
-- **Shared backend.** `ruckcode_core::setup_api` (new) holds every JSON shape (camelCase) and the
+- **Shared backend.** `ruckcode_agent::setup_api` (new) holds every JSON shape (camelCase) and the
   logic behind them: `presets`, `state`, `keys_list/add/remove/use`, `PlanInput` -> `SetupPlan`,
   `preview`/`apply`, `list_models` (auth `env` | `keyName` | `secret`), `init_modes` (mise discovery
   included). The `rc` CLI and the Tauri commands both call it, so local and WSL answers are identical.
@@ -284,7 +284,7 @@ Built as planned, with these deviations and details:
 
 ## Milestone 5 notes
 
-- **Shared backend.** `ruckcode_core::transcript_api` (new, camelCase JSON, same approach as
+- **Shared backend.** `ruckcode_agent::transcript_api` (new, camelCase JSON, same approach as
   `setup_api`): `list(project, query?)`, `read(project, id, {offset, limit})` and
   `search(project, text, limit)`. Transcripts are streamed line by line; one pass computes both the
   summary and the requested page. Summaries are cached in-process by (mtime, size). Unreadable lines
@@ -328,7 +328,7 @@ Built as planned, with these deviations and details:
 
 ## Milestone 6 notes
 
-- **Shared backend.** `ruckcode_core::modes_api` (new, camelCase JSON, same approach as `setup_api`):
+- **Shared backend.** `ruckcode_agent::modes_api` (new, camelCase JSON, same approach as `setup_api`):
   `get` (status `missing|broken|ready`, path, document, `globalHooks`, catalog), `validate`, `preview`
   and `apply`. The catalog has the built-in tools (name, ACP kind, read-only; `SwitchMode` included),
   discovered mise tasks, configured MCP *server* names (tool names need a running server, so the editor

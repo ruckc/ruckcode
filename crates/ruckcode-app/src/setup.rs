@@ -1,4 +1,4 @@
-//! Setup and keys commands. On the local host they call `ruckcode_core::setup_api` directly; on
+//! Setup and keys commands. On the local host they call `ruckcode_agent::setup_api` directly; on
 //! WSL2 they run the equivalent `rc` subcommands inside the distro (JSON on stdout, secrets on
 //! stdin only, never on a command line). The functions that build command lines and stdin are pure
 //! and tested on any OS.
@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use ruckcode_core::setup_api::{self, InitInput, ModelsAuth, PlanInput};
+use ruckcode_agent::setup_api::{self, InitInput, ModelsAuth, PlanInput};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroizing;

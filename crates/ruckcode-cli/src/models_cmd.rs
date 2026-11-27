@@ -4,7 +4,7 @@ use std::io::Read;
 
 use anyhow::{bail, Result};
 use clap::Args;
-use ruckcode_core::setup_api::{self, ModelsAuth};
+use ruckcode_agent::setup_api::{self, ModelsAuth};
 use zeroize::Zeroize;
 
 #[derive(Args, Debug, Default)]
