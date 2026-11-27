@@ -33,6 +33,21 @@ pub struct ContextConfig {
     /// Tokens kept free for the model's answer (and thinking). Unset: the smaller of the
     /// profile's `max_tokens` and a quarter of the window.
     pub output_reserve_tokens: Option<u64>,
+    /// Let the model manage its own context with the `Context` tool: history events are tagged
+    /// (`[e17]`), every request ends with a usage line, and the model may collapse ranges of
+    /// history into its own summary and recall them. Default false; the harness's automatic
+    /// compaction and the hard ceiling stay as the safety net.
+    pub model_managed: bool,
+    /// With `model_managed`: the usage share after which the model is told to compact.
+    /// Default 0.85.
+    pub compact_hint_at: f64,
+    /// With `model_managed`: the usage share at which the model gets a context-pressure warning.
+    /// Default 0.90.
+    pub compact_warn_at: f64,
+    /// With `model_managed`: the share of the window at which the harness compacts when
+    /// `compact_threshold` is unset (the top-level `compaction_threshold` does not apply), so the
+    /// model gets the chance to act first. Default 0.95.
+    pub managed_fallback_threshold: f64,
 }
 
 impl Default for ContextConfig {
@@ -42,6 +57,10 @@ impl Default for ContextConfig {
             max_tool_result_tokens: 12_000,
             max_tool_result_fraction: 0.10,
             output_reserve_tokens: None,
+            model_managed: false,
+            compact_hint_at: 0.85,
+            compact_warn_at: 0.90,
+            managed_fallback_threshold: 0.95,
         }
     }
 }
@@ -54,6 +73,10 @@ pub struct ContextOverride {
     pub max_tool_result_tokens: Option<u64>,
     pub max_tool_result_fraction: Option<f64>,
     pub output_reserve_tokens: Option<u64>,
+    pub model_managed: Option<bool>,
+    pub compact_hint_at: Option<f64>,
+    pub compact_warn_at: Option<f64>,
+    pub managed_fallback_threshold: Option<f64>,
 }
 
 impl ContextConfig {
@@ -67,6 +90,12 @@ impl ContextConfig {
                 .max_tool_result_fraction
                 .unwrap_or(c.max_tool_result_fraction);
             c.output_reserve_tokens = o.output_reserve_tokens.or(c.output_reserve_tokens);
+            c.model_managed = o.model_managed.unwrap_or(c.model_managed);
+            c.compact_hint_at = o.compact_hint_at.unwrap_or(c.compact_hint_at);
+            c.compact_warn_at = o.compact_warn_at.unwrap_or(c.compact_warn_at);
+            c.managed_fallback_threshold = o
+                .managed_fallback_threshold
+                .unwrap_or(c.managed_fallback_threshold);
         }
         c
     }
@@ -90,7 +119,13 @@ impl Limits {
             .output_reserve_tokens
             .unwrap_or_else(|| u64::from(max_tokens).min(window / 4))
             .min(window / 2);
-        let threshold = cfg.compact_threshold.unwrap_or(global_threshold);
+        // Model-managed: the model gets the chance to compact first (`compact_hint_at`), the
+        // harness acts later, at `managed_fallback_threshold`, unless `compact_threshold` is set.
+        let threshold = cfg.compact_threshold.unwrap_or(if cfg.model_managed {
+            cfg.managed_fallback_threshold
+        } else {
+            global_threshold
+        });
         let by_threshold = (threshold * window as f64) as u64;
         let compact_at = by_threshold.min(window.saturating_sub(reserve));
         let cap_tokens = (cfg.max_tool_result_fraction * window as f64) as u64;
@@ -208,5 +243,48 @@ pub fn fit_to_ceiling(
         } else {
             return (steps, false);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_managed_is_off_by_default_and_raises_only_the_harness_threshold() {
+        let cfg = ContextConfig::default();
+        assert!(!cfg.model_managed);
+        let off = Limits::new(&cfg, 0.8, 100_000, 4096);
+        assert_eq!(off.compact_at, 80_000);
+        let on = ContextConfig {
+            model_managed: true,
+            ..Default::default()
+        };
+        // The top-level threshold does not apply; the fallback does, still within the reserve.
+        assert_eq!(Limits::new(&on, 0.8, 100_000, 4096).compact_at, 95_000);
+        assert_eq!(Limits::new(&on, 0.8, 100_000, 8000).compact_at, 92_000);
+        // An explicit `compact_threshold` wins.
+        let explicit = ContextConfig {
+            model_managed: true,
+            compact_threshold: Some(0.7),
+            ..Default::default()
+        };
+        assert_eq!(
+            Limits::new(&explicit, 0.8, 100_000, 4096).compact_at,
+            70_000
+        );
+    }
+
+    #[test]
+    fn profile_overrides_replace_the_managed_keys() {
+        let global: ContextConfig = toml::from_str("model_managed = true").unwrap();
+        let o: ContextOverride =
+            toml::from_str("model_managed = false\ncompact_hint_at = 0.7").unwrap();
+        let c = global.with_override(Some(&o));
+        assert!(!c.model_managed);
+        assert_eq!(c.compact_hint_at, 0.7);
+        assert_eq!(c.compact_warn_at, 0.90);
+        assert_eq!(c.managed_fallback_threshold, 0.95);
+        assert!(global.with_override(None).model_managed);
     }
 }

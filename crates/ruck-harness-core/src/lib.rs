@@ -6,6 +6,7 @@ pub mod agent;
 pub mod agent_ext;
 pub mod config;
 pub mod context;
+pub mod managed;
 pub mod modes;
 pub mod permissions;
 pub mod project_policy;

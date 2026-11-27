@@ -36,9 +36,10 @@ pub static RUCKCODE_MODE_SCHEMA: ModeSchema = ModeSchema {
     check_extra: check,
     implicit_extra: implicit,
     is_builtin_tool: |name| {
-        ruckcode_tools::builtin_tools()
-            .iter()
-            .any(|t| t.name() == name)
+        name == ruck_harness_tools::CONTEXT_TOOL
+            || ruckcode_tools::builtin_tools()
+                .iter()
+                .any(|t| t.name() == name)
     },
 };
 

@@ -10,7 +10,10 @@ use ruck_harness_llm::{
     StreamEvent, Usage,
 };
 use ruck_harness_mcp::{McpManager, McpServerConfig};
-use ruck_harness_tools::{FileEdit, PlanItem, Tool, ToolContext, ToolKind, ToolOutput, UserBridge};
+use ruck_harness_tools::{
+    ContextAction, ContextTool, FileEdit, LeanClass, PlanItem, Tool, ToolContext, ToolKind,
+    ToolOutput, UserBridge, CONTEXT_TOOL,
+};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::agent_ext::{AgentExtension, SessionExt};
 use crate::config::{ConfigLoader, HarnessConfig, Profile};
 use crate::context::{self, Limits};
+use crate::managed::{self, Archive, Tag};
 use crate::modes::{ModeDef, ModeSet};
 use crate::permissions::{self, Permission};
 use crate::prompt::{system_prompt, PromptProvider, MAX_CLIENT_INSTRUCTIONS};
@@ -36,6 +40,14 @@ use crate::transcript::{
 };
 
 const SWITCH_MODE: &str = "SwitchMode";
+/// Appended to the system prompt when the model manages its own context. Static text: it must
+/// not change between requests (prompt caching); the changing usage line goes at the end of the
+/// request instead.
+const CONTEXT_PROMPT: &str = "\n\n## Context\nHistory messages are tagged [e1], [e2], ... and \
+every request ends with a line stating how full your context is. The Context tool can replace a \
+range of finished exchanges with your own summary (collapse) or read archived originals \
+(recall). Compact only once the stated mark is passed; earlier compaction loses detail for \
+nothing.\n";
 const INTERRUPTED: &str = "[Request interrupted by user]";
 const RATE_LIMITED_NOTE: &str =
     "[Turn paused: the API rate limit was reached. The work continues when the user asks to resume.]";
@@ -270,10 +282,26 @@ struct SessionState {
     /// `loopKind` of the tool-loop trip that ended the last turn (`repeat`, `search` or
     /// `oscillation`); cleared when a turn starts.
     last_loop_kind: Option<&'static str>,
+    /// The tag of each message of `messages` (model-managed context; see [`crate::managed`]).
+    /// Kept in step with `messages` always, used only when the feature is on.
+    tags: Vec<Tag>,
+    /// Originals of the events the model collapsed.
+    archive: Archive,
+    /// Number of `user_message` and `assistant_message` records so far: the last event's number.
+    event_count: u64,
+    /// `Context` collapses and recalls so far in this session.
+    collapses: u32,
+    recalls: u32,
 }
 
 impl SessionState {
     fn rec(&mut self, r: Record) {
+        if matches!(
+            r,
+            Record::UserMessage { .. } | Record::AssistantMessage { .. }
+        ) {
+            self.event_count += 1;
+        }
         if let Some(w) = &mut self.transcript {
             if let Err(e) = w.append(&r) {
                 tracing::warn!("failed to write transcript: {e:#}");
@@ -293,6 +321,7 @@ impl SessionState {
             source,
         });
         self.messages.push(m);
+        self.tags.push(Tag::Event(self.event_count));
     }
 
     /// Close a user message that never got a reply so roles keep alternating.
@@ -319,6 +348,7 @@ impl SessionState {
             },
         });
         self.messages.push(message);
+        self.tags.push(Tag::Event(self.event_count));
     }
 
     fn mode_def(&self) -> &ModeDef {
@@ -526,6 +556,11 @@ impl Agent {
             sandbox: None,
             policy_notices,
             last_loop_kind: None,
+            tags: vec![],
+            archive: Archive::default(),
+            event_count: 0,
+            collapses: 0,
+            recalls: 0,
         })
     }
 
@@ -842,6 +877,18 @@ impl Agent {
         s.model_pin = loaded.model.clone();
         s.client_instructions = loaded.client_instructions.clone();
         s.messages = loaded.messages.clone();
+        s.tags = loaded.tags.clone();
+        s.archive = loaded.archive.clone();
+        s.event_count = loaded.event_count;
+        s.collapses = loaded.collapses;
+        s.recalls = loaded
+            .records
+            .iter()
+            .filter(|r| {
+                matches!(&r.record, Record::ToolCall { name, input, .. }
+                if name == CONTEXT_TOOL && input["action"] == "recall")
+            })
+            .count() as u32;
         if self.options.persist {
             s.transcript = Some(TranscriptWriter::open(&path)?);
         }
@@ -1184,6 +1231,10 @@ impl Agent {
             profile.as_ref(),
         )
         .await;
+        let system = match &profile {
+            Some(p) if context_cfg(s, p).model_managed => system + CONTEXT_PROMPT,
+            _ => system,
+        };
         self.compact_if_needed(s, client, cancel, &system).await;
         s.push(Message::user_text(text), UserSource::User);
 
@@ -1206,6 +1257,13 @@ impl Agent {
                 Some(&profile),
             )
             .await;
+            let ctx_cfg = context_cfg(s, &profile);
+            let managed = ctx_cfg.model_managed;
+            let system = if managed {
+                system + CONTEXT_PROMPT
+            } else {
+                system
+            };
             let tools = build_tools(s, &profile, self.options.user_config_dir.as_deref());
             let specs: Vec<_> = tools.iter().map(|t| t.spec()).collect();
             // Before every request, mid-turn included: compact when the prompt is near the
@@ -1225,17 +1283,36 @@ impl Agent {
                 .config
                 .tool_loop_guard
                 .with_override(profile.tool_loop_guard.as_ref());
+            let messages = if managed {
+                // Tags and the usage line are added to a copy of the history, so the stored
+                // history (and the transcript) never carries them. The usage line goes last,
+                // after everything the provider may have cached.
+                let mut m = normalize_messages(&managed::label_messages(&s.messages, &s.tags));
+                let limits = self.limits(s, &profile);
+                managed::append_note(
+                    &mut m,
+                    &managed::usage_note(
+                        last_estimate,
+                        &limits,
+                        ctx_cfg.compact_hint_at,
+                        ctx_cfg.compact_warn_at,
+                    ),
+                );
+                m
+            } else {
+                normalize_messages(&s.messages)
+            };
             let request = Request {
                 model: model.clone(),
                 system: system.clone(),
-                messages: normalize_messages(&s.messages),
+                messages,
                 tools: specs,
                 max_tokens: profile.max_tokens,
                 thinking: profile.thinking.clone(),
                 temperature: profile.temperature,
                 top_p: profile.top_p,
             };
-            let (response, metrics) = match self
+            let (mut response, metrics) = match self
                 .call_model(
                     &s.id,
                     &profile.name,
@@ -1288,6 +1365,9 @@ impl Agent {
                     continue;
                 }
             };
+            if managed {
+                managed::strip_echoed_tag(&mut response.message);
+            }
             stats.model_requests += 1;
             stats.input_tokens += response.usage.input_tokens;
             stats.output_tokens += response.usage.output_tokens;
@@ -1317,6 +1397,7 @@ impl Agent {
                 metrics,
             });
             s.messages.push(response.message.clone());
+            s.tags.push(Tag::Event(s.event_count));
 
             let uses: Vec<(String, String, Value)> = response
                 .message
@@ -1340,6 +1421,7 @@ impl Agent {
                     if full && !overflow_retried {
                         overflow_retried = true;
                         s.messages.pop();
+                        s.tags.pop();
                         client.send_event(
                             &s.id,
                             SessionEvent::Notice(
@@ -1473,7 +1555,7 @@ impl Agent {
                 let ids: Vec<String> = trip.drop_ids.iter().cloned().collect();
                 let dropped = !ids.is_empty();
                 if dropped {
-                    tool_loop_guard::drop_tool_calls(&mut s.messages, &trip.drop_ids);
+                    managed::drop_tool_calls_tagged(&mut s.messages, &mut s.tags, &trip.drop_ids);
                     s.rec(Record::ToolCallsDropped { tool_use_ids: ids });
                 }
                 if tool_nudges >= loop_cfg.max_nudges {
@@ -1723,6 +1805,9 @@ impl Agent {
                     false,
                 );
             }
+            if name == CONTEXT_TOOL {
+                break 'run self.run_context_tool(s, client, input);
+            }
             let sandbox = self.sandbox_handle(s, client, name, kind).await;
             let ctx = ToolContext {
                 cwd: s.cwd.clone(),
@@ -1819,6 +1904,84 @@ impl Agent {
             },
             cancelled,
         )
+    }
+
+    /// The `Context` tool: collapse a range of history into the model's summary, or recall
+    /// archived originals. Returns the tool result and whether it is an error.
+    fn run_context_tool(
+        &self,
+        s: &mut SessionState,
+        client: &Arc<dyn Client>,
+        input: &Value,
+    ) -> (String, bool) {
+        let action = match ContextAction::parse(input) {
+            Ok(a) => a,
+            Err(e) => return (e, true),
+        };
+        match action {
+            ContextAction::Collapse { from, to, summary } => {
+                match managed::collapse(
+                    &mut s.messages,
+                    &mut s.tags,
+                    &mut s.archive,
+                    from,
+                    to,
+                    &summary,
+                ) {
+                    Err(e) => (e, true),
+                    Ok(c) => {
+                        s.collapses += 1;
+                        s.rec(Record::Collapsed {
+                            from: c.from,
+                            to: c.to,
+                            tag: c.tag.clone(),
+                            summary,
+                            replaced_messages: c.replaced,
+                        });
+                        client.send_event(
+                            &s.id,
+                            SessionEvent::Notice(format!(
+                                "the model collapsed {} ({} events → 1 summary, ~{} tokens \
+                                 freed; {} collapse(s) and {} recall(s) this session)",
+                                c.tag, c.replaced, c.freed_tokens, s.collapses, s.recalls
+                            )),
+                        );
+                        (
+                            format!(
+                                "Collapsed {tag} ({} events -> 1 summary, about {} tokens \
+                                 freed). The originals are archived; read them with \
+                                 action=recall, tag={tag}.",
+                                c.replaced,
+                                c.freed_tokens,
+                                tag = c.tag
+                            ),
+                            false,
+                        )
+                    }
+                }
+            }
+            ContextAction::Recall { tag } => {
+                match managed::recall(&s.messages, &s.tags, &s.archive, tag, s.event_count) {
+                    Err(e) => (e, true),
+                    Ok(text) => {
+                        s.recalls += 1;
+                        let n = managed::event_span(tag);
+                        client.send_event(
+                            &s.id,
+                            SessionEvent::Notice(format!(
+                                "the model recalled {} ({n} event{}, ~{} tokens; {} recall(s) \
+                                 this session)",
+                                tag.label(),
+                                if n == 1 { "" } else { "s" },
+                                text.len() / context::BYTES_PER_TOKEN,
+                                s.recalls
+                            )),
+                        );
+                        (text, false)
+                    }
+                }
+            }
+        }
     }
 
     /// The sandbox for a process-spawning tool call (created on first use), unless the user
@@ -2161,7 +2324,7 @@ impl Agent {
     /// The context limits of `profile` under this session's config.
     fn limits(&self, s: &SessionState, profile: &Profile) -> Limits {
         Limits::new(
-            &s.config.context.with_override(profile.context.as_ref()),
+            &context_cfg(s, profile),
             s.config.compaction_threshold,
             profile.context_window,
             profile.max_tokens,
@@ -2338,8 +2501,11 @@ impl Agent {
             }
         }
         let tail = s.messages.split_off(head_len);
+        let tail_tags = s.tags.split_off(head_len.min(s.tags.len()));
         s.messages = vec![compaction_message(&summary)];
         s.messages.extend(tail);
+        s.tags = vec![Tag::None];
+        s.tags.extend(tail_tags);
         s.rec(Record::Compaction {
             summary,
             replaced_messages: head_len,
@@ -2373,6 +2539,8 @@ impl Agent {
             Command::Clear => {
                 let cleared = s.messages.len();
                 s.messages.clear();
+                s.tags.clear();
+                s.archive.clear();
                 s.rec(Record::HistoryCleared {
                     cleared_messages: cleared,
                 });
@@ -2512,6 +2680,16 @@ fn notify_blocked(s: &SessionState, client: &Arc<dyn Client>, outcomes: &[HookOu
     }
 }
 
+/// The `[context]` settings in force for `profile`. `model_managed` is on only when the profile
+/// offers the `Context` tool (a lean profile without the allowlist entry does not), so the
+/// harness never waits for a model that cannot compact.
+fn context_cfg(s: &SessionState, profile: &Profile) -> context::ContextConfig {
+    let mut c = s.config.context.with_override(profile.context.as_ref());
+    c.model_managed =
+        c.model_managed && profile.allows_class(CONTEXT_TOOL, LeanClass::OptInWhenLean);
+    c
+}
+
 /// Tools for the session's current mode: the product's built-ins the mode and profile allow,
 /// `SwitchMode`, the MCP tools, then the product's session tools.
 fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> Vec<Arc<dyn Tool>> {
@@ -2542,6 +2720,9 @@ fn build_tools(s: &SessionState, profile: &Profile, user_dir: Option<&Path>) -> 
         .collect();
     if !targets.is_empty() {
         tools.push(Arc::new(SwitchModeTool { targets }));
+    }
+    if context_cfg(s, profile).model_managed {
+        tools.push(Arc::new(ContextTool));
     }
     if let Some(mcp) = &s.mcp {
         tools.extend(mcp.tools_for(&mode.mcp_tools, s.config.mcp.lazy_threshold));
@@ -2827,6 +3008,16 @@ fn replay(
                     output: Some(output.clone()),
                     edits: edits.iter().map(|e| edit_from_diff(cwd, e)).collect(),
                 },
+            ),
+            Record::Collapsed {
+                tag,
+                replaced_messages,
+                ..
+            } => client.send_event(
+                session_id,
+                SessionEvent::Notice(format!(
+                    "the model collapsed {tag} ({replaced_messages} events → 1 summary)"
+                )),
             ),
             Record::ModeChange { to, .. } => {
                 client.send_event(session_id, SessionEvent::ModeChanged(to.clone()))

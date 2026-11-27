@@ -49,7 +49,7 @@ Every harness crate may depend on other harness crates; nothing in the harness p
 
 Harness: anything a different agent (a research assistant, a ticket triager) would also want
 unchanged: the loop, providers, permissions, sandboxing, MCP, hooks, transcripts, compaction, retry,
-loop guards, the ACP server, generic tools (plan, ask, web).
+loop guards, the ACP server, generic tools (plan, ask, web, `Context`).
 
 Product: everything that makes it a *coding* agent or *ruckcode*: the file/search/shell tools, mise,
 the system prompt text, the product config sections (`[update]`, `[mise]`), setup and key
@@ -110,6 +110,16 @@ of the ident crate provides `RUCKCODE` and `ACME` fixtures for tests.
   applies) and `lean_class() -> LeanClass` (`Keep`, `DropWhenLean`, `OptInWhenLean`: how a profile's
   `lean_tools` treats the tool). The harness has no `TodoWrite` special cases; `decode_plan` lets a
   product replay transcripts containing plan tools the current mode no longer offers.
+
+## Model-managed context
+
+`[context] model_managed` (see the README) is a harness feature: `ruck_harness_tools::ContextTool` is
+the generic tool (flat schema, input validation, `LeanClass::OptInWhenLean`), `ruck-harness-core`'s
+`managed` module holds the tags, collapse, recall and usage line, and the agent loop runs the tool
+(it needs the session history) and offers it from `build_tools`, whatever the product. Tags are the
+numbers of the transcript's user and assistant records; `Record::Collapsed` rebuilds collapses on
+resume. The extension only exposes the tool for its name lookups (`builtin_tool`, mode and profile
+tool names). With the feature off nothing changes on the wire or in any request.
 
 ## Config layering
 

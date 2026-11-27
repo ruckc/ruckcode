@@ -1,5 +1,6 @@
 //! Append-only JSONL session transcripts stored in the project for audit and resume.
 
+use crate::managed::{Archive, Tag};
 use anyhow::{Context, Result};
 use ruck_harness_ident::AppIdentity;
 use ruck_harness_llm::{ContentBlock, Message, Role, StopReason, Usage};
@@ -152,6 +153,17 @@ pub enum Record {
     ToolCallsDropped {
         tool_use_ids: Vec<String>,
     },
+    /// The model collapsed the events `from..=to` into `summary` (the `Context` tool). Resume
+    /// rebuilds the same history from it; the originals stay in the records before this one.
+    Collapsed {
+        from: u64,
+        to: u64,
+        /// The summary's tag, e.g. `e3..e17`.
+        tag: String,
+        summary: String,
+        /// History messages the summary replaced.
+        replaced_messages: usize,
+    },
     TurnEnd {
         stop_reason: String,
         duration_ms: u64,
@@ -285,6 +297,15 @@ pub struct LoadedSession {
     /// Client instructions from the last `client_instructions` record, if any.
     pub client_instructions: Option<String>,
     pub records: Vec<Stamped>,
+    /// The tag of each message of `messages` (see [`crate::managed`]).
+    pub tags: Vec<Tag>,
+    /// The originals of the events the model collapsed.
+    pub archive: Archive,
+    /// How many `user_message` and `assistant_message` records the transcript holds: the number
+    /// of the last event.
+    pub event_count: u64,
+    /// How many times the model collapsed history.
+    pub collapses: u32,
 }
 
 impl LoadedSession {
@@ -321,28 +342,60 @@ impl TranscriptReader {
             Some(Record::SessionStart(m)) => m.clone(),
             _ => anyhow::bail!("{} does not start with session_start", path.display()),
         };
-        let mut messages = Vec::new();
+        let mut messages: Vec<Message> = Vec::new();
+        let mut tags: Vec<Tag> = Vec::new();
+        let mut archive = Archive::default();
+        let mut event_count = 0u64;
+        let mut collapses = 0u32;
         let mut mode = meta.mode.clone();
         let mut model = None;
         let mut client_instructions = None;
         for r in &records {
             match &r.record {
                 Record::UserMessage { message, .. } | Record::AssistantMessage { message, .. } => {
-                    messages.push(message.clone())
+                    event_count += 1;
+                    messages.push(message.clone());
+                    tags.push(Tag::Event(event_count));
                 }
                 Record::Compaction {
                     summary,
                     kept_messages,
                     ..
                 } => {
-                    let keep = messages.split_off(messages.len().saturating_sub(*kept_messages));
+                    let at = messages.len().saturating_sub(*kept_messages);
+                    let keep = messages.split_off(at);
+                    let keep_tags = tags.split_off(at.min(tags.len()));
                     messages = vec![compaction_message(summary)];
                     messages.extend(keep);
+                    tags = vec![Tag::None];
+                    tags.extend(keep_tags);
                 }
-                Record::HistoryCleared { .. } => messages.clear(),
+                Record::HistoryCleared { .. } => {
+                    messages.clear();
+                    tags.clear();
+                    archive.clear();
+                }
                 Record::ToolCallsDropped { tool_use_ids } => {
                     let ids = tool_use_ids.iter().cloned().collect();
-                    crate::tool_loop_guard::drop_tool_calls(&mut messages, &ids);
+                    crate::managed::drop_tool_calls_tagged(&mut messages, &mut tags, &ids);
+                }
+                Record::Collapsed {
+                    from, to, summary, ..
+                } => {
+                    collapses += 1;
+                    if let Err(e) = crate::managed::replay_collapse(
+                        &mut messages,
+                        &mut tags,
+                        &mut archive,
+                        *from,
+                        *to,
+                        summary,
+                    ) {
+                        tracing::warn!(
+                            "{}: cannot replay collapse e{from}..e{to}: {e}",
+                            path.display()
+                        );
+                    }
                 }
                 Record::ModeChange { to, .. } => mode = to.clone(),
                 Record::ModelChange { to, .. } => model = to.clone(),
@@ -359,6 +412,10 @@ impl TranscriptReader {
             model,
             client_instructions,
             records,
+            tags,
+            archive,
+            event_count,
+            collapses,
         })
     }
 }
