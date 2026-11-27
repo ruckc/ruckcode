@@ -3,25 +3,25 @@
 use std::io::{BufRead, Write};
 use std::process::{Command, Stdio};
 
-fn rc() -> Command {
-    let home = std::env::temp_dir();
+fn rc(home: &std::path::Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_rc"));
-    c.env("HOME", &home)
+    c.env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join("xdg"))
-        .env("RUCKCODE_CONFIG_DIR", home.join("rc-acp-version-cfg"))
-        .current_dir(&home);
+        .env("RUCKCODE_CONFIG_DIR", home.join("cfg"))
+        .current_dir(home);
     c
 }
 
 #[test]
 fn acp_agent_info_version_matches_rc_version() {
-    let out = rc().arg("--version").output().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let out = rc(home.path()).arg("--version").output().unwrap();
     assert!(out.status.success());
     let printed = String::from_utf8(out.stdout).unwrap();
     let version = printed.trim().strip_prefix("rc ").expect("`rc <version>`");
     assert!(!version.is_empty());
 
-    let mut child = rc()
+    let mut child = rc(home.path())
         .arg("acp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

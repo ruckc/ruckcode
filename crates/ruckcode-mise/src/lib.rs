@@ -152,7 +152,7 @@ const DISCOVERY_IDENTITY: AppIdentity = AppIdentity {
     config_dir_env: "MISE_DISCOVERY_CONFIG_DIR",
     user_config_subdir: "mise-discovery",
     data_dir_name: "mise-discovery",
-    version: "0",
+    version: env!("CARGO_PKG_VERSION"),
     user_agent: "mise-discovery",
     homepage_url: "",
     acp_namespace: "mise-discovery",

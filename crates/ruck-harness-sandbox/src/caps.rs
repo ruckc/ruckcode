@@ -16,7 +16,7 @@ const PROBE_IDENTITY: AppIdentity = AppIdentity {
     config_dir_env: "SANDBOX_PROBE_CONFIG_DIR",
     user_config_subdir: "sandbox-probe",
     data_dir_name: "sandbox-probe",
-    version: "0",
+    version: env!("CARGO_PKG_VERSION"),
     user_agent: "sandbox-probe",
     homepage_url: "",
     acp_namespace: "sandbox-probe",

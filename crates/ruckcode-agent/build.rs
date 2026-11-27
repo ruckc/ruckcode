@@ -10,6 +10,8 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-env-changed=RUCKCODE_VERSION");
     println!("cargo:rerun-if-changed=../../.git/HEAD");
+    // HEAD only changes on branch switches; the reflog changes on every commit and checkout.
+    println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
 
     let explicit = std::env::var("RUCKCODE_VERSION")
         .ok()
