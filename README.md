@@ -994,6 +994,11 @@ release is deployed to the site). Everything is verified with the project's mini
 
 ## Workspace layout
 
+The `ruck-harness-*` crates are a product-neutral agent engine; the `ruckcode-*` crates are the
+ruckcode coding agent built on it. The harness never depends on the product (checked in CI). See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the crate map, extension points and compatibility
+guarantees.
+
 ```
 crates/
   ruckcode-agent         the ruckcode product on the harness: extension (prompt, tools, guard hints), config, setup, modes API

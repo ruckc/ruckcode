@@ -47,6 +47,8 @@ jobs:
           rustup default stable
           echo "RUSTC_VERSION=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_ENV"
       - run: cargo fmt --all --check
+      - name: Harness boundary (no ruck-harness-* crate may depend on a ruckcode-* crate)
+        run: python3 scripts/check_harness_boundary.py
 
   clippy:
     runs-on: ubuntu-24.04
@@ -256,7 +258,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: python3 -m unittest -v scripts/test_build_site.py
+      - run: python3 -m unittest -v scripts/test_build_site.py scripts/test_check_harness_boundary.py
       - run: sh -n site/install.sh
 
   # Desktop app: SvelteKit UI checks and tests, then the Tauri shell (its own Cargo workspace,

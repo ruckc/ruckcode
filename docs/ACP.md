@@ -4,12 +4,14 @@
 `rc acp` serves on stdio; `rc` itself talks to an in-process agent over an in-memory byte pipe, so
 the wire is the same in both cases.
 
+The extension namespace is not fixed: `ruck-harness-acp` takes it from the agent's `AppIdentity` (`acp_namespace`). For ruckcode it is `ruckcode`, hence the `_ruckcode/*` methods and `_meta.ruckcode.*` documented below; another product on the harness gets its own prefix (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+
 Wire types are the official [`agent-client-protocol-schema`](https://crates.io/crates/agent-client-protocol-schema)
-crate, pinned to `=1.12.0` with `default-features = false` (no `schemars`) and **no `unstable_*`
-features**. `ruck_harness_acp::schema` re-exports its `v1` types plus our extension types and helpers.
+crate, pinned to `=1.15.1` with `default-features = false` (no `schemars`) and a single unstable
+feature, `unstable_end_turn_token_usage` (see below). `ruck_harness_acp::schema` re-exports its `v1` types plus our extension types and helpers.
 The JSON-RPC layer (framing, request ids, response routing, error replies, the dispatch loop) is
-the official [`agent-client-protocol`](https://crates.io/crates/agent-client-protocol) SDK (3.4,
-`default-features = false`; it depends on the same `agent-client-protocol-schema =1.12.0`, so there
+the official [`agent-client-protocol`](https://crates.io/crates/agent-client-protocol) SDK (5.0,
+`default-features = false`; it depends on the same `agent-client-protocol-schema =1.15.1`, so there
 is one copy of the schema). `rpc.rs` is a thin adapter on top of it: a method-string + JSON `Value`
 view (`Handler`, `Connection`) so `_ruckcode/*` extensions, `_meta` and lenient parsing stay
 independent of the typed schema, plus a tokio line transport. Request dispatch (`agent.rs`) is ours.

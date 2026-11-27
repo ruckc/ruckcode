@@ -11,6 +11,9 @@ A Rust agentic coding agent in the spirit of Claude Code, with:
 
 ## Workspace layout
 
+The crates split into a product-neutral harness (`ruck-harness-*`) and the ruckcode product
+(`ruckcode-*`); see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ```
 crates/
   ruckcode-agent         the ruckcode product on the harness: extension (prompt, tools, guard hints), config, setup, modes API

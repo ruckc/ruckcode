@@ -1,6 +1,6 @@
 [package]
 name = "ruckcode-tools"
-description = "Built-in tools for the ruckcode agent"
+description = "ruckcode agent: built-in coding tools (Read, Write, Edit, Glob, Grep, Bash)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

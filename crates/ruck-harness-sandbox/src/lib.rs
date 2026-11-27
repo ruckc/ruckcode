@@ -1,4 +1,4 @@
-//! Command sandboxing implemented inside the ruckcode binary.
+//! Command sandboxing implemented inside the product binary (`rc` for ruckcode).
 //!
 //! The Bash tool (and other process-spawning tools) re-execute the running binary as a hidden
 //! launcher (`rc __sandbox-exec`). The launcher restricts itself (user/mount/pid/net namespaces,

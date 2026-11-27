@@ -10,7 +10,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/ruckc/ruckcode"
-description = "ruckcode desktop app (Tauri v2 shell around the SvelteKit UI)"
+description = "ruckcode front-end: desktop app (Tauri v2 shell around the SvelteKit UI)"
 publish = false
 
 [lib]
