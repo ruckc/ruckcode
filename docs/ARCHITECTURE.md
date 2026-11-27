@@ -90,7 +90,7 @@ of the ident crate provides `RUCKCODE` and `ACME` fixtures for tests.
   none) and `refresh(cwd)` (called on a mode switch).
 - **`PromptProvider`**: `base(&PromptCtx)` is the product's opening guidance; `environment_extra` and
   `project_sections` default to empty. The harness assembles the rest (environment, mode, mode list,
-  client instructions). `PromptCtx::offers(name)` says whether a built-in tool is available, so the
+  client instructions). The `PromptCtx::offers` predicate (`offers(name)`) says whether a built-in tool is available, so the
   prompt never advertises a tool the model cannot call.
 - **`GuardHints`**: how the tool-loop guard recognises the product's tools: `edit_tools`,
   `path_keys`, `search_tool` (a search-pattern parser) and `progress_probe` (a `ProgressProbe`, e.g.
