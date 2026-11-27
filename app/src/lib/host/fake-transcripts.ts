@@ -757,7 +757,7 @@ export interface FakeTranscriptsOptions {
   delayMs?: number;
 }
 
-/** In-memory transcripts for browser mock mode; mirrors `ruckcode_core::transcript_api`. */
+/** In-memory transcripts for browser mock mode; mirrors `ruck_harness_core::transcript_api`. */
 export class FakeTranscripts implements TranscriptsApi {
   /** Every call as `op:project[@distro]`, for tests. */
   calls: string[] = [];

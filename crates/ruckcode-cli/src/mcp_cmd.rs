@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use ruck_harness_mcp::McpManager;
-use ruckcode_core::Config;
+use ruckcode_agent::Config;
 
 use crate::Cli;
 
@@ -17,7 +17,7 @@ pub async fn list(cli: &Cli) -> Result<()> {
     let manager = McpManager::start(
         config.mcp_servers.clone(),
         &cwd,
-        &ruckcode_core::identity::RUCKCODE,
+        &ruckcode_agent::identity::RUCKCODE,
     )
     .await;
     for s in manager.server_statuses() {

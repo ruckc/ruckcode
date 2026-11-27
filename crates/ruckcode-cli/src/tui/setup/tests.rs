@@ -1,7 +1,7 @@
 use super::*;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use ruckcode_core::Config;
+use ruckcode_agent::Config;
 
 const MODES: &str = "default_mode = \"explore\"\n[modes.explore]\ndescription = \"look\"\n[modes.test]\ndescription = \"test\"\n";
 
@@ -170,7 +170,7 @@ fn full_walk_key_first_then_url_check_models_name_modes_apply() {
     let cfg = Config::load(env.proj.path(), Some(env.user.path())).unwrap();
     assert_eq!(cfg.default_profile, "openrouter");
     assert_eq!(
-        ruckcode_core::config::named_key(Some(env.user.path()), "openrouter").as_deref(),
+        ruckcode_agent::config::named_key(Some(env.user.path()), "openrouter").as_deref(),
         Some("sk-or-v1-secret-1234")
     );
     let cfg_text = std::fs::read_to_string(env.user.path().join("config.toml")).unwrap();
@@ -490,9 +490,9 @@ fn profile_overwrite_prompt_and_name_validation() {
 #[test]
 fn existing_saved_key_is_used_for_the_probe_and_the_plan() {
     let env = Env::new(false);
-    ruckcode_core::keys::add_key(Some(env.user.path()), "acme", "sk-acme-0000", Some("Acme"))
+    ruckcode_agent::keys::add_key(Some(env.user.path()), "acme", "sk-acme-0000", Some("Acme"))
         .unwrap();
-    ruckcode_core::keys::add_key(Some(env.user.path()), "openrouter", "sk-or-old", None).unwrap();
+    ruckcode_agent::keys::add_key(Some(env.user.path()), "openrouter", "sk-or-old", None).unwrap();
     let mut w = env.wizard();
     press(&mut w, &[KeyCode::Down]);
     assert_eq!(w.auth_choice(), Some(AuthChoice::Existing));

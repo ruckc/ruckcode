@@ -13,14 +13,14 @@ mod setup_cmd;
 mod tui;
 mod update;
 
-use ruckcode_core::extension::RuckcodeAgent as _;
+use ruckcode_agent::extension::RuckcodeAgent as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ruckcode_core::{Agent, AgentOptions};
+use ruck_harness_core::{Agent, AgentOptions};
 
 #[derive(Parser, Debug)]
 #[command(name = "rc", version = env!("RC_VERSION"), about = "ruckcode: a mode-driven coding agent")]

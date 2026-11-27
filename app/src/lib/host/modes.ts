@@ -1,5 +1,5 @@
 /**
- * Mode/hook editor: types (mirroring the JSON of `ruckcode_core::modes_api`, camelCase) and the API
+ * Mode/hook editor: types (mirroring the JSON of `ruckcode_agent::modes_api`, camelCase) and the API
  * the UI uses. Implementations: Tauri commands (local core, or `rc modes ... --json` inside WSL)
  * and an in-memory fake for browser mock mode.
  */

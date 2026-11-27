@@ -1,6 +1,6 @@
 /**
  * Pure mapping from transcript records to the timeline the UI renders, plus the Markdown export.
- * Every record type of `ruckcode_core::transcript` has a timeline item; a `tool_call` and its
+ * Every record type of `ruck_harness_core::transcript` has a timeline item; a `tool_call` and its
  * `tool_result` (same `toolUseId`) are folded into one card.
  */
 import { formatDuration } from '../format';

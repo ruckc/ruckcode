@@ -6,17 +6,17 @@ pub mod input;
 pub mod render;
 pub mod runner;
 
-use ruckcode_core::mode_ext::RuckcodeModeSet as _;
+use ruckcode_agent::mode_ext::RuckcodeModeSet as _;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ruck_harness_core::{ModeSet, ProviderKind};
 use ruck_harness_llm::ModelInfo;
-use ruckcode_core::config::Profile;
-use ruckcode_core::keys::{self, KeyInfo, KeyScope};
-use ruckcode_core::setup::{self, NewKey, SetupPlan, SetupReport};
-use ruckcode_core::setup_api;
-use ruckcode_core::{ModeSet, ProviderKind};
+use ruckcode_agent::config::Profile;
+use ruckcode_agent::keys::{self, KeyInfo, KeyScope};
+use ruckcode_agent::setup::{self, NewKey, SetupPlan, SetupReport};
+use ruckcode_agent::setup_api;
 use zeroize::Zeroize;
 
 pub use self::input::TextInput;
@@ -473,7 +473,7 @@ impl SetupWizard {
     pub fn fetch_key(&self) -> Option<String> {
         match self.auth_choice() {
             Some(AuthChoice::Existing) => self.ctx.keys.get(self.existing_idx).and_then(|k| {
-                ruckcode_core::config::named_key(self.ctx.user_dir.as_deref(), &k.name)
+                ruckcode_agent::config::named_key(self.ctx.user_dir.as_deref(), &k.name)
             }),
             Some(AuthChoice::New) => Some(self.new_key_secret.trimmed().to_string()),
             _ => None,
@@ -883,7 +883,7 @@ impl SetupWizard {
         }
     }
 
-    fn existing_assignment(&self, m: &ruckcode_core::ModeDef) -> Option<ModelChoice> {
+    fn existing_assignment(&self, m: &ruck_harness_core::ModeDef) -> Option<ModelChoice> {
         let profile = m.profile.clone()?;
         let model = m.model.clone().or_else(|| {
             self.ctx

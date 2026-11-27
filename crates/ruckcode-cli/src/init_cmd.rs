@@ -1,7 +1,7 @@
 //! `rc init`: write `.ruckcode/modes.toml` from the embedded templates.
 
 use anyhow::{bail, Context, Result};
-use ruckcode_core::init::{self, InitOptions};
+use ruckcode_agent::init::{self, InitOptions};
 
 use crate::Cli;
 
@@ -15,9 +15,9 @@ pub async fn run(
 ) -> Result<()> {
     let dir = cli.project_dir()?;
     if json && !diff {
-        let r = ruckcode_core::setup_api::init_modes(
+        let r = ruckcode_agent::setup_api::init_modes(
             &dir,
-            &ruckcode_core::setup_api::InitInput {
+            &ruckcode_agent::setup_api::InitInput {
                 minimal,
                 modes: modes.to_vec(),
                 force,

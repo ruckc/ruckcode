@@ -2,11 +2,11 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
-use ruckcode_core::config::Profile;
-use ruckcode_core::config::ProviderKind;
-use ruckcode_core::keys::{self, KeyScope};
-use ruckcode_core::setup::{self, NewKey, SetupPlan};
-use ruckcode_core::setup_api;
+use ruckcode_agent::config::Profile;
+use ruckcode_agent::config::ProviderKind;
+use ruckcode_agent::keys::{self, KeyScope};
+use ruckcode_agent::setup::{self, NewKey, SetupPlan};
+use ruckcode_agent::setup_api;
 use zeroize::Zeroize;
 
 use crate::Cli;

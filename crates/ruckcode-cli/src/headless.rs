@@ -152,7 +152,7 @@ fn rate_limit_text(params: &Value) -> Option<String> {
     Some(format!(
         "{} - retrying in {}{retry}",
         params["reason"].as_str().unwrap_or("Rate limited"),
-        ruckcode_core::retry::format_wait(std::time::Duration::from_secs(secs))
+        ruck_harness_core::retry::format_wait(std::time::Duration::from_secs(secs))
     ))
 }
 

@@ -1,15 +1,15 @@
 //! Drives a [`SetupWizard`] on a real terminal and performs its effects.
 
-use ruckcode_core::mode_ext::RuckcodeModeSet as _;
+use ruckcode_agent::mode_ext::RuckcodeModeSet as _;
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
-use ruckcode_core::init::{self, InitOptions};
-use ruckcode_core::setup::{self, SetupReport};
-use ruckcode_core::setup_api::{self, ModelsAuth, ProbeResult};
-use ruckcode_core::ModeSet;
+use ruck_harness_core::ModeSet;
+use ruckcode_agent::init::{self, InitOptions};
+use ruckcode_agent::setup::{self, SetupReport};
+use ruckcode_agent::setup_api::{self, ModelsAuth, ProbeResult};
 use tokio::sync::mpsc;
 
 use super::{Effect, ProbeRequest, SetupContext, SetupWizard};

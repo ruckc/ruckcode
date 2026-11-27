@@ -1,9 +1,9 @@
 //! `rc sessions`: list, show and search the project's transcripts. With `--json` the output is
-//! one line of the camelCase JSON of `ruckcode_core::transcript_api` (used by the desktop app).
+//! one line of the camelCase JSON of `ruck_harness_core::transcript_api` (used by the desktop app).
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use ruckcode_core::transcript_api::{self, ReadOptions};
+use ruck_harness_core::transcript_api::{self, ReadOptions};
 
 use crate::{one_line, Cli};
 
@@ -54,6 +54,7 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
     match &args.action {
         Some(SessionsAction::Show { id, offset, limit }) => {
             let r = transcript_api::read(
+                &ruckcode_agent::identity::RUCKCODE,
                 &project,
                 id,
                 ReadOptions {
@@ -80,7 +81,12 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
             }
         }
         Some(SessionsAction::Search { text, limit }) => {
-            let hits = transcript_api::search(&project, text, *limit)?;
+            let hits = transcript_api::search(
+                &ruckcode_agent::identity::RUCKCODE,
+                &project,
+                text,
+                *limit,
+            )?;
             if args.json {
                 println!("{}", serde_json::to_string(&hits)?);
             } else if hits.is_empty() {
@@ -95,7 +101,7 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
             }
         }
         Some(SessionsAction::Dismiss { id }) => {
-            transcript_api::dismiss(&project, id)?;
+            transcript_api::dismiss(&ruckcode_agent::identity::RUCKCODE, &project, id)?;
             if args.json {
                 println!("{{}}");
             } else {
@@ -103,7 +109,7 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
             }
         }
         None if args.unfinished => {
-            let list = ruckcode_core::extension::find_unfinished(&project, None);
+            let list = ruckcode_agent::extension::find_unfinished(&project, None);
             if args.json {
                 println!("{}", serde_json::to_string(&list)?);
             } else if list.is_empty() {
@@ -120,7 +126,11 @@ pub fn run(cli: &Cli, args: &SessionsArgs) -> Result<bool> {
             }
         }
         None if args.json => {
-            let list = transcript_api::list(&project, args.query.as_deref())?;
+            let list = transcript_api::list(
+                &ruckcode_agent::identity::RUCKCODE,
+                &project,
+                args.query.as_deref(),
+            )?;
             println!("{}", serde_json::to_string(&list)?);
         }
         None => return Ok(false),

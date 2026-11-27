@@ -4,7 +4,7 @@
 //! Tauri `Channel`; lines to the agent come in through `agent_send`. The backend never inspects
 //! them, so the host kind (embedded agent or `rc acp` child process) is invisible to the UI.
 
-use ruckcode_core::extension::RuckcodeAgent as _;
+use ruckcode_agent::extension::RuckcodeAgent as _;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::process::Stdio;
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ruckcode_core::{Agent, AgentOptions};
+use ruck_harness_core::{Agent, AgentOptions};
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -25,7 +25,7 @@ use crate::wsl;
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum HostKind {
-    /// `ruckcode_core::Agent` embedded in this process behind `ruck_harness_acp`.
+    /// `ruck_harness_core::Agent` embedded in this process behind `ruck_harness_acp`.
     #[default]
     Local,
     /// `rc acp` as a child process.
@@ -93,7 +93,7 @@ impl Hosts {
                 let agent = Arc::new(Agent::ruckcode(AgentOptions::default()));
                 let (tx, rx) = ruck_harness_acp::spawn_in_process_raw(
                     agent,
-                    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION),
+                    ruck_harness_acp::AcpInfo::new(ruckcode_agent::identity::VERSION),
                 );
                 Spawned {
                     to_agent: tx,

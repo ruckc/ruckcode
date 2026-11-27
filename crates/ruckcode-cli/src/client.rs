@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use ruck_harness_acp::schema::{self, SessionMode, SessionModeState};
 use ruck_harness_acp::Connection;
-use ruckcode_core::identity::RUCKCODE;
+use ruckcode_agent::identity::RUCKCODE;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -81,7 +81,7 @@ pub fn ext_methods() -> &'static schema::ExtMethods {
 
 /// What `rc acp` and the in-process server report as `agentInfo`.
 pub fn acp_info() -> ruck_harness_acp::AcpInfo {
-    ruck_harness_acp::AcpInfo::new(ruckcode_core::identity::VERSION)
+    ruck_harness_acp::AcpInfo::new(ruckcode_agent::identity::VERSION)
 }
 
 pub async fn initialize(conn: &Connection) -> Result<()> {

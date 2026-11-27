@@ -4,8 +4,8 @@ use std::io::{IsTerminal, Read};
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
-use ruckcode_core::config::credentials_path;
-use ruckcode_core::keys::{self, KeyScope};
+use ruckcode_agent::config::credentials_path;
+use ruckcode_agent::keys::{self, KeyScope};
 
 use crate::Cli;
 
@@ -90,7 +90,7 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
     let project = cli.project_dir()?;
     match action {
         KeysAction::List { json: true } => {
-            let l = ruckcode_core::setup_api::keys_list(None, &project)?;
+            let l = ruckcode_agent::setup_api::keys_list(None, &project)?;
             println!("{}", serde_json::to_string(&l)?);
         }
         KeysAction::List { json: false } => {
@@ -140,7 +140,8 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
             if secret.is_empty() {
                 bail!("no key entered");
             }
-            let r = ruckcode_core::setup_api::keys_add(None, name, &secret, description.as_deref());
+            let r =
+                ruckcode_agent::setup_api::keys_add(None, name, &secret, description.as_deref());
             zeroize::Zeroize::zeroize(&mut secret);
             let r = r?;
             if *json {
@@ -150,7 +151,7 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
             }
         }
         KeysAction::Remove { name, json: true } => {
-            let r = ruckcode_core::setup_api::keys_remove(None, &project, name)?;
+            let r = ruckcode_agent::setup_api::keys_remove(None, &project, name)?;
             println!("{}", serde_json::to_string(&r)?);
         }
         KeysAction::Use {
@@ -159,7 +160,7 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
             project: in_project,
             json: true,
         } => {
-            let r = ruckcode_core::setup_api::keys_use(
+            let r = ruckcode_agent::setup_api::keys_use(
                 None,
                 &project,
                 name,
@@ -194,7 +195,7 @@ pub async fn run(cli: &Cli, action: &KeysAction) -> Result<()> {
             let profile = match profile {
                 Some(p) => p.clone(),
                 None => {
-                    ruckcode_core::Config::load(&project, None)
+                    ruckcode_agent::Config::load(&project, None)
                         .context("loading config")?
                         .harness
                         .default_profile

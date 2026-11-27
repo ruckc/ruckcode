@@ -277,7 +277,7 @@ impl Ctx {
 
 /// `(check, auto)` from the config: `[update] check/auto` (and the older `check_updates`).
 pub fn update_settings(cwd: &Path) -> (bool, bool) {
-    ruckcode_core::Config::load(cwd, None)
+    ruckcode_agent::Config::load(cwd, None)
         .map(|c| {
             let check = c.check_updates && c.update.check;
             (check, check && c.update.auto)
@@ -291,7 +291,7 @@ pub fn update_checks_enabled(cwd: &Path) -> bool {
 }
 
 fn model_label(cli: &Cli, cwd: &Path) -> String {
-    let cfg = ruckcode_core::Config::load(cwd, None).ok();
+    let cfg = ruckcode_agent::Config::load(cwd, None).ok();
     let profile = cli
         .profile
         .clone()
@@ -312,7 +312,7 @@ fn model_label(cli: &Cli, cwd: &Path) -> String {
 
 /// Models listed for the session profile, for `/model`.
 fn profile_models(cli: &Cli, cwd: &Path) -> Vec<String> {
-    let Ok(cfg) = ruckcode_core::Config::load(cwd, None) else {
+    let Ok(cfg) = ruckcode_agent::Config::load(cwd, None) else {
         return vec![];
     };
     let name = cli.profile.clone().unwrap_or(cfg.default_profile.clone());
@@ -329,7 +329,7 @@ fn should_onboard(cli: &Cli, cwd: &Path) -> bool {
     cli.profile.is_none()
         && std::env::var_os("RUCKCODE_PROFILE").is_none()
         && !cwd.join(".ruckcode/config.toml").exists()
-        && ruckcode_core::setup::needs_onboarding(cwd, None)
+        && ruckcode_agent::setup::needs_onboarding(cwd, None)
 }
 
 pub async fn run(cli: &Cli) -> Result<()> {
@@ -387,7 +387,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
         None if cli.continue_last => ctx.continue_last(),
         None if initial_prompt.is_none() => {
             // Offer to pick up interrupted sessions or ones with open tasks; esc starts fresh.
-            let unfinished = ruckcode_core::extension::find_unfinished(&cwd, None);
+            let unfinished = ruckcode_agent::extension::find_unfinished(&cwd, None);
             if unfinished.is_empty() {
                 ctx.start(None, true)
             } else {
@@ -536,7 +536,11 @@ fn handle_ui_event(
 }
 
 fn dismiss(app: &mut App, ctx: &Ctx, id: &str) {
-    if let Err(e) = ruckcode_core::transcript_api::dismiss(&ctx.cwd, id) {
+    if let Err(e) = ruck_harness_core::transcript_api::dismiss(
+        &ruckcode_agent::identity::RUCKCODE,
+        &ctx.cwd,
+        id,
+    ) {
         app.error(format!("could not dismiss {id}: {e:#}"));
     }
 }

@@ -1,10 +1,10 @@
-//! Transcript browser commands. On the local host they call `ruckcode_core::transcript_api`
+//! Transcript browser commands. On the local host they call `ruck_harness_core::transcript_api`
 //! directly (on a blocking thread, since transcripts can be large); on WSL2 they run
 //! `rc sessions ... --json` inside the distro, so both produce the same JSON.
 
 use std::path::PathBuf;
 
-use ruckcode_core::transcript_api::{self, ReadOptions};
+use ruck_harness_core::transcript_api::{self, ReadOptions};
 use serde_json::Value;
 
 use crate::setup::{via_wsl, RcCall, Target};
@@ -69,7 +69,7 @@ pub async fn list(t: &Target, project: &str, query: Option<&str>) -> Result<Valu
     match t {
         Target::Local => {
             let (p, q) = (PathBuf::from(project), query.map(String::from));
-            json(local(move || transcript_api::list(&p, q.as_deref())).await?)
+            json(local(move || transcript_api::list(&ruckcode_agent::identity::RUCKCODE, &p, q.as_deref())).await?)
         }
         Target::Wsl(d) => via_wsl(d, project, list_call(query), 60).await,
     }
@@ -85,7 +85,7 @@ pub async fn read(
     match t {
         Target::Local => {
             let (p, id) = (PathBuf::from(project), id.to_string());
-            json(local(move || transcript_api::read(&p, &id, ReadOptions { offset, limit })).await?)
+            json(local(move || transcript_api::read(&ruckcode_agent::identity::RUCKCODE, &p, &id, ReadOptions { offset, limit })).await?)
         }
         Target::Wsl(d) => via_wsl(d, project, read_call(id, offset, limit), 60).await,
     }
@@ -100,7 +100,7 @@ pub async fn search(
     match t {
         Target::Local => {
             let (p, text) = (PathBuf::from(project), text.to_string());
-            json(local(move || transcript_api::search(&p, &text, limit)).await?)
+            json(local(move || transcript_api::search(&ruckcode_agent::identity::RUCKCODE, &p, &text, limit)).await?)
         }
         Target::Wsl(d) => via_wsl(d, project, search_call(text, limit), 90).await,
     }
@@ -112,7 +112,7 @@ pub async fn unfinished(t: &Target, project: &str) -> Result<Value, String> {
     match t {
         Target::Local => {
             let p = PathBuf::from(project);
-            json(local(move || Ok(ruckcode_core::extension::find_unfinished(&p, None))).await?)
+            json(local(move || Ok(ruckcode_agent::extension::find_unfinished(&p, None))).await?)
         }
         Target::Wsl(d) => via_wsl(d, project, unfinished_call(), 60).await,
     }
@@ -123,7 +123,7 @@ pub async fn dismiss(t: &Target, project: &str, id: &str) -> Result<Value, Strin
     match t {
         Target::Local => {
             let (p, id) = (PathBuf::from(project), id.to_string());
-            local(move || transcript_api::dismiss(&p, &id)).await?;
+            local(move || transcript_api::dismiss(&ruckcode_agent::identity::RUCKCODE, &p, &id)).await?;
             Ok(Value::Null)
         }
         Target::Wsl(d) => via_wsl(d, project, dismiss_call(id), 60).await,

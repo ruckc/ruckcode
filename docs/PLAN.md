@@ -13,7 +13,7 @@ A Rust agentic coding agent in the spirit of Claude Code, with:
 
 ```
 crates/
-  ruckcode-core         the ruckcode product on the harness: extension (prompt, tools, guard hints), config, setup, modes API
+  ruckcode-agent         the ruckcode product on the harness: extension (prompt, tools, guard hints), config, setup, modes API
   ruck-harness-core     agent loop, sessions, context assembly, modes, permissions, transcripts, loop guards, layered config
   ruck-harness-ident    AppIdentity: the product name, env prefix, dirs and user agent the harness crates take
   ruck-harness-llm      Provider trait + Anthropic + OpenAI-compatible clients (streaming, tool use)
@@ -41,7 +41,7 @@ Configured as profiles in `~/.config/ruckcode/config.toml`; each mode may set `p
 
 ### Onboarding and keys
 
-`ruck_harness_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_core::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (no env-var keys; a legacy hand-written `api_key_env` is still read). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
+`ruck_harness_llm::list_models` queries `/v1/models` (Anthropic, paginated) or `/models` (OpenAI-compatible). `ruckcode_agent::setup` plans and applies setup with `toml_edit` (comments preserved): user profile, `credentials.toml`, project `modes.toml` per-mode `profile`/`model`. Keys live only in `credentials.toml` (0600) as `[keys.<name>]`; profiles reference them with `api_key_name` (no env-var keys; a legacy hand-written `api_key_env` is still read). The wizard (`rc setup`, `/setup`, automatic on first interactive run) is a pure state machine in `ruckcode-cli/src/tui/setup`; `rc keys` manages named keys; `RUCKCODE_CONFIG_DIR` relocates user config.
 
 ## Modes
 
