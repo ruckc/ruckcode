@@ -691,7 +691,7 @@ mod tests {
     fn context_recalls_of_different_tags_are_not_a_loop_identical_ones_are() {
         let cfg = ToolLoopGuardConfig::default();
         let mut d = ToolLoopDetector::default();
-        for i in 0..12 {
+        for i in 1..=12 {
             d.observe(
                 &cfg,
                 &format!("c{i}"),
