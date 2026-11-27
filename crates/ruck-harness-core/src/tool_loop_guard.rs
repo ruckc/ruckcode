@@ -688,6 +688,37 @@ mod tests {
     }
 
     #[test]
+    fn context_recalls_of_different_tags_are_not_a_loop_identical_ones_are() {
+        let cfg = ToolLoopGuardConfig::default();
+        let mut d = ToolLoopDetector::default();
+        for i in 0..12 {
+            d.observe(
+                &cfg,
+                &format!("c{i}"),
+                "Context",
+                &json!({"action": "recall", "tag": format!("e{i}")}),
+                &format!("[e{i} user]\ncontent {i}"),
+                false,
+                false,
+            );
+        }
+        assert!(d.take_trip().is_none());
+        for i in 0..4 {
+            d.observe(
+                &cfg,
+                &format!("s{i}"),
+                "Context",
+                &json!({"action": "recall", "tag": "e3"}),
+                "[e3 user]\nsame",
+                false,
+                false,
+            );
+        }
+        let t = d.take_trip().expect("identical recalls trip");
+        assert!(matches!(t.kind, TripKind::Repeat { count: 4, .. }));
+    }
+
+    #[test]
     fn identical_calls_and_results_trip_and_keep_the_first() {
         let cfg = ToolLoopGuardConfig::default();
         let mut d = ToolLoopDetector::default();

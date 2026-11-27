@@ -629,6 +629,7 @@ pub fn type_name(r: &Record) -> &'static str {
         Record::Compaction { .. } => "compaction",
         Record::HistoryCleared { .. } => "history_cleared",
         Record::ToolCallsDropped { .. } => "tool_calls_dropped",
+        Record::Collapsed { .. } => "collapsed",
         Record::TurnEnd { .. } => "turn_end",
         Record::SessionResumed {} => "session_resumed",
         Record::SessionDismissed {} => "session_dismissed",
@@ -751,6 +752,16 @@ pub fn normalize(index: usize, s: &Stamped) -> Value {
             json!({ "clearedMessages": cleared_messages })
         }
         Record::ToolCallsDropped { tool_use_ids } => json!({ "toolUseIds": tool_use_ids }),
+        Record::Collapsed {
+            from,
+            to,
+            tag,
+            summary,
+            replaced_messages,
+        } => json!({
+            "from": from, "to": to, "tag": tag, "summary": summary,
+            "replacedMessages": replaced_messages,
+        }),
         Record::TurnEnd {
             stop_reason,
             duration_ms,

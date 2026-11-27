@@ -21,6 +21,7 @@
 //! | `mock:mode <id>`               | `SwitchMode` tool call with a reason                       |
 //! | `mock:think`                   | a thinking block (signature `mock`) plus text              |
 //! | `mock:tool <Name> <json>`      | arbitrary tool call                                        |
+//! | `mock:collapse`                | `Context` collapse of the earlier exchanges (needs `[context] model_managed`) |
 //! | `mock:ratelimit [ms]`          | one 429 asking to retry after `ms` (default 1500), then reply |
 //! | `mock:ratelimit-daily`         | 429 with an exhausted daily credit budget (resets in 1h)   |
 //! | anything else                  | help text echoing the prompt, streamed in chunks           |
@@ -131,6 +132,48 @@ impl MockProvider {
         }
     }
 
+    /// `mock:collapse`: collapse everything between the first message and this prompt into one
+    /// summary, reading the tags `[eN]` the harness puts on the history (model-managed context).
+    fn collapse(&self, request: &Request) -> Message {
+        if !request.tools.iter().any(|t| t.name == "Context") {
+            return Message::assistant_text(
+                "The `Context` tool is not available: set `model_managed = true` under `[context]` to demo it.",
+            );
+        }
+        let mut tags: Vec<(u64, u64)> = request
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => leading_tag(text),
+                ContentBlock::ToolResult { content, .. } => leading_tag(content),
+                _ => None,
+            })
+            .collect();
+        tags.sort_unstable();
+        // This prompt is the last tagged event; the range ends just before it and starts after
+        // the first message.
+        let Some(prompt) = tags.last().map(|t| t.0) else {
+            return Message::assistant_text("History tags are not on; nothing to collapse.");
+        };
+        let from = tags.iter().map(|t| t.0).filter(|n| *n > 1).min();
+        match from {
+            Some(from) if prompt >= 3 && from < prompt => self.tool(
+                request,
+                "Context",
+                json!({
+                    "action": "collapse",
+                    "from": format!("e{from}"),
+                    "to": format!("e{}", prompt - 1),
+                    "summary": "Earlier demo exchanges (commands run and their output); nothing in them is needed any more.",
+                }),
+            ),
+            _ => Message::assistant_text(
+                "Nothing to collapse yet: run a few commands (for example mock:bash echo hi) first.",
+            ),
+        }
+    }
+
     /// `mock:ratelimit [ms]` fails once per prompt with a 429 asking to retry after `ms`
     /// milliseconds (default 1500); `mock:ratelimit-daily` always fails with an exhausted daily
     /// credit budget that resets in an hour.
@@ -179,7 +222,7 @@ impl MockProvider {
         if !results.is_empty() {
             return Message::assistant_text(summarize_results(request, &results));
         }
-        let prompt = last.text();
+        let prompt = clean_prompt(&last.text());
         let trimmed = prompt.trim();
         let (cmd, rest) = match strip_prefix_ci(trimmed, "mock:") {
             Some(r) => {
@@ -242,6 +285,7 @@ impl MockProvider {
                     },
                 ],
             },
+            "collapse" => self.collapse(request),
             "tool" => {
                 let (name, json_src) = match rest.split_once(char::is_whitespace) {
                     Some((n, j)) => (n, j.trim()),
@@ -258,6 +302,29 @@ impl MockProvider {
             _ => Message::assistant_text(help_text(trimmed, self.identity.as_ref())),
         }
     }
+}
+
+/// The prompt as the user typed it: without the `[eN]` tag and the usage line a model-managed
+/// session adds to the request.
+fn clean_prompt(text: &str) -> String {
+    let t = text.split("\n\ncontext: ").next().unwrap_or(text);
+    match t.strip_prefix("[e") {
+        Some(rest) => match rest.split_once("] ") {
+            Some((n, r)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => r.into(),
+            _ => t.into(),
+        },
+        None => t.into(),
+    }
+}
+
+/// The tag `[eN]` or `[eA..eB]` a history block starts with, as (first, last) event.
+fn leading_tag(text: &str) -> Option<(u64, u64)> {
+    let inner = text.strip_prefix("[e")?.split(']').next()?;
+    let (a, b) = match inner.split_once("..e") {
+        Some((a, b)) => (a, b),
+        None => (inner, inner),
+    };
+    Some((a.parse().ok()?, b.parse().ok()?))
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {

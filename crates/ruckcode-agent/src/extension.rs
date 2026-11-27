@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use ruck_harness_ident::AppIdentity;
 use ruck_harness_llm::Provider;
-use ruck_harness_tools::{PlanItem, Tool};
+use ruck_harness_tools::{ContextTool, PlanItem, Tool, CONTEXT_TOOL};
 use ruckcode_mise::{MiseTask, TaskSelector};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -79,6 +79,11 @@ impl AgentExtension for RuckcodeExtension {
     }
 
     fn builtin_tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        // `Context` is a generic harness tool; the agent loop offers it when a profile turns
+        // `[context] model_managed` on.
+        if name == CONTEXT_TOOL {
+            return Some(Arc::new(ContextTool));
+        }
         ruckcode_tools::builtin_tool(name).cloned()
     }
 }

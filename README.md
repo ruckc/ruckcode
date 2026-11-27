@@ -228,6 +228,66 @@ output_reserve_tokens = 8000     # kept free for the answer (default: min(max_to
 # max_tool_result_tokens = 4000
 ```
 
+### Model-managed context (opt-in)
+
+Adapted from [arXiv:2611.34147](https://arxiv.org/abs/2611.34147) ("Letting Models Manage Their Own
+Context: Where We Stand"). With `model_managed = true` the model can shrink its own history instead
+of waiting for the harness to summarize everything. Off by default; with it off, requests are
+byte-identical to before.
+
+When on, every request carries (and the transcript does not):
+
+- a **tag** in front of each history event, `[e17]`: the 1-based position of the message among the
+  transcript's user and assistant records. Tags never change when history is collapsed, compacted
+  or trimmed, and a resumed session has the same tags;
+- a **usage line** as the last text of the request: `context: 41% of 65536 tokens; compact with the
+  Context tool only after 85%`. From `compact_warn_at` (90%) on it adds a `WARNING: context
+  pressure` line. It goes at the tail of the request, and the tags are a pure function of the
+  history, so the cached prefix (system prompt, tools, earlier messages) is identical from request
+  to request. The system prompt gets one short static paragraph, the same on every request;
+- the **`Context` tool**, with a flat schema (`action` = `collapse` | `recall`, and the optional
+  strings `from`, `to`, `summary`, `tag`):
+  - `collapse` (`from`, `to`, `summary`) replaces the events `from..to` with the model's own
+    summary and returns its tag (`e3..e17`). The originals are archived, not deleted. A tool call
+    is never separated from its result: a range that would split a pair is **widened** to whole
+    exchanges, and the result tells the model the range it actually collapsed. The first message
+    (the task, a range starting there starts after it), the current request and the exchange in
+    flight are never collapsed (an error). A collapse is recorded as a `collapsed` transcript
+    record, so resume rebuilds the same history.
+  - `recall` (`tag`: an event like `e9`, or a summary tag like `e3..e17`) returns the archived
+    originals as the tool result (head and tail kept past the per-result cap). It is a read: the
+    history is not changed. Events that automatic compaction or `/clear` removed are not archived.
+  - Missing or invalid fields, unknown tags and bad ranges come back as tool errors saying what is
+    wrong.
+
+Notices: `the model collapsed e3..e17 (12 events → 1 summary, ~2400 tokens freed; ...)` and `the
+model recalled e9 (1 event, ...)`, shown by the TUI, the desktop app and ACP clients like any other
+notice. The tool-loop guard treats recalls of different tags as progress; identical repeats trip it.
+
+**Safety net.** Automatic compaction and the hard ceiling stay on. To give the model its chance
+first, a model-managed profile compacts automatically at `managed_fallback_threshold` (default
+0.95 of the window, still capped by the output reserve) instead of the top-level
+`compaction_threshold`; the model is told to compact after `compact_hint_at` (0.85) and warned at
+`compact_warn_at` (0.90). The marks are clamped below the harness threshold, so a custom
+`compact_threshold` never leaves the model without a window to act in. Set `compact_threshold`
+under `[context]` to keep an explicit harness threshold.
+
+```toml
+[context]
+model_managed = false            # default; per profile: [profiles.<name>.context]
+compact_hint_at = 0.85           # "compact only after" mark shown to the model
+compact_warn_at = 0.90           # context-pressure warning
+managed_fallback_threshold = 0.95  # harness compaction, when compact_threshold is unset
+```
+
+Profiles with `lean_tools = true` leave the tool out unless their `tools` allowlist names
+`Context` (then `model_managed` has no effect on them, including the raised threshold). The paper
+reports large gains at tight budgets and harm from compacting too early, and that models differ a
+lot in how much they use it, so enable it per profile after trying it on that model. (Measured on
+`gemma4:26b`: offering the tool does not lower its first-turn tool-call rate, but it never compacts
+on its own under pressure; asked to free context it calls the tool correctly most of the time.) In the demo
+provider, `mock:collapse` collapses the earlier exchanges.
+
 ## Tool-loop guard
 
 The counterpart of the thinking-loop guard for tool calls. Some models call the same tool over and

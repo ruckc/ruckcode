@@ -247,6 +247,11 @@ so a client can keep a first-prompt fallback for older `rc` versions.
   message chunks), for example `conversation compacted (N messages summarized; the latest tool
   results were kept)` and `Bash output truncated by ruckcode ...`. A turn that ends because the
   context stayed full after a compact-and-retry returns `max_tokens`.
+  With `[context] model_managed = true` (off by default; nothing changes on the wire without it)
+  the model also has the `Context` tool: a `Context` call is an ordinary `tool_call` (kind
+  `think`) and its collapses and recalls are reported as `Notice` events (`the model collapsed
+  e3..e17 (12 events → 1 summary, ...)`). Transcripts gain a `collapsed` record type (`from`,
+  `to`, `tag`, `summary`, `replacedMessages` in the normalized form).
 - **Validation.** `append` must be a string of at most 65536 bytes and `systemPrompt` must be an
   object; otherwise the request fails with JSON-RPC `-32602` (invalid params) and no session is
   created or changed.

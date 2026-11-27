@@ -30,9 +30,13 @@ pub trait ProfileBuiltins {
 
 impl ProfileBuiltins for Profile {
     fn allows_builtin(&self, name: &str) -> bool {
-        let class = ruckcode_tools::builtin_tool(name)
-            .map(|t| t.lean_class())
-            .unwrap_or_default();
+        let class = if name == ruck_harness_tools::CONTEXT_TOOL {
+            ruck_harness_tools::Tool::lean_class(&ruck_harness_tools::ContextTool)
+        } else {
+            ruckcode_tools::builtin_tool(name)
+                .map(|t| t.lean_class())
+                .unwrap_or_default()
+        };
         self.allows_class(name, class)
     }
 }

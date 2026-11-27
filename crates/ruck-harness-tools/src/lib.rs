@@ -2,10 +2,12 @@
 //! sandboxed command launcher, and the plan and ask-the-user tools.
 
 pub mod ask;
+mod context;
 mod plan;
 mod sandboxed;
 
 pub use ask::{Answer, AskUserQuestion, Question, QuestionOption};
+pub use context::{ContextAction, ContextTool, TagRef, CONTEXT_TOOL};
 pub use plan::{PlanItem, PlanStatus, TodoWrite, ALL_DONE as PLAN_ALL_DONE};
 #[allow(deprecated)]
 pub use plan::{TodoItem, TodoStatus};
