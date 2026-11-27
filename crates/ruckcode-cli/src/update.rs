@@ -40,7 +40,7 @@ pub const EXIT_NOT_UPDATABLE: u8 = 11;
 /// Public key embedded at build time (empty when `RUCKCODE_UPDATER_PUBKEY` was not set).
 const EMBEDDED_PUBKEY: &str = env!("RC_UPDATER_PUBKEY");
 const TARGET: &str = env!("RC_TARGET");
-const VERSION: &str = env!("RC_VERSION");
+const VERSION: &str = ruckcode_agent::identity::VERSION;
 
 /// Archives larger than this are refused (the real ones are a few MB).
 const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;

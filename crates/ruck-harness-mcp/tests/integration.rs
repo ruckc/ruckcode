@@ -174,7 +174,7 @@ async fn client_info_names_the_product() {
         let info: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(info["name"], name);
-        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(info["version"], id.version);
     }
 }
 

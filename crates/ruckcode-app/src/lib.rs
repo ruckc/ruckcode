@@ -67,12 +67,9 @@ fn platform() -> &'static str {
 /// The app's own version, which `rc` inside WSL should match.
 #[tauri::command]
 fn app_version() -> &'static str {
-    // Release builds set RUCKCODE_VERSION (same as `rc`), so the reported version matches the
+    // The same string as `rc --version`: release builds set RUCKCODE_VERSION, so it matches the
     // bundle version even though Cargo.toml is never bumped.
-    match option_env!("RUCKCODE_VERSION") {
-        Some(v) if !v.is_empty() => v,
-        _ => env!("CARGO_PKG_VERSION"),
-    }
+    ruckcode_agent::identity::VERSION
 }
 
 #[tauri::command]

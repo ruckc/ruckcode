@@ -8,8 +8,12 @@
 
 use ruck_harness_ident::AppIdentity;
 
-/// The product version (every workspace crate shares it); reported as the ACP `agentInfo` version.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The product's release version, the single source of truth: what `rc --version` prints (minus
+/// the `rc ` prefix), what ACP `agentInfo` and MCP `clientInfo` report, the transcript's
+/// `ruckcode_version`, the updater's current version and the desktop app's version. Release
+/// builds get the `RUCKCODE_VERSION` the release workflow sets (`0.26.1`); local builds get
+/// `<package version>-dev+<git sha>` (see build.rs).
+pub const VERSION: &str = env!("RUCKCODE_RELEASE_VERSION");
 
 pub const RUCKCODE: AppIdentity = AppIdentity {
     name: "ruckcode",
@@ -18,6 +22,9 @@ pub const RUCKCODE: AppIdentity = AppIdentity {
     config_dir_env: "RUCKCODE_CONFIG_DIR",
     user_config_subdir: "ruckcode",
     data_dir_name: "ruckcode",
+    version: VERSION,
+    // Deliberately the package version, not VERSION: the user agent has always carried it, and
+    // keeping it release-independent keeps provider/web request fingerprints stable.
     user_agent: concat!("ruckcode/", env!("CARGO_PKG_VERSION")),
     homepage_url: "https://github.com/ruckc/ruckcode",
     acp_namespace: "ruckcode",
@@ -54,9 +61,31 @@ mod tests {
         assert_eq!(RUCKCODE.extra_protected_project_paths, [".mcp.json"]);
     }
 
+    /// Release builds (RUCKCODE_VERSION set at compile time) report exactly that, minus a leading
+    /// `v`; local builds report `<package version>-dev+<sha>` or the bare package version.
+    #[test]
+    fn version_follows_the_release_env_var() {
+        match option_env!("RUCKCODE_VERSION").map(|v| v.trim().trim_start_matches('v')) {
+            Some(v) if !v.is_empty() => assert_eq!(VERSION, v),
+            _ => {
+                let pkg = env!("CARGO_PKG_VERSION");
+                assert!(
+                    VERSION == pkg || VERSION.starts_with(&format!("{pkg}-dev+")),
+                    "{VERSION}"
+                );
+            }
+        }
+        assert_eq!(RUCKCODE.version, VERSION);
+    }
+
     /// The fixture the harness crates test against must not drift from the real identity.
     #[test]
     fn the_harness_test_fixture_matches() {
-        assert_eq!(ruck_harness_ident::testing::RUCKCODE, RUCKCODE);
+        // `version` is the build's release version, which the fixture cannot know.
+        let fixture = AppIdentity {
+            version: VERSION,
+            ..ruck_harness_ident::testing::RUCKCODE
+        };
+        assert_eq!(fixture, RUCKCODE);
     }
 }

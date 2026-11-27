@@ -429,7 +429,7 @@ async fn connect(
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::default();
     let info = ClientConfig::new(
         ClientCapabilities::default(),
-        Implementation::new(identity.name, env!("CARGO_PKG_VERSION")),
+        Implementation::new(identity.name, identity.version),
     );
     let client = match cfg.transport()? {
         TransportKind::Stdio => {

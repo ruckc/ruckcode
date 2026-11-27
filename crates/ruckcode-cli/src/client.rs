@@ -87,7 +87,10 @@ pub fn acp_info() -> ruck_harness_acp::AcpInfo {
 pub async fn initialize(conn: &Connection) -> Result<()> {
     let req = schema::InitializeRequest::new(ruck_harness_acp::PROTOCOL_VERSION)
         .client_capabilities(schema::client_capabilities(RUCKCODE.acp_namespace))
-        .client_info(schema::Implementation::new("rc", env!("CARGO_PKG_VERSION")));
+        .client_info(schema::Implementation::new(
+            "rc",
+            ruckcode_agent::identity::VERSION,
+        ));
     let _: schema::InitializeResponse = conn
         .request_typed(schema::INITIALIZE, &req)
         .await
