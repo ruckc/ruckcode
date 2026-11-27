@@ -556,14 +556,11 @@ pub fn strip_echoed_tag(m: &mut Message) {
 }
 
 fn strip_tag(s: &str) -> Option<&str> {
-    let rest = s.strip_prefix("[e")?;
+    let rest = s.strip_prefix('[')?;
     let end = rest.find(']')?;
     let inner = &rest[..end];
-    if inner.is_empty()
-        || !inner
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == 'e')
-    {
+    // Only a real tag or range (`e17`, `e3..e17`), nothing that merely looks like one.
+    if !inner.starts_with('e') || TagRef::parse(inner).is_err() {
         return None;
     }
     Some(rest[end + 1..].trim_start_matches(' '))
@@ -802,9 +799,18 @@ mod tests {
         let mut m = Message::assistant_text("[e3..e9] hi");
         strip_echoed_tag(&mut m);
         assert_eq!(m.text(), "hi");
-        let mut m = Message::assistant_text("[x] keep");
-        strip_echoed_tag(&mut m);
-        assert_eq!(m.text(), "[x] keep");
+        for keep in [
+            "[x] keep",
+            "[e..e] keep",
+            "[e....] keep",
+            "[e] keep",
+            "[e0] keep",
+            "[e9..e3] keep",
+        ] {
+            let mut m = Message::assistant_text(keep);
+            strip_echoed_tag(&mut m);
+            assert_eq!(m.text(), keep);
+        }
     }
 
     #[test]

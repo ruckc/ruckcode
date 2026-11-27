@@ -804,3 +804,40 @@ async fn mock_collapse_explains_itself_when_the_feature_is_off() {
     prompt(&agent, &info.id, "mock:collapse", &client).await;
     assert!(!client.notices().iter().any(|n| n.contains("collapsed")));
 }
+
+#[tokio::test]
+async fn a_mode_whose_tool_list_omits_context_does_not_get_it() {
+    let env = Env::managed();
+    std::fs::write(
+        env.proj.path().join(".ruckcode/modes.toml"),
+        r#"
+default_mode = "narrow"
+[modes.narrow]
+description = "narrow"
+tools = ["Read", "Bash"]
+next = ["wide"]
+[modes.wide]
+description = "wide"
+tools = ["Read", "Context"]
+"#,
+    )
+    .unwrap();
+    env.mock.push(Message::assistant_text("hi"));
+    env.mock.push(Message::assistant_text("hi again"));
+    let agent = env.agent();
+    let info = agent.new_session(env.cwd(), None).await.unwrap();
+    let client = Arc::new(TestClient::default());
+    prompt(&agent, &info.id, "go", &client).await;
+    let r = &env.requests()[0];
+    assert!(!has_context_tool(r), "mode tool list is respected");
+    assert!(!r.system.contains("## Context"));
+    assert!(!all_text(r).contains("[e1]") && !all_text(r).contains("context: "));
+    agent
+        .set_mode(&info.id, "wide", client.clone())
+        .await
+        .unwrap();
+    prompt(&agent, &info.id, "again", &client).await;
+    let r = &env.requests()[1];
+    assert!(has_context_tool(r));
+    assert!(all_text(r).contains("[e1] go"));
+}

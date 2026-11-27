@@ -281,7 +281,8 @@ managed_fallback_threshold = 0.95  # harness compaction, when compact_threshold 
 ```
 
 Profiles with `lean_tools = true` leave the tool out unless their `tools` allowlist names
-`Context` (then `model_managed` has no effect on them, including the raised threshold). The paper
+`Context`, and a mode with a `tools` list must name it too (otherwise `model_managed` has no
+effect there, including the raised threshold). The paper
 reports large gains at tight budgets and harm from compacting too early, and that models differ a
 lot in how much they use it, so enable it per profile after trying it on that model. (Measured on
 `gemma4:26b`: offering the tool does not lower its first-turn tool-call rate, but it never compacts

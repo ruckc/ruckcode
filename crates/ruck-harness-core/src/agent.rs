@@ -2682,12 +2682,17 @@ fn notify_blocked(s: &SessionState, client: &Arc<dyn Client>, outcomes: &[HookOu
 }
 
 /// The `[context]` settings in force for `profile`. `model_managed` is on only when the profile
-/// offers the `Context` tool (a lean profile without the allowlist entry does not), so the
-/// harness never waits for a model that cannot compact.
+/// and the current mode offer the `Context` tool (a lean profile without the allowlist entry, or
+/// a mode whose `tools` list omits it, does not), so the harness never waits for a model that
+/// cannot compact.
 fn context_cfg(s: &SessionState, profile: &Profile) -> context::ContextConfig {
     let mut c = s.config.context.with_override(profile.context.as_ref());
-    c.model_managed =
-        c.model_managed && profile.allows_class(CONTEXT_TOOL, LeanClass::OptInWhenLean);
+    c.model_managed = c.model_managed
+        && profile.allows_class(CONTEXT_TOOL, LeanClass::OptInWhenLean)
+        && s.mode_def()
+            .tools
+            .as_ref()
+            .is_none_or(|l| l.iter().any(|n| n == CONTEXT_TOOL));
     c
 }
 
