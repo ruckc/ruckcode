@@ -3305,7 +3305,6 @@ dependencies = [
 name = "ruck-harness-hooks"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "globset",
  "regex",
  "ruck-harness-ident",
@@ -3358,7 +3357,6 @@ dependencies = [
 name = "ruck-harness-sandbox"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "dirs",
  "landlock",

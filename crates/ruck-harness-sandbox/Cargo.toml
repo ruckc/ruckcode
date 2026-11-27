@@ -1,6 +1,6 @@
 [package]
 name = "ruck-harness-sandbox"
-description = "In-process command sandbox (namespaces, Landlock, seccomp, Seatbelt) and allowlist proxy for ruckcode"
+description = "In-process command sandbox (namespaces, Landlock, seccomp, Seatbelt) and allowlist proxy for agent harnesses"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,6 @@ name = "rc-sandbox-exec"
 path = "src/bin/rc-sandbox-exec.rs"
 
 [dependencies]
-anyhow.workspace = true
 ruck-harness-ident.workspace = true
 async-trait.workspace = true
 dirs.workspace = true

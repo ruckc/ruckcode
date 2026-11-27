@@ -3,10 +3,9 @@ name = "ruck-harness-hooks"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Lifecycle hooks (shell commands on agent events) for ruckcode"
+description = "Lifecycle hooks: user-configured shell commands run on agent events"
 
 [dependencies]
-anyhow.workspace = true
 ruck-harness-ident.workspace = true
 globset.workspace = true
 regex.workspace = true
