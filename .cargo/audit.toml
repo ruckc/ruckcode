@@ -1,8 +1,0 @@
-# cargo-audit configuration for the root workspace.
-[advisories]
-ignore = [
-  # chrono 0.4.45: unmaintained (RUSTSEC-2026-0543); not a vulnerability. Pulled in transitively by
-  # rmcp (MCP client in ruck-harness-mcp), so removing our own direct use (ruckcode-agent, ruck-harness-llm)
-  # would not clear it. Revisit when rmcp drops or replaces chrono, or when chrono is maintained again.
-  "RUSTSEC-2026-0543",
-]
